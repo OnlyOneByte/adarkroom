@@ -904,7 +904,8 @@ var World = {
 
   applyMap: function() {
     if(!World.seenAll){
-      var x,y,mask = World.committedMask();
+      // on a trek (the executioner's maps) the reveal goes into the trek's map, which is what gets committed
+      var x,y,mask = World.state ? World.state.mask : World.committedMask();
       do {
         x = Math.floor(Math.random() * World.cols());
         y = Math.floor(Math.random() * World.rows());

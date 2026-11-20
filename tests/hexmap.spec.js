@@ -459,6 +459,62 @@ test('a pack filled to the brim stays within its capacity on a hex trek', async 
   expect(errors).toEqual([]);
 });
 
+test('a click on the wanderer\'s own hex does not take a step', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    World.drawMap();
+    const o = World.viewOrigin(), me = World.hexCentre(World.curPos[0], World.curPos[1]);
+    return { pos: World.curPos.slice(), water: World.water, x: me[0] - o[0], y: me[1] - o[1] };
+  });
+  const box = await page.locator('#map canvas').boundingBox();
+  // anywhere inside the hex, not just its centre
+  for (const [dx, dy] of [[0, 0], [3, 2], [-4, -3], [0, 6]]) {
+    await page.mouse.click(box.x + r.x + dx, box.y + r.y + dy);
+  }
+  expect(await page.evaluate(() => [World.curPos.slice(), World.water])).toEqual([r.pos, r.water]);
+  // a click one hex east still steps east
+  await page.mouse.click(box.x + r.x + Math.sqrt(3) * 9, box.y + r.y);
+  expect(await page.evaluate(() => World.curPos.slice())).toEqual([r.pos[0] + 1, r.pos[1]]);
+  expect(errors).toEqual([]);
+});
+
+test('maps scavenged on a trek stay revealed once home, on both maps', async ({ page }) => {
+  const errors = await openGame(page);
+  await page.locator('#lightButton').click();
+  const r = await page.evaluate(() => {
+    clearTimeout(Events._eventTimeout);
+    Room.unlockForest();
+    $SM.set('game.builder.level', 4);
+    $SM.set('game.temperature', Room.TempEnum.Hot);
+    $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1 });
+    WorldGen.newSeed = () => 4242;
+    if (!Path.tab) Path.init();
+    const lit = (m) => m.reduce((n, col) => n + col.filter(Boolean).length, 0);
+    // the executioner's "scavenge maps" calls World.applyMap three times, mid-trek
+    const trek = () => {
+      Path.updateOutfitting();
+      Path.increaseSupply.call($('#outfit_row_cured-meat .upBtn')[0], { data: 1000 });
+      Path.embark();
+      const before = lit(World.committedMask());
+      for (let i = 0; i < 3; i++) World.applyMap();
+      World.goHome();
+      return lit(World.committedMask()) - before;
+    };
+    const square = trek();
+    for (let i = 0; i < 20; i++) Room.build($('<div>').attr('buildThing', 'hut'));
+    Room.build($('<div>').attr('buildThing', 'trading post'));
+    if (!World.hex) return 'the town did not open';
+    const hex = trek();
+    const saved = WorldGen.decodeMask($SM.get('game.world.hex.mask'), World.cols(), World.rows());
+    return { square, hex, savedHex: lit(saved) === lit(World.hex.mask) };
+  });
+  // three patches of radius 5 (61 hexes or squares each), less any overlap with what was seen
+  expect(r.square).toBeGreaterThan(60);
+  expect(r.hex).toBeGreaterThan(60);
+  expect(r.savedHex).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('200 worlds: every landmark, site, pass and the ship can be walked to; nothing overlaps', async ({ page }) => {
   test.setTimeout(120000);
   const errors = await openGame(page);
@@ -510,24 +566,5 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
   });
   expect(r.bad).toEqual([]);
   expect(r.slowest).toBeLessThan(250); // ms for one world, well inside a load
-  expect(errors).toEqual([]);
-});
-
-test('a click on the wanderer\'s own hex does not take a step', async ({ page }) => {
-  const errors = await onHexTrek(page);
-  const r = await page.evaluate(() => {
-    World.drawMap();
-    const o = World.viewOrigin(), me = World.hexCentre(World.curPos[0], World.curPos[1]);
-    return { pos: World.curPos.slice(), water: World.water, x: me[0] - o[0], y: me[1] - o[1] };
-  });
-  const box = await page.locator('#map canvas').boundingBox();
-  // anywhere inside the hex, not just its centre
-  for (const [dx, dy] of [[0, 0], [3, 2], [-4, -3], [0, 6]]) {
-    await page.mouse.click(box.x + r.x + dx, box.y + r.y + dy);
-  }
-  expect(await page.evaluate(() => [World.curPos.slice(), World.water])).toEqual([r.pos, r.water]);
-  // a click one hex east still steps east
-  await page.mouse.click(box.x + r.x + Math.sqrt(3) * 9, box.y + r.y);
-  expect(await page.evaluate(() => World.curPos.slice())).toEqual([r.pos[0] + 1, r.pos[1]]);
   expect(errors).toEqual([]);
 });
