@@ -11,6 +11,11 @@
  *   npm run sim -- --seeds 5 --treks 30
  *   npm run sim -- --ci              small run with assertions; exits 1 if one fails
  *
+ * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
+ * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
+ * ember tier of each ladder; it reports the land lit and how far out, and how many lines a
+ * steady supply of each fuel keeps burning.
+ *
  * The bot: each trek it walks the cheapest way toward a target (a random hex in the
  * outer half of what its water can reach there and back, or its dropped pack) and turns home when
  * the water or food left would only just get it back. Its kit improves every
@@ -50,7 +55,7 @@ function loadGame(rand) {
   vm.createContext(ctx);
   // the context's own Math, so the encounter tables' Math.random is the sim's seeded one
   vm.runInContext('Math.random = __rand;', Object.assign(ctx, { __rand: () => rand.next() }));
-  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/events/encounters.js']) {
+  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext('World.setupLandmarks();', ctx);
@@ -277,6 +282,152 @@ export function simulate({ seeds, treks, difficulties = ['gentle', 'normal', 'ha
   return { results: out, curve };
 }
 
+const TIERS = ['1', '2', '3', '4'];
+const ID = { fuel: 'F', beacon: 'B', hearth: 'H' };
+
+// The bot's network for one set of ember tiers ({ fuel: n, beacon: n, hearth: n }) on one world:
+// six straight lines out from the capital, a beacon every Fire.HOP hexes while it still catches.
+function fireNetwork(ctx, gen, field, t, opts = {}) {
+  const { Fire: F, WorldGen: G, Danger: D } = ctx;
+  // fuel 0: no fuel cap, to see what the beacons and hearths alone allow
+  const fuel = Object.keys(F.FUELS).find((k) => F.FUELS[k].tier === 'F' + t.fuel);
+  const H = F.HEARTHS['H' + t.hearth];
+  const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+  const net = {
+    cols: gen.cols, rows: gen.rows, danger,
+    hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
+    hearths: [{ at: gen.capital, out: H.out, share: H.share, cap: fuel ? F.FUELS[fuel].cap : Infinity }],
+    beacons: [], beacon: F.BEACONS['B' + t.beacon],
+  };
+  const open = (p) => p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows &&
+    G.isPassable(gen.map[p[0]][p[1]]) && gen.map[p[0]][p[1]] !== G.TERRAIN.ocean;
+  const lines = [];
+  for (let d = 0; d < (opts.dirs || 6); d++) {
+    let at = gen.capital;
+    const line = [];
+    for (let i = 0; i < 20; i++) {
+      // 3 hexes on in this direction; or the nearest open hex to it still within a hop
+      let p = at;
+      for (let k = 0; k < F.HOP; k++) p = G.neighbour(p[0], p[1], d);
+      if (!open(p)) {
+        const alt = F.around(p[0], p[1], 1).filter((q) => open(q) && F.distance(q, at) <= F.HOP && F.distance(q, at) >= 2);
+        if (!alt.length) break;
+        p = alt[0];
+      }
+      net.beacons.push(p);
+      const r = F.compute(net);
+      if (r.nodes[r.nodes.length - 1].s < F.LIT_MIN) { net.beacons.pop(); break; }
+      line.push(p);
+      at = p;
+    }
+    lines.push(line);
+  }
+  const r = F.compute(net);
+  let lit = 0, far = 0;
+  for (let k = 0; k < r.lit.length; k++) {
+    if (!r.lit[k]) continue;
+    lit++;
+    far = Math.max(far, G.distance([k % gen.cols, Math.floor(k / gen.cols)], gen.capital));
+  }
+  return { net, lines, lit, far, beacons: r.nodes.filter((n) => !n.hearth && n.s >= F.LIT_MIN).length, result: r, fuel };
+}
+
+export function simulateFire({ seeds, firstSeed = 1 }) {
+  const rand = seeded();
+  const { ctx } = loadGame(rand);
+  const { World: W, WorldGen: G, Danger: D, Fire: F } = ctx;
+  const max = { fuel: 4, beacon: 4, hearth: 4 };
+  const rows = [];
+  const add = (label, ladder, t) => rows.push({ label, ladder, t, lit: [], far: [], beacons: [] });
+  // each ladder on its own: the others at the top of the ember era, except that past tallow's
+  // reach (danger 2.5) the fuel is what binds, so beacons and hearths are measured without a fuel cap
+  for (const ladder of ['fuel', 'beacon', 'hearth']) {
+    const others = ladder === 'fuel' ? { ...max } : { ...max, fuel: 0 };
+    const rest = Object.keys(max).filter((l) => l !== ladder).map((l) => (others[l] ? ID[l] + others[l] : 'no fuel cap')).join(', ');
+    for (const n of TIERS) add(`${ID[ladder]}${n} (${rest})`, ladder, { ...others, [ladder]: +n });
+  }
+  for (const n of TIERS) add(`B${n} with tallow (F4, H4)`, 'beacon at F4', { ...max, beacon: +n });
+  for (const n of TIERS) add(`F${n} B${n} H${n} together`, 'all', { fuel: +n, beacon: +n, hearth: +n });
+  const cut = { checked: 0, fails: [] };
+  const sustain = {};
+  for (const k in F.FUELS) sustain[k] = { beaconsPerLine: [] };
+  for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
+    const gen = G.generate(seed, W.generateMap(G.rng(seed)));
+    const field = D.field(gen);
+    for (const row of rows) {
+      const n = fireNetwork(ctx, gen, field, row.t);
+      row.lit.push(n.lit);
+      row.far.push(n.far);
+      row.beacons.push(n.beacons);
+    }
+    // lines sustained: how long one line burning each fuel is, at B4 H4
+    for (const k in F.FUELS) {
+      const t = { fuel: F.tier(F.FUELS[k].tier).n, beacon: 4, hearth: 4 };
+      const n = fireNetwork(ctx, gen, field, t);
+      sustain[k].beaconsPerLine.push(n.beacons / 6);
+    }
+    // a cut line: put out the first beacon of the longest line; everything past it goes dark
+    const full = fireNetwork(ctx, gen, field, max);
+    const longest = full.lines.reduce((a, b) => (b.length > a.length ? b : a), []);
+    if (longest.length >= 2) {
+      cut.checked++;
+      const net = { ...full.net, beacons: full.net.beacons.filter((b) => b !== longest[0]) };
+      const r = F.compute(net);
+      const darkPast = longest.slice(1).every((b) => {
+        const i = net.beacons.indexOf(b) + net.hearths.length;
+        return r.nodes[i].s < F.LIT_MIN && !r.lit[b[0] + b[1] * gen.cols];
+      });
+      const litBefore = full.result.lit.reduce((a, b) => a + b, 0), litAfter = r.lit.reduce((a, b) => a + b, 0);
+      if (!darkPast || !(litAfter < litBefore)) cut.fails.push(`seed ${seed}: cutting the line at ${longest[0]} left ${darkPast ? 'as much lit' : 'beacons past it lit'}`);
+    }
+  }
+  return { rows, cut, sustain, F };
+}
+
+// Lines a steady supply keeps burning: the hearth's own fire first, then Fire.UPKEEP a beacon.
+// provisional reference supply: 40 units of the fuel a tick (about ten workers on its chain)
+const SUPPLY = 40;
+
+export function fireTable({ rows, cut, sustain, F }) {
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const lines = [];
+  lines.push('| tiers | hexes lit | furthest lit (hexes from the capital) | beacons lit |');
+  lines.push('|---|---|---|---|');
+  for (const r of rows) lines.push(`| ${r.label} | ${mean(r.lit).toFixed(0)} | ${mean(r.far).toFixed(1)} | ${mean(r.beacons).toFixed(1)} |`);
+  lines.push('');
+  lines.push(`| fuel (B4, H4) | fire per unit | danger cap | beacons per line | units / tick for the hearth | units / tick per line | lines kept by ${SUPPLY} units / tick |`);
+  lines.push('|---|---|---|---|---|---|---|');
+  const H = F.HEARTHS.H4;
+  for (const k in sustain) {
+    const f = F.FUELS[k], per = f.fire * f.burn, b = mean(sustain[k].beaconsPerLine);
+    const lineCost = b * F.UPKEEP / per;
+    const kept = lineCost > 0 ? Math.max(0, Math.floor((SUPPLY - H.out / per) / lineCost)) : 0;
+    lines.push(`| ${k} | ${per} | ${f.cap} | ${b.toFixed(1)} | ${(H.out / per).toFixed(1)} | ${lineCost.toFixed(1)} | ${kept} |`);
+  }
+  lines.push('');
+  lines.push(`cut lines checked: ${cut.checked}, past the cut still lit: ${cut.fails.length}`);
+  return lines.join('\n');
+}
+
+// The guards CI holds the fire to: every ember tier lights more land than the one before it,
+// and a cut line goes dark past the cut.
+export function checkFire({ rows, cut }) {
+  const fails = [];
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  for (const ladder of ['fuel', 'beacon', 'hearth', 'all']) {
+    const rs = rows.filter((r) => r.ladder === ladder);
+    if (!rs.length) fails.push(`no rows for ${ladder}`);
+    for (let i = 1; i < rs.length; i++) {
+      if (!(mean(rs[i].lit) > mean(rs[i - 1].lit))) {
+        fails.push(`${rs[i].label} lights ${mean(rs[i].lit).toFixed(1)} hexes, not more than ${rs[i - 1].label} (${mean(rs[i - 1].lit).toFixed(1)})`);
+      }
+    }
+  }
+  if (!cut.checked) fails.push('no line long enough to cut');
+  fails.push(...cut.fails);
+  return fails;
+}
+
 const median = (a) => {
   if (!a.length) return null;
   const s = a.slice().sort((x, y) => x - y);
@@ -338,9 +489,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const run = simulate({ seeds, treks });
   console.log(`${seeds} seeds x ${treks} treks per difficulty, kits change every ${TREKS_PER_KIT} treks: ${KITS.map((k) => k.name).join(' / ')}\n`);
   console.log(table(run, seeds));
+  const fire = simulateFire({ seeds });
+  console.log(`\nThe fire network, ${seeds} seeds, normal difficulty: six beacon lines from the capital\n`);
+  console.log(fireTable(fire));
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run);
+    const fails = check(run).concat(checkFire(fire));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);

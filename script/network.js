@@ -82,6 +82,7 @@ var Network = {
 
 	setFlag: function (k) {
 		$SM.set('game.network.story.' + k, true);
+		Network.checkUnlocks();
 	},
 
 	has: function (id) {
@@ -218,10 +219,7 @@ var Network = {
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
 			hearths: cs.map(function (c) {
 				var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
-				return {
-					at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0,
-					hexes: Object.keys(c.city.districts).map(function (k) { return k.split(',').map(Number); })
-				};
+				return { at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0 };
 			}),
 			beacons: beacons,
 			beacon: bt ? Fire.BEACONS[bt] : null
@@ -565,7 +563,8 @@ var Network = {
 	handleStateUpdates: function (e) {
 		if (e.category == 'stores' || (e.stateName && (e.stateName.indexOf('game.cities') === 0 ||
 			e.stateName.indexOf('game.workers') === 0 || e.stateName.indexOf('game.builder') === 0 ||
-			e.stateName.indexOf('game.temperature') === 0 || e.stateName.indexOf('game.world') === 0))) {
+			e.stateName.indexOf('game.temperature') === 0 || e.stateName.indexOf('game.world') === 0 ||
+			e.stateName.indexOf('game.network') === 0))) {
 			Network.checkUnlocks();
 		}
 	}
