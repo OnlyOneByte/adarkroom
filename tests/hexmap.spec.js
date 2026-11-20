@@ -19,13 +19,18 @@ async function freshToTown(page) {
     Room.unlockForest();
     $SM.set('game.builder.level', 4);
     $SM.set('game.temperature', Room.TempEnum.Hot);
-    $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1 });
+    $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1, waterskin: 1 });
     WorldGen.newSeed = () => 4242; // the same world every run
     if (!Path.tab) Path.init();
+    // pack cured meat the way the player does, through the outfitting buttons, as much as fits
+    window.packMeat = () => {
+      Path.updateOutfitting();
+      Path.increaseSupply.call($('#outfit_row_cured-meat .upBtn')[0], { data: 1000 });
+    };
   });
   // a trek on the square map: walk east, come home
   const square = await page.evaluate(() => {
-    Path.outfit = { 'cured meat': 20 };
+    packMeat();
     Path.embark();
     Math.random = () => 0.99; // no fights
     for (let i = 0; i < 5; i++) World.moveEast();
@@ -128,7 +133,7 @@ test('treks continue on the hex map and come home to the same world', async ({ p
   const { errors } = await freshToTown(page);
   await page.locator('#location_path').click();
   const trek = await page.evaluate(() => {
-    Path.outfit = { 'cured meat': 20 };
+    packMeat();
     Path.embark();
     Math.random = () => 0.99; // no fights
     const start = World.curPos.slice();
@@ -242,7 +247,7 @@ test('drawing the hex viewport stays inside a frame budget, in both themes', asy
   const { errors } = await freshToTown(page);
   await page.locator('#location_path').click();
   const timing = await page.evaluate(() => {
-    Path.outfit = { 'cured meat': 20 };
+    packMeat();
     Path.embark();
     // reveal the whole world so every hex in view is drawn
     const g = World.hex.gen;
@@ -264,5 +269,192 @@ test('drawing the hex viewport stays inside a frame budget, in both themes', asy
   expect(timing.lightsOff).toBe(true);
   expect(timing.light).toBeLessThan(16);
   expect(timing.dark).toBeLessThan(16);
+  expect(errors).toEqual([]);
+});
+
+// Puts the wanderer on the hex map (seed 4242), with helpers to find and take a step.
+async function onHexTrek(page) {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  await page.evaluate(() => {
+    packMeat();
+    Path.embark();
+    Math.random = () => 0.99; // no fights
+    // a reachable hex outside any site whose neighbour matches, and the direction to it
+    window.findStep = (from, to) => {
+      const g = World.hex.gen, m = World.state.map;
+      for (let y = 1; y < g.rows - 1; y++) {
+        for (let x = 1; x < g.cols - 1; x++) {
+          if (!g.reachable[x + y * g.cols] || World.siteAt(x, y) || !from(m[x][y], x, y)) continue;
+          for (let d = 0; d < 6; d++) {
+            const n = WorldGen.neighbour(x, y, d);
+            if (!World.siteAt(n[0], n[1]) && to(m[n[0]][n[1]], n[0], n[1])) return { at: [x, y], dir: d, to: n };
+          }
+        }
+      }
+      return null;
+    };
+    window.stepFrom = (s) => {
+      World.curPos = s.at.slice();
+      World.moveHex(s.dir);
+      return World.curPos.slice();
+    };
+  });
+  await page.waitForFunction(() => !$('#outerSlider').is(':animated')); // the slide to the map
+  return errors;
+}
+
+test('open ocean blocks the wanderer', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    const T = WorldGen.TERRAIN;
+    const s = findStep((c) => c === T.lake, (c) => c === T.ocean);
+    return { s, pos: stepFrom(s), canSail: World.canSail() };
+  });
+  expect(r.s).not.toBeNull();
+  expect(r.pos).toEqual(r.s.at);
+  expect(r.canSail).toBe(false);
+  await expect(page.locator('#notifications')).toContainText('the sea is too deep to wade.');
+  expect(errors).toEqual([]);
+});
+
+test('mountains block the wanderer except at a pass', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    const T = WorldGen.TERRAIN;
+    const plain = (c) => c === T.field || c === T.barrens || c === T.desert || c === T.tundra || c === T.wastes;
+    const wall = findStep(plain, (c) => c === T.mountains);
+    const pass = findStep(plain, (c, x, y) => !!World.hex.passes[x + ',' + y]);
+    return {
+      passes: World.hex.gen.passes.length,
+      wall, wallPos: stepFrom(wall),
+      pass, passPos: stepFrom(pass), passTile: World.state.map[pass.to[0]][pass.to[1]],
+      label: World.hexLabel(pass.to[0], pass.to[1]),
+    };
+  });
+  expect(r.passes).toBeGreaterThan(0);
+  expect(r.wallPos).toEqual(r.wall.at);
+  expect(r.passPos).toEqual(r.pass.to);
+  expect(r.passTile).toBe('^');
+  expect(r.label).toBe('a mountain pass');
+  await expect(page.locator('#notifications')).toContainText('the mountains are too steep to climb.');
+  expect(errors).toEqual([]);
+});
+
+test('rough ground costs two moves of food and water', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    const T = WorldGen.TERRAIN;
+    const cost = (s) => {
+      World.setWater(World.getMaxWater());
+      World.waterMove = 0;
+      World.foodMove = 0;
+      const water = World.water, meat = Path.outfit['cured meat'];
+      stepFrom(s);
+      return [water - World.water, meat - Path.outfit['cured meat']];
+    };
+    return {
+      plain: cost(findStep((c) => c === T.field, (c) => c === T.barrens)),
+      forest: cost(findStep((c) => c === T.field, (c) => c === T.forest)),
+      hills: cost(findStep((c) => c === T.field, (c) => c === T.hills)),
+      costs: ['hills', 'forest', 'jungle', 'swamp', 'field', 'barrens', 'desert', 'tundra', 'wastes', 'lake']
+        .map((k) => World.moveCost(T[k])),
+    };
+  });
+  // a move costs one water; food goes every second move (World.MOVES_PER_FOOD)
+  expect(r.plain).toEqual([1, 0]);
+  expect(r.forest).toEqual([2, 1]);
+  expect(r.hills).toEqual([2, 1]);
+  expect(r.costs).toEqual([2, 2, 2, 2, 1, 1, 1, 1, 1, 1]);
+  expect(errors).toEqual([]);
+});
+
+test('every land region with a site, and the ship, can be walked to from the capital', async ({ page }) => {
+  const errors = await openGame(page);
+  const bad = await page.evaluate(() => {
+    const out = [];
+    for (let seed = 1; seed <= 8; seed++) {
+      const g = WorldGen.generate(seed, World.generateMap(WorldGen.rng(seed)));
+      // flood fill on foot from the capital, independent of the generator's own answer
+      const seen = new Uint8Array(g.cols * g.rows), q = [g.capital];
+      seen[g.capital[0] + g.capital[1] * g.cols] = 1;
+      while (q.length) {
+        const [x, y] = q.pop();
+        for (let d = 0; d < 6; d++) {
+          const [nx, ny] = WorldGen.neighbour(x, y, d), k = nx + ny * g.cols;
+          if (nx < 0 || ny < 0 || nx >= g.cols || ny >= g.rows || seen[k] || !WorldGen.isPassable(g.map[nx][ny])) continue;
+          seen[k] = 1;
+          q.push([nx, ny]);
+        }
+      }
+      g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => { if (!seen[x + y * g.cols]) out.push([seed, 'site', i]); }));
+      if (!seen[g.warHeart[0] + g.warHeart[1] * g.cols]) out.push([seed, 'ship']);
+      // every mountain range has a pass
+      const passAt = new Set(g.passes.map(([x, y]) => x + ',' + y));
+      g.formations.forEach((f, i) => {
+        if (f.kind === 'range' && !f.hexes.some(([x, y]) => passAt.has(x + ',' + y))) out.push([seed, 'range', i]);
+      });
+    }
+    return out;
+  });
+  expect(bad).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('the view follows the wanderer until dragged away, and space brings it back', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  await expect(page.locator('#hexHint')).toHaveText('drag to look around. space to come back.');
+  const view = () => page.evaluate(() => ({ cam: World.cam.slice(), me: World.hexCentre(World.curPos[0], World.curPos[1]) }));
+  // one plain step near the capital
+  const step = () => page.evaluate(() => {
+    const T = WorldGen.TERRAIN;
+    stepFrom(findStep((c, x, y) => c === T.field && WorldGen.distance([x, y], World.VILLAGE_POS) < 15, (c) => c === T.field));
+  });
+
+  await step();
+  let v = await view();
+  expect(v.cam).toEqual(v.me);
+
+  const box = await page.locator('#map canvas').boundingBox();
+  await page.mouse.move(box.x + 300, box.y + 200);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 200, box.y + 150, { steps: 5 });
+  await page.mouse.up();
+  const dragged = (await view()).cam;
+  await step();
+  v = await view();
+  expect(v.cam).toEqual(dragged); // detached: a step doesn't move the view
+  expect(v.cam).not.toEqual(v.me);
+
+  await page.keyboard.press('Space');
+  v = await view();
+  expect(v.cam).toEqual(v.me);
+  await step();
+  v = await view();
+  expect(v.cam).toEqual(v.me); // attached again
+  expect(errors).toEqual([]);
+});
+
+test('a pack filled to the brim stays within its capacity on a hex trek', async ({ page }) => {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  const r = await page.evaluate(() => {
+    $SM.set('stores["cured meat"]', 500);
+    $SM.set('stores.bullets', 500);
+    Path.updateOutfitting();
+    // the outfitting buttons, asked for far more than fits; meat left over from the last trek counts too
+    const up = (key) => Path.increaseSupply.call($('#outfit_row_' + key.replace(' ', '-') + ' .upBtn')[0], { data: 1000 });
+    up('cured meat');
+    up('bullets');
+    const packed = Path.getFreeSpace();
+    Path.embark();
+    Math.random = () => 0.99;
+    for (let i = 0; i < 3; i++) World.moveWest();
+    return { packed, free: $('#backpackSpace').text(), outfit: Path.outfit };
+  });
+  expect(r.packed).toBeGreaterThanOrEqual(0);
+  expect(r.packed).toBeLessThan(1);
+  expect(Number(r.free.match(/free (-?\d+)\//)[1])).toBeGreaterThanOrEqual(0);
+  expect(r.outfit['cured meat']).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
