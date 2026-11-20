@@ -540,6 +540,27 @@ test('a hex save survives export and import, and stays small', async ({ page }) 
   expect(errors).toEqual([]);
 });
 
+test('reloading mid-trek on the hex map wakes at home in the world as last committed', async ({ page }) => {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  const before = await page.evaluate(() => {
+    const map = JSON.stringify(World.hex.map), mask = JSON.stringify(World.hex.mask);
+    packMeat();
+    Path.embark();
+    Math.random = () => 0.99;
+    for (let i = 0; i < 4; i++) World.moveHex(0);
+    World.markVisited(World.curPos[0], World.curPos[1]);
+    Engine.saveGame();
+    return { map, mask };
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask), state: World.state }));
+  // like the prologue: an unfinished trek's discoveries are not kept
+  expect(after).toEqual({ ...before, state: undefined });
+  expect(errors).toEqual([]);
+});
+
 test('200 worlds: every landmark, site, pass and the ship can be walked to; nothing overlaps', async ({ page }) => {
   test.setTimeout(120000);
   const errors = await openGame(page);
