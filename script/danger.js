@@ -164,8 +164,9 @@ var Danger = {
 		return 1 + 0.1 * Math.max(0, danger - 3);
 	},
 
-	// provisional: share of a dropped pack scavengers take per step the wanderer walks, 1% at home to 4% at 10
+	// provisional: share of a dropped pack scavengers take per step the wanderer walks, 0.5% at home to
+	// 2% at 10; a pack reached on the next trek still holds 40-50% (npm run sim)
 	scavengeRate: function (danger) {
-		return 0.01 + 0.003 * danger;
+		return 0.005 + 0.0015 * danger;
 	}
 };
