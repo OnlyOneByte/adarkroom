@@ -116,6 +116,14 @@ div.supplyItem {
 	color: #EEE;
 }
 
+#landMap {
+	border: 1px solid #EEE;
+}
+
+#landMap .landmark {
+	color: #EEE;
+}
+
 #dropMenu {
 	background: none repeat scroll 0 0 #272823;
 	box-shadow: -1px 3px 2px #111;

@@ -269,6 +269,7 @@ var World = {
       Engine.event('progress', 'hex map');
     }
     World.pointCompass(map);
+    if(typeof Network != 'undefined') Network.refresh();
   },
 
   newHexMask: function(gen) {
@@ -334,7 +335,14 @@ var World = {
     return Danger.DIFFICULTY[d] ? d : Danger.DEFAULT_DIFFICULTY;
   },
 
+  // lit land is safer (script/fire.js): one less while the fire reaches it, never under 0
   dangerAt: function(x, y) {
+    var d = World.baseDangerAt(x, y), fire = World.hex.fire;
+    return fire && fire.lit[x + y * World.hex.gen.cols] ? Math.max(0, d - Fire.LIT_DANGER) : d;
+  },
+
+  // the danger before any light: what a fuel's reach is measured against
+  baseDangerAt: function(x, y) {
     return Danger.at(World.hex.danger, World.hex.gen.cols, x, y, World.difficulty());
   },
 
@@ -592,6 +600,7 @@ var World = {
     if(World.hex) {
       World.checkBand();
       World.scavengePack();
+      if(typeof Network != 'undefined') Network.onStep(World.curPos[0], World.curPos[1]);
     }
     World.drawMap();
     World.doSpace();
@@ -1331,12 +1340,16 @@ var World = {
     swamp: _('swamp'), tundra: _('tundra'), jungle: _('jungle'), wastes: _('wastes')
   },
 
-  hexLabel: function(x, y) {
+  // st: { map, mask, pack } to read, the trek's by default
+  hexLabel: function(x, y, st) {
+    st = st || World.state;
     if(x < 0 || y < 0 || x >= World.cols() || y >= World.rows()) return null;
-    var pack = World.state.pack;
+    var pack = st.pack;
     if(pack && pack.at[0] === x && pack.at[1] === y) return World.packLabel(pack);
-    if(!World.state.mask[x][y]) return null;
-    var c = World.state.map[x][y];
+    if(!st.mask[x][y]) return null;
+    var c = st.map[x][y];
+    var fire = typeof Network != 'undefined' ? Network.hexNote(x, y) : '';
+    if(fire) return fire;
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
     if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
     var site = World.siteAt(x, y);
@@ -1350,15 +1363,19 @@ var World = {
     return null;
   },
 
-  // what a hex shows: [glyph, bold]
-  hexGlyph: function(x, y) {
-    var c = World.state.map[x][y];
+  // what a hex shows: [glyph, bold]; map: the tiles to read, the trek's by default
+  hexGlyph: function(x, y, map) {
+    map = map || World.state.map;
+    var c = map[x][y];
+    var district = typeof Network != 'undefined' && Network.districtAt(x, y);
+    if(district && district != District.HEARTH) return [District.TYPES[district].glyph, false];
     if(c == World.TILE.VILLAGE) return [c, true];
     if(typeof World.LANDMARKS[c] != 'undefined' && (c != World.TILE.OUTPOST || !World.outpostUsed(x, y))) return [c, true];
+    if(typeof Network != 'undefined' && Network.isCairn(x, y)) return [Network.CAIRN_GLYPH, true];
     var site = World.siteAt(x, y);
     if(site && WorldGen.isTerrain(c)) {
       // a site shows its own glyph across all its hexes; the wasteland's towns keep theirs
-      var a = World.state.map[site.anchor[0]][site.anchor[1]].charAt(0);
+      var a = map[site.anchor[0]][site.anchor[1]].charAt(0);
       return [WorldGen.isTerrain(a) ? WorldGen.SITES[site.kind].glyph : a, false];
     }
     return [c.charAt(0), false];
@@ -1366,35 +1383,56 @@ var World = {
 
   drawHexMap: function() {
     var map = World.setupHexView();
-    var canvas = map.find('canvas')[0], ctx = canvas.getContext('2d');
-    var gen = World.hex.gen, mask = World.state.mask;
-    var s = World.HEX_SIZE, w = Math.sqrt(3) * s, rh = 1.5 * s;
-    var dpr = canvas.width / World.VIEW[0];
     if(!World.cam) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
-    var o = World.viewOrigin();
-    var c0 = Math.max(0, Math.floor(o[0] / w) - 1), c1 = Math.min(gen.cols - 1, Math.ceil((o[0] + World.VIEW[0]) / w));
-    var r0 = Math.max(0, Math.floor(o[1] / rh) - 1), r1 = Math.min(gen.rows - 1, Math.ceil((o[1] + World.VIEW[1]) / rh));
-    var style = window.getComputedStyle(map[0]);
-    var dim = style.color, bright = window.getComputedStyle(map.find('.hexProbe')[0]).color;
+    World.paintHex(map, {
+      cam: World.cam, view: World.VIEW, map: World.state.map, mask: World.state.mask,
+      me: World.curPos, pack: World.state.pack
+    });
+  },
+
+  /*
+   * Paints a hex view into the canvas inside `el` (a .hex map element with a .hexProbe).
+   *   o.cam     centre of the view, map pixels
+   *   o.view    [w, h] px
+   *   o.map     tiles; o.mask what has been seen
+   *   o.me      the wanderer's hex, or null; o.pack the dropped pack, or null
+   *   o.select  a hex to ring, or null
+   * Over the land: the fire network (Network.result): lit hexes faintly filled, beacon lines
+   * as thin lines, beacons as points of light, the cities' districts outlined.
+   */
+  paintHex: function(el, o) {
+    var canvas = el.find('canvas')[0], ctx = canvas.getContext('2d');
+    var gen = World.hex.gen, mask = o.mask;
+    var s = World.HEX_SIZE, w = Math.sqrt(3) * s, rh = 1.5 * s;
+    var dpr = canvas.width / o.view[0];
+    var o0 = [o.cam[0] - o.view[0] / 2, o.cam[1] - o.view[1] / 2];
+    var c0 = Math.max(0, Math.floor(o0[0] / w) - 1), c1 = Math.min(gen.cols - 1, Math.ceil((o0[0] + o.view[0]) / w));
+    var r0 = Math.max(0, Math.floor(o0[1] / rh) - 1), r1 = Math.min(gen.rows - 1, Math.ceil((o0[1] + o.view[1]) / rh));
+    var style = window.getComputedStyle(el[0]);
+    var dim = style.color, bright = window.getComputedStyle(el.find('.hexProbe')[0]).color;
     var corners = [];
     for(var i = 0; i < 6; i++) {
       var ang = Math.PI / 180 * (60 * i - 30);
       corners.push([s * Math.cos(ang), s * Math.sin(ang)]);
     }
     var x, y, p;
+    var hexPath = function(p, scale) {
+      ctx.moveTo(p[0] + corners[0][0] * scale, p[1] + corners[0][1] * scale);
+      for(var i = 1; i < 6; i++) ctx.lineTo(p[0] + corners[i][0] * scale, p[1] + corners[i][1] * scale);
+      ctx.closePath();
+    };
+    var inView = function(p, m) {
+      return p[0] > o0[0] - m && p[0] < o0[0] + o.view[0] + m && p[1] > o0[1] - m && p[1] < o0[1] + o.view[1] + m;
+    };
 
-    ctx.setTransform(dpr, 0, 0, dpr, -o[0] * dpr, -o[1] * dpr);
-    ctx.clearRect(o[0], o[1], World.VIEW[0], World.VIEW[1]);
+    ctx.setTransform(dpr, 0, 0, dpr, -o0[0] * dpr, -o0[1] * dpr);
+    ctx.clearRect(o0[0], o0[1], o.view[0], o.view[1]);
 
     // outlines of every seen hex, in one stroke
     ctx.beginPath();
     for(y = r0; y <= r1; y++) {
       for(x = c0; x <= c1; x++) {
-        if(!mask[x][y]) continue;
-        p = World.hexCentre(x, y);
-        ctx.moveTo(p[0] + corners[0][0], p[1] + corners[0][1]);
-        for(i = 1; i < 6; i++) ctx.lineTo(p[0] + corners[i][0], p[1] + corners[i][1]);
-        ctx.closePath();
+        if(mask[x][y]) hexPath(World.hexCentre(x, y), 1);
       }
     }
     ctx.globalAlpha = 0.35;
@@ -1403,17 +1441,32 @@ var World = {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
+    // the light: every lit hex in view, faintly filled
+    var net = World.hex.fire;
+    if(net) {
+      ctx.beginPath();
+      for(y = r0; y <= r1; y++) {
+        for(x = c0; x <= c1; x++) {
+          if(net.lit[x + y * gen.cols]) hexPath(World.hexCentre(x, y), 0.92);
+        }
+      }
+      ctx.globalAlpha = 0.09;
+      ctx.fillStyle = bright;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
     // edges where a multi-hex feature ends: solid for sites, dashed for natural formations
     var edges = function(at, bold) {
       ctx.beginPath();
       for(y = r0; y <= r1; y++) {
         for(x = c0; x <= c1; x++) {
-          var id = at[x + y * gen.cols];
+          var id = at(x, y);
           if(id < 0 || !mask[x][y]) continue;
           p = World.hexCentre(x, y);
           for(var d = 0; d < 6; d++) {
             var n = WorldGen.neighbour(x, y, d);
-            var nid = n[0] < 0 || n[1] < 0 || n[0] >= gen.cols || n[1] >= gen.rows ? -1 : at[n[0] + n[1] * gen.cols];
+            var nid = n[0] < 0 || n[1] < 0 || n[0] >= gen.cols || n[1] >= gen.rows ? -1 : at(n[0], n[1]);
             if(nid === id) continue;
             ctx.moveTo(p[0] + corners[d][0], p[1] + corners[d][1]);
             ctx.lineTo(p[0] + corners[(d + 1) % 6][0], p[1] + corners[(d + 1) % 6][1]);
@@ -1426,18 +1479,70 @@ var World = {
       ctx.stroke();
       ctx.setLineDash([]);
     };
-    edges(gen.formationAt, false);
-    edges(gen.siteAt, true);
+    edges(function(x, y) { return gen.formationAt[x + y * gen.cols]; }, false);
+    edges(function(x, y) { return gen.siteAt[x + y * gen.cols]; }, true);
+    // a city's districts: its shape on the map
+    if(typeof Network != 'undefined') edges(function(x, y) { return Network.cityIndexAt(x, y); }, true);
 
     // the capital: a second ring
     var cap = World.hexCentre(gen.capital[0], gen.capital[1]);
-    if(cap[0] > o[0] - w && cap[0] < o[0] + World.VIEW[0] + w && cap[1] > o[1] - s && cap[1] < o[1] + World.VIEW[1] + s) {
+    if(inView(cap, w)) {
       ctx.beginPath();
-      for(i = 0; i < 6; i++) ctx.lineTo(cap[0] + corners[i][0] * 1.35, cap[1] + corners[i][1] * 1.35);
-      ctx.closePath();
+      hexPath(cap, 1.35);
       ctx.strokeStyle = bright;
       ctx.lineWidth = 1;
       ctx.stroke();
+    }
+    if(o.select) {
+      ctx.beginPath();
+      hexPath(World.hexCentre(o.select[0], o.select[1]), 0.8);
+      ctx.strokeStyle = bright;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([1, 2]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // beacon lines: thin, brighter where the fire is stronger
+    var points = {};
+    if(net) {
+      ctx.strokeStyle = bright;
+      ctx.lineWidth = 1;
+      net.links.forEach(function(l) {
+        var a = World.hexCentre(net.nodes[l[0]].at[0], net.nodes[l[0]].at[1]);
+        var b = World.hexCentre(net.nodes[l[1]].at[0], net.nodes[l[1]].at[1]);
+        if(!inView(a, 4 * w) && !inView(b, 4 * w)) return;
+        ctx.globalAlpha = Math.min(0.9, 0.3 + l[2] / 20);
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
+        ctx.stroke();
+      });
+      ctx.globalAlpha = 1;
+      // the beacons: a point of light each; a dark one is only a ring
+      net.nodes.forEach(function(n) {
+        if(n.hearth) return;
+        var c = World.hexCentre(n.at[0], n.at[1]);
+        points[n.at[0] + ',' + n.at[1]] = true;
+        if(!inView(c, w)) return;
+        ctx.beginPath();
+        ctx.arc(c[0], c[1], n.s >= Fire.LIT_MIN ? 2.2 : 1.8, 0, 2 * Math.PI);
+        if(n.s >= Fire.LIT_MIN) {
+          ctx.globalAlpha = 0.18;
+          ctx.fillStyle = bright;
+          ctx.beginPath();
+          ctx.arc(c[0], c[1], 5.5, 0, 2 * Math.PI);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.beginPath();
+          ctx.arc(c[0], c[1], 2.2, 0, 2 * Math.PI);
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = dim;
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+      });
     }
 
     // glyphs
@@ -1446,13 +1551,14 @@ var World = {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     // the dropped pack shows even in the fog: the trek that saw that hex was lost
-    var pack = World.state.pack;
+    var pack = o.pack;
     for(y = r0; y <= r1; y++) {
       for(x = c0; x <= c1; x++) {
-        var me = World.curPos[0] == x && World.curPos[1] == y;
+        var me = o.me && o.me[0] == x && o.me[1] == y;
         var atPack = pack && pack.at[0] === x && pack.at[1] === y;
         if(!mask[x][y] && !me && !atPack) continue;
-        var g = me ? ['@', true] : (atPack ? [World.PACK_GLYPH, true] : World.hexGlyph(x, y));
+        if(!me && !atPack && points[x + ',' + y]) continue; // a beacon is its own light
+        var g = me ? ['@', true] : (atPack ? [World.PACK_GLYPH, true] : World.hexGlyph(x, y, o.map));
         p = World.hexCentre(x, y);
         ctx.font = g[1] ? bold : plain;
         ctx.fillStyle = g[1] || me ? bright : dim;
@@ -1598,7 +1704,9 @@ var World = {
       Engine.event('progress', 'fabricator');
     }
     World.redeemBlueprints();
+    var hexTrek = !!World.hex;
     World.state = null;
+    if(hexTrek && typeof Network != 'undefined') Network.onHome();
     if(World._hexPending) {
       World._hexPending = false;
       World.openHexMap();

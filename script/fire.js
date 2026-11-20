@@ -1,0 +1,309 @@
+/**
+ * The fire is the network (DESIGN.md "Economy core", design/LADDERS.md, design/CITY.md).
+ *
+ * Hearths make fire from fuel; beacons on hexes relay it, keeping a share per hop; a hex is
+ * lit while fire >= 1 reaches it, and lit land is one band of danger safer. Three ladders
+ * climb together: fuel (how far into danger a line reaches), beacons (hops and loss per hop)
+ * and hearths (output, storage, sharing). Each caps its own part, so a line works at the
+ * lowest of the three.
+ *
+ * Pure functions and data only (no DOM, no state): the game (script/network.js) and the
+ * balance simulator (tools/sim.js) both load this file.
+ *
+ * Every number marked provisional is the starting value from design/CITY.md, checked with
+ * the simulator (npm run sim).
+ */
+var Fire = {
+	ERAS: ['ember', 'flame', 'blaze', 'old fire'],
+	LADDERS: ['fuel', 'beacon', 'hearth'],
+
+	/*
+	 * All 48 tiers, 16 per ladder in 4 eras. Fields:
+	 *   id      F1-F16, B1-B16, H1-H16
+	 *   ladder  'fuel' | 'beacon' | 'hearth'
+	 *   era     one of Fire.ERAS
+	 *   n       1-16 within its ladder
+	 *   name    display name
+	 *   beat    the story beat that unlocks it
+	 *   story   true for a fixed story event (LADDERS.md ⚑), false for a play milestone
+	 *   chain   the story chain it belongs to, if any
+	 *   when    the unlock condition hook, a key of Network.UNLOCKS; null = not wired yet
+	 * Only the ember era is wired in this phase; the rest is data waiting for its story.
+	 */
+	TIERS: [],
+
+	// provisional (CITY.md): what each ember tier does. Later eras get theirs as they are built.
+	// fuel: fire per unit, burn time in fire ticks, the danger its line can push into
+	FUELS: {
+		'wood':         { tier: 'F1', fire: 1,   burn: 1, cap: 1 },
+		'dry wood':     { tier: 'F2', fire: 1.5, burn: 1, cap: 1.5 },
+		'seasoned oak': { tier: 'F3', fire: 2,   burn: 1, cap: 2 },
+		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 }
+	},
+	// beacon: hops a line carries, the share of fire kept per hop, hops added on hills
+	BEACONS: {
+		B1: { name: 'brazier',    hops: 2, keep: 0.5,  hills: 0, cost: { wood: 20 } },
+		B2: { name: 'torch-post', hops: 2, keep: 0.6,  hills: 0, cost: { wood: 20 } },
+		B3: { name: 'cairn fire', hops: 3, keep: 0.65, hills: 0, cost: { wood: 20 } },
+		B4: { name: 'watch fire', hops: 3, keep: 0.7,  hills: 1, cost: { wood: 20 } }
+	},
+	// hearth: fire it makes at most, fire it stores, whether it can feed a line
+	HEARTHS: {
+		H1: { name: 'campfire',     out: 4,  store: 0,  share: false },
+		H2: { name: 'fire pit',     out: 8,  store: 0,  share: false },
+		H3: { name: 'stone hearth', out: 16, store: 0,  share: true },
+		H4: { name: 'town hearth',  out: 24, store: 32, share: true }
+	},
+
+	TICK: 10,           // seconds per fire tick (the room's fire)
+	HOP: 3,             // a beacon reaches the next node up to 3 hexes away
+	CORRIDOR: 1,        // hexes lit either side of a line, and around a beacon or hearth
+	LIT_MIN: 1,         // a hex is lit while at least this much fire reaches it
+	LIT_DANGER: 1,      // lit land: this much less danger (min 0)
+	UPKEEP: 1,          // provisional: fire a lit beacon burns per tick, paid by the hearth that feeds it
+	RING_FALLOFF: 0.25, // fire inside a city: -25% per district ring from the hearth quarter
+
+	tier: function (id) {
+		for (var i = 0; i < Fire.TIERS.length; i++) {
+			if (Fire.TIERS[i].id === id) return Fire.TIERS[i];
+		}
+		return null;
+	},
+
+	// the best tier of a ladder in a set of unlocked ids ({ id: true }), or null
+	best: function (ladder, unlocked) {
+		var best = null;
+		Fire.TIERS.forEach(function (t) {
+			if (t.ladder === ladder && unlocked[t.id] && (!best || t.n > best.n)) best = t;
+		});
+		return best;
+	},
+
+	// the fuel a hearth burns: the strongest unlocked one it has in stock
+	pickFuel: function (unlocked, have) {
+		var pick = null;
+		for (var k in Fire.FUELS) {
+			var f = Fire.FUELS[k];
+			if (!unlocked[f.tier] || !(have(k) > 0)) continue;
+			if (!pick || Fire.tier(f.tier).n > Fire.tier(Fire.FUELS[pick].tier).n) pick = k;
+		}
+		return pick;
+	},
+
+	/*
+	 * One fire tick of a hearth. need = fire wanted (its output plus the upkeep of the beacons
+	 * it fed last tick); stock = units of its fuel; stored = fire held over (H4 and up).
+	 * Returns { burn: units used, out: fire made, stored }.
+	 */
+	burn: function (hearthId, fuel, need, stock, stored) {
+		var h = Fire.HEARTHS[hearthId], f = fuel ? Fire.FUELS[fuel] : null;
+		var perUnit = f ? f.fire * f.burn : 0;
+		var want = need + Math.max(0, h.store - stored);
+		var burn = perUnit ? Math.min(stock, Math.ceil(want / perUnit)) : 0;
+		var fire = burn * perUnit + stored;
+		var used = Math.min(fire, need);
+		return { burn: burn, out: need > 0 ? h.out * used / need : 0, stored: Math.min(h.store, fire - used) };
+	},
+
+	// offset (odd rows shifted right) <-> cube coordinates
+	cube: function (x, y) {
+		var q = x - (y - (y & 1)) / 2;
+		return [q, y, -q - y];
+	},
+
+	distance: function (a, b) {
+		var A = Fire.cube(a[0], a[1]), B = Fire.cube(b[0], b[1]);
+		return (Math.abs(A[0] - B[0]) + Math.abs(A[1] - B[1]) + Math.abs(A[2] - B[2])) / 2;
+	},
+
+	// the hexes on the straight line from a to b, both ends included
+	line: function (a, b) {
+		var n = Fire.distance(a, b), A = Fire.cube(a[0], a[1]), B = Fire.cube(b[0], b[1]), out = [];
+		for (var i = 0; i <= n; i++) {
+			var t = n === 0 ? 0 : i / n, c = [];
+			for (var j = 0; j < 3; j++) c.push(A[j] + (B[j] - A[j]) * t + 1e-6 * (j + 1));
+			var r = c.map(Math.round), d = c.map(function (v, j) { return Math.abs(r[j] - v); });
+			if (d[0] > d[1] && d[0] > d[2]) r[0] = -r[1] - r[2];
+			else if (d[1] > d[2]) r[1] = -r[0] - r[2];
+			else r[2] = -r[0] - r[1];
+			out.push([r[0] + (r[1] - (r[1] & 1)) / 2, r[1]]);
+		}
+		return out;
+	},
+
+	// every hex within r of [x, y]
+	around: function (x, y, r) {
+		var out = [];
+		for (var dy = -r; dy <= r; dy++) {
+			for (var dx = -r - 1; dx <= r + 1; dx++) {
+				if (Fire.distance([x, y], [x + dx, y + dy]) <= r) out.push([x + dx, y + dy]);
+			}
+		}
+		return out;
+	},
+
+	/*
+	 * The network: which hexes the fire reaches, and how strongly.
+	 *   net.cols, net.rows
+	 *   net.danger(x, y)   the hex's danger before any light
+	 *   net.hills(x, y)    true on hills
+	 *   net.hearths[]      { at: [x, y], out, share, cap, hexes: [[x, y]] } (hexes: its districts)
+	 *   net.beacons[]      [x, y]
+	 *   net.beacon         the beacon tier in use, one of Fire.BEACONS
+	 * A beacon links to any node up to Fire.HOP hexes away. Sharing hearths linked into one
+	 * network pool their fire, and each sends the pool out; a line keeps `keep` of it per hop for
+	 * `hops` hops (more past a beacon on hills), never into a hex over its fuel's danger cap: a
+	 * beacon there goes dark, and so does everything past it.
+	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
+	 */
+	compute: function (net) {
+		var cols = net.cols, rows = net.rows, n = cols * rows;
+		var fire = new Float32Array(n), lit = new Uint8Array(n);
+		var nodes = net.hearths.map(function (h) { return { at: h.at, s: 0, hearth: h }; })
+			.concat(net.beacons.map(function (b) { return { at: b, s: 0, hearth: null }; }));
+		var adj = nodes.map(function () { return []; });
+		for (var i = 0; i < nodes.length; i++) {
+			for (var j = i + 1; j < nodes.length; j++) {
+				if (Fire.distance(nodes[i].at, nodes[j].at) <= Fire.HOP) {
+					adj[i].push(j);
+					adj[j].push(i);
+				}
+			}
+		}
+		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
+		// fire reaching a hex from a line with this fuel cap
+		var cover = function (p, s, cap) {
+			if (!inside(p) || net.danger(p[0], p[1]) > cap) return;
+			var k = p[0] + p[1] * cols;
+			if (s > fire[k]) fire[k] = s;
+		};
+
+		// pools: sharing hearths in one linked network add up
+		var comp = new Int32Array(nodes.length).fill(-1);
+		for (i = 0; i < nodes.length; i++) {
+			if (comp[i] >= 0) continue;
+			var stack = [i];
+			comp[i] = i;
+			while (stack.length) {
+				var a = stack.pop();
+				adj[a].forEach(function (b) { if (comp[b] < 0) { comp[b] = i; stack.push(b); } });
+			}
+		}
+		var pool = {};
+		net.hearths.forEach(function (h, hi) {
+			if (h.share) pool[comp[hi]] = (pool[comp[hi]] || 0) + h.out;
+		});
+
+		var all = [], B = net.beacon;
+		net.hearths.forEach(function (h, hi) {
+			var links = {};
+			var s0 = h.share ? pool[comp[hi]] : h.out;
+			if (s0 > nodes[hi].s) nodes[hi].s = s0;
+			Fire.around(h.at[0], h.at[1], Fire.CORRIDOR).concat(h.hexes || []).forEach(function (p) { cover(p, s0, h.cap); });
+			if (!h.share || !B) return;
+			// out along the beacons: [node, hops so far, strength, hill bonus]; one breadth-first
+			// pass, so every beacon is first reached by its fewest hops, its strongest fire
+			var best = {}, seen = {}, queue = [[hi, 0, s0, 0]];
+			for (var qi = 0; qi < queue.length; qi++) {
+				var q = queue[qi];
+				adj[q[0]].forEach(function (b) {
+					if (b < net.hearths.length) return; // a hearth doesn't relay another's line
+					var at = nodes[b].at, hops = q[1] + 1, s = q[2] * B.keep;
+					// a line that has stood on hills carries B.hills hops further
+					var bonus = q[3] || (B.hills && net.hills(at[0], at[1]) ? B.hills : 0);
+					if (hops > B.hops + bonus || s < Fire.LIT_MIN) return;
+					if (net.danger(at[0], at[1]) > h.cap) return; // past the fuel's reach: dark
+					if (seen[b + ':' + bonus]) return;
+					seen[b + ':' + bonus] = true;
+					if (!(best[b] >= s)) best[b] = s;
+					if (s > nodes[b].s) nodes[b].s = s;
+					var key = Math.min(q[0], b) + ',' + Math.max(q[0], b);
+					if (!links[key] || links[key][2] < s) links[key] = [q[0], b, s];
+					queue.push([b, hops, s, bonus]);
+				});
+			}
+			for (var b in best) {
+				var at = nodes[b].at;
+				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, best[b], h.cap); });
+			}
+			for (var k in links) {
+				var l = links[k];
+				all.push(l);
+				Fire.line(nodes[l[0]].at, nodes[l[1]].at).forEach(function (c) {
+					Fire.around(c[0], c[1], Fire.CORRIDOR).forEach(function (p) { cover(p, l[2], h.cap); });
+				});
+			}
+		});
+		for (i = 0; i < n; i++) lit[i] = fire[i] >= Fire.LIT_MIN ? 1 : 0;
+		return { fire: fire, lit: lit, nodes: nodes, links: all };
+	}
+};
+
+(function () {
+	// [id, name, beat, story, chain, when]
+	var T = {
+		fuel: [
+			['wood', '"light fire" (the original opening)', true, null, 'fire lit'],
+			['dry wood', 'the builder raises a woodshed against the damp', false, null, 'woodshed'],
+			['seasoned oak', 'the first trek brings back an old axe-head from the forest', false, null, 'axe-head'],
+			['tallow', 'the town has its first tannery and smokehouse running together', false, null, 'tannery and smokehouse'],
+			['charcoal', 'a stranger from the first resettled fallen city teaches the burning pits', true, 'the charcoal stranger'],
+			['peat', 'a swamp city-state shares the cutting of the bog', true],
+			['resin', 'the jungle folk trade the bleeding of the trees', false],
+			['coal', 'the garrison holding the deep mines is broken (first power)', true, 'the garrison of the deep mines'],
+			['coke', 'the forge-masters of the hill towns are won over', true],
+			['pitch', 'the tar-keepers of the desert pits swear to you', true],
+			['whale oil', 'a coastal fallen city is resettled and its boats relaunched', true, 'the drowned harbour'],
+			['rock oil', 'an old-world well is found and the knowledge to tap it pieced together', true, 'the black well'],
+			['refined spirit', 'the refinery of an old-world complex is restored', true],
+			['salvage cells', 'old cells pulled from the wreck fields hold a little charge', false],
+			['rebuilt cells', 'the cell-works rebuilt from recovered fragments', true, 'the cell-works'],
+			['the old fire', 'the power at the war\'s heart falls; the ship\'s reactor is yours', true, 'the war\'s heart']
+		],
+		beacon: [
+			['brazier', 'the world opens into hexes at the town', true, 'the world is bigger', 'brazier'],
+			['torch-post', 'the first trek returns home alive', false, null, 'trek home'],
+			['cairn fire', 'a wanderer shows how the old roads were marked', true, 'the wanderer\'s cairns', 'cairn'],
+			['watch fire', 'the first waystation is held', false, null, 'waystation lit'],
+			['watchtower', 'a waystation survives a night of attack', false],
+			['lamp-post line', 'the first road joins two cities', false],
+			['ford light', 'a river crossing is bridged', false],
+			['marsh lantern', 'the swamp city-state\'s lantern-keepers join you', true],
+			['signal mirror', 'a desert city-state teaches the mirrors', true],
+			['pass beacon', 'a mountain pass is held through a siege', true],
+			['lighthouse', 'a coastal fallen city is resettled', true, 'the drowned harbour'],
+			['heliograph', 'the mirror-masters and the lighthouse-keepers share their craft', true],
+			['wire', 'copper and the knowledge of wire recovered from a complex', false],
+			['insulated wire', 'a power\'s workshop is captured intact', true],
+			['pylon', 'old-world pylons restored', true],
+			['the old grid', 'recovered at the war\'s heart', true, 'the war\'s heart']
+		],
+		hearth: [
+			['campfire', 'the room is warm (original)', true, null, 'room warm'],
+			['fire pit', 'the builder stays', false, null, 'builder stays'],
+			['stone hearth', 'the village is built (20 huts + trading post)', true, 'the world is bigger', 'stone hearth'],
+			['town hearth', 'the capital raises its first district', false, null, 'first district'],
+			['chimney hearth', 'the first fallen city is resettled', true],
+			['kiln', 'potters of a city-state join the empire', true],
+			['bread oven', 'a city reaches its second population tier', false],
+			['forge hearth', 'coke is learned (F9)', false],
+			['bloomery', 'the hill towns\' smiths teach smelting', true],
+			['great hearth', 'a city reaches the top population tier', false],
+			['furnace', 'a power\'s foundry is captured', true],
+			['boiler', 'rock oil is tapped (F12) and the boiler-wrights found', true],
+			['engine hearth', 'the refinery is restored (F13)', true],
+			['dynamo', 'the first wire line is lit (B13)', true],
+			['reactor shell', 'rebuilt cells (F15)', true],
+			['the first fire', 'the war\'s heart falls', true, 'the war\'s heart']
+		]
+	};
+	var P = { fuel: 'F', beacon: 'B', hearth: 'H' };
+	Fire.LADDERS.forEach(function (ladder) {
+		T[ladder].forEach(function (t, i) {
+			Fire.TIERS.push({
+				id: P[ladder] + (i + 1), ladder: ladder, era: Fire.ERAS[Math.floor(i / 4)], n: i + 1,
+				name: _(t[0]), beat: t[1], story: t[2], chain: t[3] || null, when: t[4] || null
+			});
+		});
+	});
+})();
