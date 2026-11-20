@@ -1368,7 +1368,7 @@ var World = {
     map = map || World.state.map;
     var c = map[x][y];
     var district = typeof Network != 'undefined' && Network.districtAt(x, y);
-    if(district && district != District.HEARTH) return [District.TYPES[district].glyph, false];
+    if(district && district != District.HEARTH) return [District.TYPES[district].glyph, true];
     if(c == World.TILE.VILLAGE) return [c, true];
     if(typeof World.LANDMARKS[c] != 'undefined' && (c != World.TILE.OUTPOST || !World.outpostUsed(x, y))) return [c, true];
     if(typeof Network != 'undefined' && Network.isCairn(x, y)) return [Network.CAIRN_GLYPH, true];
