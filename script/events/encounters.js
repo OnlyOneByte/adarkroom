@@ -6,7 +6,7 @@ Events.Encounters = [
 	{ /* Snarling Beast */
 		title: _('A Snarling Beast'),
 		isAvailable: function() {
-			return World.getDistance() <= 10 && World.getTerrain() == World.TILE.FOREST;
+			return World.dangerDistance() <= 10 && World.getTerrain() == World.TILE.FOREST;
 		},
 		scenes: {
 			'start': {
@@ -43,7 +43,7 @@ Events.Encounters = [
 	{ /* Gaunt Man */
 	title: _('A Gaunt Man'),
 		isAvailable: function() {
-			return World.getDistance() <= 10 && World.getTerrain() == World.TILE.BARRENS;
+			return World.dangerDistance() <= 10 && World.getTerrain() == World.TILE.BARRENS;
 		},
 		scenes: {
 			'start': {
@@ -80,7 +80,7 @@ Events.Encounters = [
 	{ /* Strange Bird */
 	title: _('A Strange Bird'),
 		isAvailable: function() {
-			return World.getDistance() <= 10 && World.getTerrain() == World.TILE.FIELD;
+			return World.dangerDistance() <= 10 && World.getTerrain() == World.TILE.FIELD;
 		},
 		scenes: {
 			'start': {
@@ -117,7 +117,7 @@ Events.Encounters = [
 	{ /* Two-Headed Creature */
 	title: _('A Two-Headed Creature'),
 		isAvailable: function() {
-			return World.getDistance() <= 10 && World.getTerrain() == World.TILE.FIELD;
+			return World.dangerDistance() <= 10 && World.getTerrain() == World.TILE.FIELD;
 		},
 		scenes: {
 			'start': {
@@ -155,7 +155,7 @@ Events.Encounters = [
 	{ /* Shivering Man */
 	title: _('A Shivering Man'),
 		isAvailable: function() {
-			return World.getDistance() > 10 && World.getDistance() <= 20 && World.getTerrain() == World.TILE.BARRENS;
+			return World.dangerDistance() > 10 && World.dangerDistance() <= 20 && World.getTerrain() == World.TILE.BARRENS;
 		},
 		scenes: {
 			'start': {
@@ -197,7 +197,7 @@ Events.Encounters = [
 	{ /* Man-eater */
 		title: _('A Man-Eater'),
 		isAvailable: function() {
-			return World.getDistance() > 10 && World.getDistance() <= 20 && World.getTerrain() == World.TILE.FOREST;
+			return World.dangerDistance() > 10 && World.dangerDistance() <= 20 && World.getTerrain() == World.TILE.FOREST;
 		},
 		scenes: {
 			'start': {
@@ -234,7 +234,7 @@ Events.Encounters = [
 	{ /* Scavenger */
 	title: _('A Scavenger'),
 		isAvailable: function() {
-			return World.getDistance() > 10 && World.getDistance() <= 20 && World.getTerrain() == World.TILE.BARRENS;
+			return World.dangerDistance() > 10 && World.dangerDistance() <= 20 && World.getTerrain() == World.TILE.BARRENS;
 		},
 		scenes: {
 			'start': {
@@ -276,7 +276,7 @@ Events.Encounters = [
 	{ /* Huge Lizard */
 	title: _('A Huge Lizard'),
 		isAvailable: function() {
-			return World.getDistance() > 10 && World.getDistance() <= 20 && World.getTerrain() == World.TILE.FIELD;
+			return World.dangerDistance() > 10 && World.dangerDistance() <= 20 && World.getTerrain() == World.TILE.FIELD;
 		},
 		scenes: {
 			'start': {
@@ -314,7 +314,7 @@ Events.Encounters = [
 	{ /* Feral Terror */
 		title: _('A Feral Terror'),
 		isAvailable: function() {
-			return World.getDistance() > 20 && World.getTerrain() == World.TILE.FOREST;
+			return World.dangerDistance() > 20 && World.getTerrain() == World.TILE.FOREST;
 		},
 		scenes: {
 			'start': {
@@ -351,7 +351,7 @@ Events.Encounters = [
 	{ /* Soldier */
 	title: _('A Soldier'),
 		isAvailable: function() {
-			return World.getDistance() > 20 && World.getTerrain() == World.TILE.BARRENS;
+			return World.dangerDistance() > 20 && World.getTerrain() == World.TILE.BARRENS;
 		},
 		scenes: {
 			'start': {
@@ -394,7 +394,7 @@ Events.Encounters = [
 	{ /* Sniper */
 	title: _('A Sniper'),
 		isAvailable: function() {
-			return World.getDistance() > 20 && World.getTerrain() == World.TILE.FIELD;
+			return World.dangerDistance() > 20 && World.getTerrain() == World.TILE.FIELD;
 		},
 		scenes: {
 			'start': {
