@@ -21,6 +21,16 @@ export async function openGame(page, { save } = {}) {
     return route.abort();
   });
 
+  // A fresh game greets new players with a "Sound Available!" event 3 s after load
+  // (Engine.init). It would cover whatever button a test clicks at that moment, so
+  // tests never get it; random events are cleared per test (Events._eventTimeout).
+  await page.addInitScript(() => {
+    const setTimeout = window.setTimeout;
+    window.setTimeout = function (fn, ...rest) {
+      return fn && fn.name === 'notifyAboutSound' ? 0 : setTimeout.call(this, fn, ...rest);
+    };
+  });
+
   if (save) {
     // Seed storage once, before any game script runs.
     await page.addInitScript((state) => {
