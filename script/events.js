@@ -925,6 +925,8 @@ var Events = {
 			var loot = lootList[k];
 			if(Math.random() < loot.chance) {
 				var num = Math.floor(Math.random() * (loot.max - loot.min)) + loot.min;
+				// on a hex trek, more dangerous ground pays better
+				if(World.hex && World.state) num = Math.round(num * Danger.lootScale(World.dangerAt(World.curPos[0], World.curPos[1])));
 				var lootRow = Events.drawLootRow(k, num);
 				lootRow.appendTo(lootButtons);
 			}
@@ -1345,14 +1347,15 @@ var Events = {
 		}
 
 		var r = Math.floor(Math.random()*(possibleFights.length));
-		Events.startEvent(possibleFights[r]);
+		// on the hex map, past the prologue's reach the same enemies come stronger
+		Events.startEvent(World.hex && possibleFights[r] ? Events.strengthen(possibleFights[r]) : possibleFights[r]);
 		
 		// play audio only when fight is possible
 		if (possibleFights.length > 0) {
-			if (World.getDistance() > 20) {
+			if (World.dangerDistance() > 20) {
 				// Tier 3
 				AudioEngine.playEventMusic(AudioLibrary.ENCOUNTER_TIER_3);
-			} else if (World.getDistance() > 10) {
+			} else if (World.dangerDistance() > 10) {
 				// Tier 2
 				AudioEngine.playEventMusic(AudioLibrary.ENCOUNTER_TIER_2);
 			} else {
@@ -1360,6 +1363,20 @@ var Events = {
 				AudioEngine.playEventMusic(AudioLibrary.ENCOUNTER_TIER_1);
 			}
 		}
+	},
+
+	// a copy of an encounter with its fights scaled by the danger where the wanderer stands
+	strengthen: function(event) {
+		var m = Danger.strength(World.dangerAt(World.curPos[0], World.curPos[1]));
+		if(m === 1) return event;
+		var copy = $.extend(true, {}, event);
+		for(var k in copy.scenes) {
+			var scene = copy.scenes[k];
+			if(!scene.combat) continue;
+			scene.health = Math.round(scene.health * m);
+			scene.damage = Math.round(scene.damage * m);
+		}
+		return copy;
 	},
 
 	activeEvent: function() {
