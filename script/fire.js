@@ -40,12 +40,14 @@ var Fire = {
 		'seasoned oak': { tier: 'F3', fire: 2,   burn: 1, cap: 2 },
 		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 }
 	},
-	// beacon: hops a line carries, the share of fire kept per hop, hops added on hills
+	// beacon: the share of fire kept per hop; hills: a beacon on hills loses nothing (one hop more).
+	// hops is CITY.md's table, how far a line from a stone hearth (16) carries: it isn't a cap,
+	// it falls out of keep and Fire.RELAY_MIN, so a stronger hearth carries further.
 	BEACONS: {
-		B1: { name: 'brazier',    hops: 2, keep: 0.5,  hills: 0, cost: { wood: 20 } },
-		B2: { name: 'torch-post', hops: 2, keep: 0.6,  hills: 0, cost: { wood: 20 } },
-		B3: { name: 'cairn fire', hops: 3, keep: 0.65, hills: 0, cost: { wood: 20 } },
-		B4: { name: 'watch fire', hops: 3, keep: 0.7,  hills: 1, cost: { wood: 20 } }
+		B1: { name: 'brazier',    hops: 2, keep: 0.5,  hills: false, cost: { wood: 20 } },
+		B2: { name: 'torch-post', hops: 2, keep: 0.6,  hills: false, cost: { wood: 20 } },
+		B3: { name: 'cairn fire', hops: 3, keep: 0.65, hills: false, cost: { wood: 20 } },
+		B4: { name: 'watch fire', hops: 3, keep: 0.7,  hills: true,  cost: { wood: 20 } }
 	},
 	// hearth: fire it makes at most, fire it stores, whether it can feed a line
 	HEARTHS: {
@@ -59,6 +61,8 @@ var Fire = {
 	HOP: 3,             // a beacon reaches the next node up to 3 hexes away
 	CORRIDOR: 1,        // hexes lit either side of a line, and around a beacon or hearth
 	LIT_MIN: 1,         // a hex is lit while at least this much fire reaches it
+	RELAY_MIN: 4,       // provisional: fire carries on (to the next beacon, or a ring further from a hearth)
+	                    // only while this strong; with CITY.md's keep it gives its 2/2/3/3 hops at a stone hearth
 	LIT_DANGER: 1,      // lit land: this much less danger (min 0)
 	UPKEEP: 1,          // provisional: fire a lit beacon burns per tick, paid by the hearth that feeds it
 	RING_FALLOFF: 0.25, // fire inside a city: -25% per district ring from the hearth quarter
@@ -131,6 +135,11 @@ var Fire = {
 		return out;
 	},
 
+	// every hex exactly r from [x, y]
+	ring: function (x, y, r) {
+		return Fire.around(x, y, r).filter(function (p) { return Fire.distance([x, y], p) === r; });
+	},
+
 	// every hex within r of [x, y]
 	around: function (x, y, r) {
 		var out = [];
@@ -147,13 +156,14 @@ var Fire = {
 	 *   net.cols, net.rows
 	 *   net.danger(x, y)   the hex's danger before any light
 	 *   net.hills(x, y)    true on hills
-	 *   net.hearths[]      { at: [x, y], out, share, cap, hexes: [[x, y]] } (hexes: its districts)
+	 *   net.hearths[]      { at: [x, y], out, share, cap }
 	 *   net.beacons[]      [x, y]
 	 *   net.beacon         the beacon tier in use, one of Fire.BEACONS
-	 * A beacon links to any node up to Fire.HOP hexes away. Sharing hearths linked into one
-	 * network pool their fire, and each sends the pool out; a line keeps `keep` of it per hop for
-	 * `hops` hops (more past a beacon on hills), never into a hex over its fuel's danger cap: a
-	 * beacon there goes dark, and so does everything past it.
+	 * A hearth lights its own ground, a ring at a time, -25% a ring. A beacon links to any node
+	 * up to Fire.HOP hexes away. Sharing hearths linked into one network pool their fire and
+	 * each sends the pool out; every hop keeps `keep` of it, and fire carries on only while it
+	 * is at least Fire.RELAY_MIN. Nothing goes into a hex over the fuel's danger cap: a beacon
+	 * there is dark, and so is everything past it.
 	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
 	 */
 	compute: function (net) {
@@ -196,30 +206,29 @@ var Fire = {
 
 		var all = [], B = net.beacon;
 		net.hearths.forEach(function (h, hi) {
-			var links = {};
 			var s0 = h.share ? pool[comp[hi]] : h.out;
 			if (s0 > nodes[hi].s) nodes[hi].s = s0;
-			Fire.around(h.at[0], h.at[1], Fire.CORRIDOR).concat(h.hexes || []).forEach(function (p) { cover(p, s0, h.cap); });
-			if (!h.share || !B) return;
-			// out along the beacons: [node, hops so far, strength, hill bonus]; one breadth-first
-			// pass, so every beacon is first reached by its fewest hops, its strongest fire
-			var best = {}, seen = {}, queue = [[hi, 0, s0, 0]];
+			// its own ground: ring by ring while the ring inside still carries
+			for (var r = 0, s = s0; r <= 1 / Fire.RING_FALLOFF; r++) {
+				s = s0 * (1 - Fire.RING_FALLOFF * r);
+				Fire.ring(h.at[0], h.at[1], r).forEach(function (p) { cover(p, s, h.cap); });
+				if (s < Fire.RELAY_MIN) break;
+			}
+			if (!h.share || !B || s0 < Fire.RELAY_MIN) return;
+			// out along the beacons, keeping each beacon's strongest fire
+			var best = {}, links = {}, queue = [[hi, s0]];
 			for (var qi = 0; qi < queue.length; qi++) {
 				var q = queue[qi];
 				adj[q[0]].forEach(function (b) {
 					if (b < net.hearths.length) return; // a hearth doesn't relay another's line
-					var at = nodes[b].at, hops = q[1] + 1, s = q[2] * B.keep;
-					// a line that has stood on hills carries B.hills hops further
-					var bonus = q[3] || (B.hills && net.hills(at[0], at[1]) ? B.hills : 0);
-					if (hops > B.hops + bonus || s < Fire.LIT_MIN) return;
+					var at = nodes[b].at;
+					var s = q[1] * (B.hills && net.hills(at[0], at[1]) ? 1 : B.keep);
+					if (s < Fire.LIT_MIN || best[b] >= s) return;
 					if (net.danger(at[0], at[1]) > h.cap) return; // past the fuel's reach: dark
-					if (seen[b + ':' + bonus]) return;
-					seen[b + ':' + bonus] = true;
-					if (!(best[b] >= s)) best[b] = s;
+					best[b] = s;
 					if (s > nodes[b].s) nodes[b].s = s;
-					var key = Math.min(q[0], b) + ',' + Math.max(q[0], b);
-					if (!links[key] || links[key][2] < s) links[key] = [q[0], b, s];
-					queue.push([b, hops, s, bonus]);
+					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
+					if (s >= Fire.RELAY_MIN) queue.push([b, s]);
 				});
 			}
 			for (var b in best) {
