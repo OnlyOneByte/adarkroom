@@ -458,3 +458,159 @@ test('a pack filled to the brim stays within its capacity on a hex trek', async 
   expect(r.outfit['cured meat']).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test('a click on the wanderer\'s own hex does not take a step', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    World.drawMap();
+    const o = World.viewOrigin(), me = World.hexCentre(World.curPos[0], World.curPos[1]);
+    return { pos: World.curPos.slice(), water: World.water, x: me[0] - o[0], y: me[1] - o[1] };
+  });
+  const box = await page.locator('#map canvas').boundingBox();
+  // anywhere inside the hex, not just its centre
+  for (const [dx, dy] of [[0, 0], [3, 2], [-4, -3], [0, 6]]) {
+    await page.mouse.click(box.x + r.x + dx, box.y + r.y + dy);
+  }
+  expect(await page.evaluate(() => [World.curPos.slice(), World.water])).toEqual([r.pos, r.water]);
+  // a click one hex east still steps east
+  await page.mouse.click(box.x + r.x + Math.sqrt(3) * 9, box.y + r.y);
+  expect(await page.evaluate(() => World.curPos.slice())).toEqual([r.pos[0] + 1, r.pos[1]]);
+  expect(errors).toEqual([]);
+});
+
+test('maps scavenged on a trek stay revealed once home, on both maps', async ({ page }) => {
+  const errors = await openGame(page);
+  await page.locator('#lightButton').click();
+  const r = await page.evaluate(() => {
+    clearTimeout(Events._eventTimeout);
+    Room.unlockForest();
+    $SM.set('game.builder.level', 4);
+    $SM.set('game.temperature', Room.TempEnum.Hot);
+    $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1 });
+    WorldGen.newSeed = () => 4242;
+    if (!Path.tab) Path.init();
+    const lit = (m) => m.reduce((n, col) => n + col.filter(Boolean).length, 0);
+    // the executioner's "scavenge maps" calls World.applyMap three times, mid-trek
+    const trek = () => {
+      Path.updateOutfitting();
+      Path.increaseSupply.call($('#outfit_row_cured-meat .upBtn')[0], { data: 1000 });
+      Path.embark();
+      const before = lit(World.committedMask());
+      for (let i = 0; i < 3; i++) World.applyMap();
+      World.goHome();
+      return lit(World.committedMask()) - before;
+    };
+    const square = trek();
+    for (let i = 0; i < 20; i++) Room.build($('<div>').attr('buildThing', 'hut'));
+    Room.build($('<div>').attr('buildThing', 'trading post'));
+    if (!World.hex) return 'the town did not open';
+    const hex = trek();
+    const saved = WorldGen.decodeMask($SM.get('game.world.hex.mask'), World.cols(), World.rows());
+    return { square, hex, savedHex: lit(saved) === lit(World.hex.mask) };
+  });
+  // three patches of radius 5 (61 hexes or squares each), less any overlap with what was seen
+  expect(r.square).toBeGreaterThan(60);
+  expect(r.hex).toBeGreaterThan(60);
+  expect(r.savedHex).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('a hex save survives export and import, and stays small', async ({ page }) => {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  const before = await page.evaluate(() => {
+    packMeat();
+    Path.embark();
+    Math.random = () => 0.99;
+    for (let i = 0; i < 4; i++) World.moveHex(0);
+    World.markVisited(World.curPos[0], World.curPos[1]);
+    World.goHome();
+    return {
+      map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask),
+      export: Engine.export64(), size: localStorage.gameState.length,
+    };
+  });
+  // a player's base64 export, pasted back in with the line breaks the dialog shows
+  await page.evaluate(() => { localStorage.clear(); });
+  await page.evaluate((s) => Engine.import64(s.replace(/(.{60})/g, '$1\n')), before.export);
+  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask) }));
+  expect(after).toEqual({ map: before.map, mask: before.mask });
+  expect(before.size).toBeLessThan(60000); // the whole save, not just the world
+  expect(errors).toEqual([]);
+});
+
+test('reloading mid-trek on the hex map wakes at home in the world as last committed', async ({ page }) => {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  const before = await page.evaluate(() => {
+    const map = JSON.stringify(World.hex.map), mask = JSON.stringify(World.hex.mask);
+    packMeat();
+    Path.embark();
+    Math.random = () => 0.99;
+    for (let i = 0; i < 4; i++) World.moveHex(0);
+    World.markVisited(World.curPos[0], World.curPos[1]);
+    Engine.saveGame();
+    return { map, mask };
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask), state: World.state }));
+  // like the prologue: an unfinished trek's discoveries are not kept
+  expect(after).toEqual({ ...before, state: undefined });
+  expect(errors).toEqual([]);
+});
+
+test('200 worlds: every landmark, site, pass and the ship can be walked to; nothing overlaps', async ({ page }) => {
+  test.setTimeout(120000);
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    if (!World.panel) World.init(); // sets up the landmarks, so the wasteland core is the real one
+    const bad = [], T = WorldGen.TERRAIN;
+    let slowest = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const square = World.generateMap(WorldGen.rng(seed));
+      const t0 = performance.now();
+      const g = WorldGen.generate(seed, square);
+      slowest = Math.max(slowest, performance.now() - t0);
+      const C = g.cols, at = (x, y) => x + y * C;
+      const inside = (x, y) => x >= 0 && y >= 0 && x < C && y < g.rows;
+      // flood fill on foot from the capital, independent of the generator's own answer
+      const seen = new Uint8Array(C * g.rows), q = [g.capital];
+      seen[at(g.capital[0], g.capital[1])] = 1;
+      while (q.length) {
+        const [x, y] = q.pop();
+        for (let d = 0; d < 6; d++) {
+          const [nx, ny] = WorldGen.neighbour(x, y, d);
+          if (!inside(nx, ny) || seen[at(nx, ny)] || !WorldGen.isPassable(g.map[nx][ny])) continue;
+          seen[at(nx, ny)] = 1;
+          q.push([nx, ny]);
+        }
+      }
+      const ground = g.terrain[g.capital[0]][g.capital[1]];
+      if (g.map[g.capital[0]][g.capital[1]] !== 'A' || WorldGen.isWater(ground) || ground === T.mountains) bad.push([seed, 'capital']);
+      let ships = 0;
+      for (let x = 0; x < C; x++) {
+        for (let y = 0; y < g.rows; y++) {
+          const c = g.map[x][y];
+          if (!WorldGen.isTerrain(g.terrain[x][y]) || typeof c !== 'string' || !c) bad.push([seed, 'tile', x, y]);
+          else if (World.LANDMARKS[c.charAt(0)] && !seen[at(x, y)]) bad.push([seed, 'landmark', c, x, y]);
+          if (c && c.charAt(0) === World.TILE.SHIP) ships++;
+          if (!!seen[at(x, y)] !== !!g.reachable[at(x, y)]) bad.push([seed, 'reachable', x, y]);
+        }
+      }
+      if (ships !== 1 || !seen[at(g.warHeart[0], g.warHeart[1])]) bad.push([seed, 'ship']);
+      const owner = new Int16Array(C * g.rows).fill(-1);
+      g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => {
+        if (owner[at(x, y)] >= 0 || g.formationAt[at(x, y)] >= 0 || !seen[at(x, y)]) bad.push([seed, 'site', i, x, y]);
+        owner[at(x, y)] = i;
+      }));
+      // a pass is hills you can reach; a crater dropped on one is open ground, not a pass
+      g.passes.forEach(([x, y]) => { if (g.terrain[x][y] !== T.hills || !seen[at(x, y)]) bad.push([seed, 'pass', x, y]); });
+    }
+    return { bad: bad.slice(0, 20), slowest };
+  });
+  expect(r.bad).toEqual([]);
+  expect(r.slowest).toBeLessThan(250); // ms for one world, well inside a load
+  expect(errors).toEqual([]);
+});

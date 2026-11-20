@@ -479,6 +479,9 @@ var WorldGen = {
 			}
 		}
 
+		// a crater can land on a pass; it is open ground then, not a pass
+		passes = passes.filter(function (p) { return terrain[p[0]][p[1]] === T.hills; });
+
 		return {
 			gen: G.VERSION, seed: seed, cols: cols, rows: rows,
 			capital: cap.slice(), warHeart: heart, coreOffset: [ox, oy],

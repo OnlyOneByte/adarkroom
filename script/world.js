@@ -904,7 +904,8 @@ var World = {
 
   applyMap: function() {
     if(!World.seenAll){
-      var x,y,mask = World.committedMask();
+      // on a trek (the executioner's maps) the reveal goes into the trek's map, which is what gets committed
+      var x,y,mask = World.state ? World.state.mask : World.committedMask();
       do {
         x = Math.floor(Math.random() * World.cols());
         y = Math.floor(Math.random() * World.rows());
@@ -1239,8 +1240,11 @@ var World = {
   clickHex: function(event) {
     var off = $('#map canvas').offset(), o = World.viewOrigin();
     var me = World.hexCentre(World.curPos[0], World.curPos[1]);
-    var dx = event.pageX - off.left + o[0] - me[0], dy = event.pageY - off.top + o[1] - me[1];
-    if(dx === 0 && dy === 0) return;
+    var px = event.pageX - off.left + o[0], py = event.pageY - off.top + o[1];
+    // a click on the wanderer's own hex goes nowhere
+    var h = World.hexAt(px, py);
+    if(h[0] === World.curPos[0] && h[1] === World.curPos[1]) return;
+    var dx = px - me[0], dy = py - me[1];
     var a = Math.atan2(dy, dx) * 180 / Math.PI;
     World.moveHex(((Math.round(a / 60) % 6) + 6) % 6);
   },
