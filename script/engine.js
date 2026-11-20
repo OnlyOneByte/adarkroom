@@ -397,11 +397,8 @@
       location.reload();
     },
 
-    event: function(cat, act) {
-      if(typeof ga === 'function') {
-        ga('send', 'event', cat, act);
-      }
-    },
+    // Fork: analytics removed; kept as a no-op so existing callers still work.
+    event: function(cat, act) {},
 
     confirmDelete: function() {
       Events.startEvent({

@@ -8,9 +8,13 @@
   "license": "MPL-2.0",
   "scripts": {
     "start": "node dev-server.js",
-    "update_pot": "pybabel extract -F lang/babel.cfg -c \"TRANSLATORS\" script -o lang/adarkroom.pot"
+    "update_pot": "pybabel extract -F lang/babel.cfg -c \"TRANSLATORS\" script -o lang/adarkroom.pot",
+    "test": "playwright test"
   },
   "dependencies": {
     "express": "^4.17.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1"
   }
 }

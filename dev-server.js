@@ -1,8 +1,9 @@
 import express from 'express';
 
-const PORT = 8080;
+const PORT = Number(process.env.PORT) || 8080;
+const HOST = process.env.HOST; // unset = all interfaces (upstream behaviour)
 
 const app = express();
 app.use(express.static('.'));
 
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
+app.listen(PORT, HOST, () => console.log(`Listening on ${HOST || '*'}:${PORT}`));

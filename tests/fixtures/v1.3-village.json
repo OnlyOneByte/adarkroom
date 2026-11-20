@@ -1,0 +1,76 @@
+{
+  "version": 1.3,
+  "features": {
+    "location": {
+      "room": true,
+      "outside": true
+    }
+  },
+  "stores": {
+    "wood": 726,
+    "fur": 14.5,
+    "meat": 13.5,
+    "bait": 6
+  },
+  "character": {},
+  "income": {
+    "gatherer": {
+      "delay": 10,
+      "stores": {
+        "wood": 8
+      },
+      "timeLeft": 5
+    },
+    "hunter": {
+      "delay": 10,
+      "stores": {
+        "fur": 1.5,
+        "meat": 1.5
+      },
+      "timeLeft": 10
+    },
+    "trapper": {
+      "delay": 10,
+      "stores": {
+        "meat": -2,
+        "bait": 2
+      },
+      "timeLeft": 10
+    }
+  },
+  "timers": {},
+  "game": {
+    "builder": {
+      "level": 4
+    },
+    "temperature": {
+      "value": 4,
+      "text": "hot"
+    },
+    "fire": {
+      "value": 4,
+      "text": "roaring"
+    },
+    "buildings": {
+      "cart": 1,
+      "trap": 3,
+      "hut": 4,
+      "lodge": 1,
+      "trading post": 1
+    },
+    "population": 13,
+    "workers": {
+      "hunter": 3,
+      "trapper": 2
+    }
+  },
+  "playStats": {
+    "audioAlertShown": true
+  },
+  "previous": {},
+  "outfit": {},
+  "config": {
+    "soundOn": false
+  },
+  "cooldown": {}
+}
