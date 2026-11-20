@@ -110,7 +110,8 @@ var WorldGen = {
 
 	/*
 	 * Builds the hex world. squareMap is the prologue map (61x61, World.TILE codes,
-	 * '!' marks visited); it must not be modified. Returns:
+	 * '!' marks visited); it must not be modified. cleared: { 'x,y': mine tile } of the
+	 * prologue mines cleared at those squares (game.world.clearedMines), optional. Returns:
 	 *   cols, rows, capital, warHeart
 	 *   map[x][y]      World.TILE code or terrain glyph, like the square map
 	 *   terrain[x][y]  the ground under every hex (deposits sit on hills)
@@ -120,8 +121,10 @@ var WorldGen = {
 	 *   reachable      Uint8Array(cols*rows), 1 = reachable from the capital on foot
 	 *   siteAt, formationAt  Int16Array(cols*rows) index into the lists above, -1 none
 	 *   coreOffset     [dx, dy] from square to hex coordinates
+	 *   deposits[]     { kind: 'iron'|'coal'|'sulphur', at:[x,y], cleared } the prologue's mines
+	 *   pockets[]      [x,y] centres of the safer pockets (Danger)
 	 */
-	generate: function (seed, squareMap) {
+	generate: function (seed, squareMap, cleared) {
 		var G = WorldGen, T = G.TERRAIN;
 		var cols = G.COLS, rows = G.ROWS, R = G.SQUARE_RADIUS;
 		var rand = G.rng(seed ^ 0x5EED);
@@ -165,6 +168,7 @@ var WorldGen = {
 		// The war's heart: far east of the capital, where the ship came down.
 		var heart = [cols - 22 + Math.floor(rand() * 8), Math.floor(rows * 0.3 + rand() * rows * 0.4)];
 		var heartReach = G.distance(cap, heart);
+		var pockets = Danger.pockets(seed, cols, rows, cap, heart, G.distance);
 
 		// 1. Climate: elevation and moisture noise, temperature in bands from cold north to hot south.
 		for (y = 0; y < rows; y++) {
@@ -183,9 +187,10 @@ var WorldGen = {
 				else if (m > 0.54) c = T.forest;
 				else if (m < 0.40) c = T.barrens;
 				else c = T.field;
-				// war scars, denser toward the heart
-				var near = Math.max(0, 1 - G.distance([x, y], heart) / heartReach);
-				if (c !== T.ocean && c !== T.mountains && scar(x, y) < near * near * 0.95) c = T.wastes;
+				// war scars, as dense as the danger: further out, toward the heart, fewer in a safe pocket
+				var threat = Danger.threat(G.distance([x, y], cap), heartReach, G.distance([x, y], heart),
+					Danger.pocketAt(pockets, x, y, G.distance));
+				if (c !== T.ocean && c !== T.mountains && scar(x, y) < Danger.scarLine(threat)) c = T.wastes;
 				terrain[x][y] = c;
 			}
 		}
@@ -226,7 +231,12 @@ var WorldGen = {
 		var map = new Array(cols);
 		for (x = 0; x < cols; x++) map[x] = terrain[x].slice();
 		var ship = null;
-		var coreSites = [];
+		var coreSites = [], deposits = [];
+		var MINES = {};
+		MINES[World.TILE.IRON_MINE] = 'iron';
+		MINES[World.TILE.COAL_MINE] = 'coal';
+		MINES[World.TILE.SULPHUR_MINE] = 'sulphur';
+		cleared = cleared || {};
 		for (x = 0; x <= 2 * R; x++) {
 			for (y = 0; y <= 2 * R; y++) {
 				var cell = squareMap[x][y], code = cell.charAt(0), hx = x + ox, hy = y + oy;
@@ -235,8 +245,11 @@ var WorldGen = {
 					ship = cell;
 					cell = null;
 				}
-				if (code === World.TILE.IRON_MINE || code === World.TILE.COAL_MINE || code === World.TILE.SULPHUR_MINE) {
+				// a mine cleared in the prologue is an outpost on the square map; it is still a deposit, held by a waystation
+				var mine = MINES[code] || (code === World.TILE.OUTPOST && MINES[cleared[x + ',' + y]]);
+				if (mine) {
 					ground = T.hills; // deposits sit on hills
+					deposits.push({ kind: mine, at: [hx, hy], cleared: code === World.TILE.OUTPOST });
 				}
 				if (code === World.TILE.TOWN || code === World.TILE.CITY) coreSites.push([hx, hy]);
 				terrain[hx][hy] = ground || G._groundAround(squareMap, x, y);
@@ -366,12 +379,16 @@ var WorldGen = {
 		};
 		for (i = 0; i < formations.length; i++) {
 			if (formations[i].kind !== 'range') continue;
-			var peaks = formations[i].hexes.filter(function (h) { return terrain[h[0]][h[1]] === T.mountains; });
+			// only a peak with open ground on two sides that don't touch leads somewhere
+			var peaks = formations[i].hexes.filter(function (h) {
+				return terrain[h[0]][h[1]] === T.mountains && G._throughWay(terrain, h[0], h[1]);
+			});
 			var want = c0.passes[0] + Math.floor(rand() * (c0.passes[1] - c0.passes[0] + 1));
 			for (var w = 0; w < want && peaks.length; w++) {
 				var pk = peaks.splice(Math.floor(rand() * peaks.length), 1)[0];
 				cutPass(pk[0], pk[1]);
 			}
+			if (!w) G._tunnel(formations[i].hexes, terrain, cutPass);
 		}
 		// Cheapest way from the capital to every hex, counting mountains crossed (oceanCost for open sea).
 		var walk = function (oceanCost) {
@@ -486,8 +503,49 @@ var WorldGen = {
 			gen: G.VERSION, seed: seed, cols: cols, rows: rows,
 			capital: cap.slice(), warHeart: heart, coreOffset: [ox, oy],
 			map: map, terrain: terrain, sites: sites, formations: formations, passes: passes,
-			reachable: reachable, siteAt: siteAt, formationAt: formationAt
+			reachable: reachable, siteAt: siteAt, formationAt: formationAt,
+			deposits: deposits, pockets: pockets
 		};
+	},
+
+	// A range too thick for a one-hex pass: from open ground at its edge, straight through the
+	// peaks to open ground on the far side (at most 5 hexes), cutting every one.
+	_tunnel: function (hexes, terrain, cutPass) {
+		var G = WorldGen, T = G.TERRAIN;
+		var open = function (h) { var col = terrain[h[0]]; return col && col[h[1]] && G.isPassable(col[h[1]]); };
+		for (var i = 0; i < hexes.length; i++) {
+			var h = hexes[i];
+			if (terrain[h[0]][h[1]] !== T.mountains) continue;
+			for (var d = 0; d < 6; d++) {
+				if (!open(G.neighbour(h[0], h[1], d))) continue;
+				var line = [h], at = h;
+				for (var s = 0; s < 5; s++) {
+					at = G.neighbour(at[0], at[1], (d + 3) % 6);
+					if (!terrain[at[0]] || !terrain[at[0]][at[1]] || terrain[at[0]][at[1]] === T.ocean) break;
+					if (open(at)) {
+						line.forEach(function (p) { cutPass(p[0], p[1]); });
+						return;
+					}
+					line.push(at);
+				}
+			}
+		}
+	},
+
+	// true if the hex has passable neighbours on two sides that aren't next to each other
+	_throughWay: function (terrain, x, y) {
+		var open = [];
+		for (var d = 0; d < 6; d++) {
+			var n = WorldGen.neighbour(x, y, d), col = terrain[n[0]];
+			if (col && col[n[1]] && WorldGen.isPassable(col[n[1]])) open.push(d);
+		}
+		for (var i = 0; i < open.length; i++) {
+			for (var j = i + 1; j < open.length; j++) {
+				var gap = open[j] - open[i];
+				if (gap >= 2 && gap <= 4) return true;
+			}
+		}
+		return false;
 	},
 
 	// the most common wasteland ground around a square-map landmark

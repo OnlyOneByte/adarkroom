@@ -333,6 +333,14 @@ var StateManager = {
 			$SM.set('version', 2.1);
 			version = 2.1;
 		}
+		if(version == 2.1) {
+			// v2.2 adds danger and a difficulty; games made before it play at normal.
+			// Their bands start unseen, so the wanderer hears each hint once.
+			if($SM.get('game.difficulty') === undefined) $SM.set('game.difficulty', Danger.DEFAULT_DIFFICULTY, true);
+			Engine.log('upgraded save to v2.2');
+			$SM.set('version', 2.2);
+			version = 2.2;
+		}
 	},
 
 	/******************************************************************
