@@ -515,6 +515,31 @@ test('maps scavenged on a trek stay revealed once home, on both maps', async ({ 
   expect(errors).toEqual([]);
 });
 
+test('a hex save survives export and import, and stays small', async ({ page }) => {
+  const { errors } = await freshToTown(page);
+  await page.locator('#location_path').click();
+  const before = await page.evaluate(() => {
+    packMeat();
+    Path.embark();
+    Math.random = () => 0.99;
+    for (let i = 0; i < 4; i++) World.moveHex(0);
+    World.markVisited(World.curPos[0], World.curPos[1]);
+    World.goHome();
+    return {
+      map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask),
+      export: Engine.export64(), size: localStorage.gameState.length,
+    };
+  });
+  // a player's base64 export, pasted back in with the line breaks the dialog shows
+  await page.evaluate(() => { localStorage.clear(); });
+  await page.evaluate((s) => Engine.import64(s.replace(/(.{60})/g, '$1\n')), before.export);
+  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask) }));
+  expect(after).toEqual({ map: before.map, mask: before.mask });
+  expect(before.size).toBeLessThan(60000); // the whole save, not just the world
+  expect(errors).toEqual([]);
+});
+
 test('200 worlds: every landmark, site, pass and the ship can be walked to; nothing overlaps', async ({ page }) => {
   test.setTimeout(120000);
   const errors = await openGame(page);
