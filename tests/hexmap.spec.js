@@ -512,3 +512,22 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
   expect(r.slowest).toBeLessThan(250); // ms for one world, well inside a load
   expect(errors).toEqual([]);
 });
+
+test('a click on the wanderer\'s own hex does not take a step', async ({ page }) => {
+  const errors = await onHexTrek(page);
+  const r = await page.evaluate(() => {
+    World.drawMap();
+    const o = World.viewOrigin(), me = World.hexCentre(World.curPos[0], World.curPos[1]);
+    return { pos: World.curPos.slice(), water: World.water, x: me[0] - o[0], y: me[1] - o[1] };
+  });
+  const box = await page.locator('#map canvas').boundingBox();
+  // anywhere inside the hex, not just its centre
+  for (const [dx, dy] of [[0, 0], [3, 2], [-4, -3], [0, 6]]) {
+    await page.mouse.click(box.x + r.x + dx, box.y + r.y + dy);
+  }
+  expect(await page.evaluate(() => [World.curPos.slice(), World.water])).toEqual([r.pos, r.water]);
+  // a click one hex east still steps east
+  await page.mouse.click(box.x + r.x + Math.sqrt(3) * 9, box.y + r.y);
+  expect(await page.evaluate(() => World.curPos.slice())).toEqual([r.pos[0] + 1, r.pos[1]]);
+  expect(errors).toEqual([]);
+});
