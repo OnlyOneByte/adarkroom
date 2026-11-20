@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.1,
+    VERSION: 2.2,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -174,6 +174,12 @@
 
       $('<span>')
         .addClass('menuBtn')
+        .text(_('difficulty.'))
+        .click(Engine.chooseDifficulty)
+        .appendTo(menu);
+
+      $('<span>')
+        .addClass('menuBtn')
         .text(_('share.'))
         .click(Engine.share)
         .appendTo(menu);
@@ -299,6 +305,7 @@
       } catch(e) {
         State = {};
         $SM.set('version', Engine.VERSION);
+        $SM.set('game.difficulty', Danger.DEFAULT_DIFFICULTY);
         Engine.event('progress', 'new game');
       }
     },
@@ -423,6 +430,43 @@
                 nextScene: 'end'
               }
             }
+          }
+        }
+      });
+    },
+
+    // The difficulty scales the danger of the world beyond the wasteland (script/danger.js).
+    // It can be picked until that world opens up; after that it's part of the world.
+    DIFFICULTY_NAMES: { gentle: _('gentle'), normal: _('normal'), harsh: _('harsh') },
+
+    chooseDifficulty: function() {
+      var now = Engine.DIFFICULTY_NAMES[World.difficulty()];
+      if($SM.get('features.location.city')) {
+        Events.startEvent({
+          title: _('Difficulty'),
+          scenes: {
+            start: {
+              text: [_('the world beyond the wasteland is already {0}.', now)],
+              buttons: { 'ok': { text: _('ok'), nextScene: 'end' } }
+            }
+          }
+        });
+        return;
+      }
+      var buttons = {};
+      Object.keys(Danger.DIFFICULTY).forEach(function(d) {
+        buttons[d] = {
+          text: Engine.DIFFICULTY_NAMES[d],
+          nextScene: 'end',
+          onChoose: function() { $SM.set('game.difficulty', d); }
+        };
+      });
+      Events.startEvent({
+        title: _('Difficulty'),
+        scenes: {
+          start: {
+            text: [_('how hard is the world beyond the wasteland?'), _("now: {0}. it can't be changed once the world opens up.", now)],
+            buttons: buttons
           }
         }
       });
