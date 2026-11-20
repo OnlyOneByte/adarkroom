@@ -37,3 +37,13 @@ test('scripted play: light fire, reach the forest, gather wood', async ({ page }
   expect(saved.features.location.outside).toBe(true);
   expect(errors).toEqual([]);
 });
+
+// The "Sound Available!" greeting opens 3 s after a fresh load and used to land on
+// top of whatever button a test was about to click (the flaky town test).
+test('no event opens over the buttons while a test plays', async ({ page }) => {
+  await page.clock.install();
+  const errors = await openGame(page);
+  await page.clock.runFor(10000);
+  await expect(page.locator('#event')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
