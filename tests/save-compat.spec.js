@@ -12,7 +12,7 @@ test('a v1.3 village save loads intact', async ({ page }) => {
 
   const state = await getState(page);
   // Engine.loadGame silently starts a new game on a bad save, so check the values.
-  expect(state.version).toBe(1.3);
+  expect(state.version).toBe(2.0); // migrated by $SM.updateOldState
   expect(state.features.location).toEqual(fixture.features.location);
   expect(state.game.buildings).toEqual(fixture.game.buildings);
   expect(state.game.population).toBe(fixture.game.population);
