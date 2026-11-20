@@ -18,7 +18,7 @@ var WorldGen = {
 	// shortcut: only version 1 exists; keep old generators around once there is a version 2
 	VERSION: 1,
 
-	// provisional -- pending design: world size, capital position, feature counts
+	// world size, capital position and feature counts: DESIGN.md "Hex map parameters"
 	COLS: 160,
 	ROWS: 100,
 	CAPITAL: [44, 50],
@@ -26,7 +26,8 @@ var WorldGen = {
 	BLEND: 6,               // hexes past the old edge where the wasteland fades out
 	COUNTS: {
 		range: 10, forest: 8, sea: 5, desert: 4,     // natural formations
-		crater: 14, fallenCity: 40, complex: 8       // sites outside the old wasteland
+		crater: 14, fallenCity: 40, complex: 8,      // sites outside the old wasteland
+		passes: [1, 3]                               // passes cut through each mountain range
 	},
 
 	TERRAIN: {
@@ -49,6 +50,8 @@ var WorldGen = {
 		crater: { glyph: 'Ø', label: _('a war crater') },
 		complex: { glyph: 'Π', label: _('an old-world complex') }
 	},
+
+	PASS_LABEL: _('a mountain pass'),
 
 	FORMATIONS: {
 		range: _('a mountain range'),
@@ -100,6 +103,11 @@ var WorldGen = {
 		return c === WorldGen.TERRAIN.ocean || c === WorldGen.TERRAIN.lake;
 	},
 
+	// on foot: open ocean and mountains (outside their passes, which are hills) can't be crossed
+	isPassable: function (c) {
+		return c !== WorldGen.TERRAIN.ocean && c !== WorldGen.TERRAIN.mountains;
+	},
+
 	/*
 	 * Builds the hex world. squareMap is the prologue map (61x61, World.TILE codes,
 	 * '!' marks visited); it must not be modified. Returns:
@@ -108,6 +116,8 @@ var WorldGen = {
 	 *   terrain[x][y]  the ground under every hex (deposits sit on hills)
 	 *   sites[]        { kind, anchor:[x,y], hexes:[[x,y]...] } multi-hex sites
 	 *   formations[]   { kind, hexes:[[x,y]...] } multi-hex natural formations
+	 *   passes[]       [x,y] hexes where a way is cut through mountains (hills now)
+	 *   reachable      Uint8Array(cols*rows), 1 = reachable from the capital on foot
 	 *   siteAt, formationAt  Int16Array(cols*rows) index into the lists above, -1 none
 	 *   coreOffset     [dx, dy] from square to hex coordinates
 	 */
@@ -345,7 +355,90 @@ var WorldGen = {
 		terrain[heart[0]][heart[1]] = T.wastes;
 		map[heart[0]][heart[1]] = ship || World.TILE.SHIP;
 
-		// 6. Multi-hex sites.
+		// 6. Passes: a few through every range, then more wherever mountains wall a region off.
+		var passes = [], passAt = {};
+		var cutPass = function (x, y) {
+			terrain[x][y] = map[x][y] = T.hills;
+			if (!passAt[idx(x, y)]) {
+				passAt[idx(x, y)] = true;
+				passes.push([x, y]);
+			}
+		};
+		for (i = 0; i < formations.length; i++) {
+			if (formations[i].kind !== 'range') continue;
+			var peaks = formations[i].hexes.filter(function (h) { return terrain[h[0]][h[1]] === T.mountains; });
+			var want = c0.passes[0] + Math.floor(rand() * (c0.passes[1] - c0.passes[0] + 1));
+			for (var w = 0; w < want && peaks.length; w++) {
+				var pk = peaks.splice(Math.floor(rand() * peaks.length), 1)[0];
+				cutPass(pk[0], pk[1]);
+			}
+		}
+		// Cheapest way from the capital to every hex, counting mountains crossed (oceanCost for open sea).
+		var walk = function (oceanCost) {
+			var n = cols * rows, dist = new Float64Array(n).fill(Infinity), from = new Int32Array(n).fill(-1);
+			// a bucket queue: every step costs a whole number
+			var start = idx(cap[0], cap[1]), buckets = [[start]];
+			dist[start] = 0;
+			for (var d0 = 0; d0 < buckets.length; d0++) {
+				var bucket = buckets[d0];
+				if (!bucket) continue;
+				for (var bi = 0; bi < bucket.length; bi++) {
+					var at = bucket[bi];
+					if (dist[at] !== d0) continue;
+					var ax = at % cols, ay = (at - ax) / cols;
+					for (var dd = 0; dd < 6; dd++) {
+						var nb = G.neighbour(ax, ay, dd);
+						if (!inside(nb[0], nb[1])) continue;
+						var c = terrain[nb[0]][nb[1]];
+						var step = c === T.mountains ? 1 : (c === T.ocean ? oceanCost : 0);
+						var k = idx(nb[0], nb[1]), nd = d0 + step;
+						if (nd < dist[k]) {
+							dist[k] = nd;
+							from[k] = at;
+							(buckets[nd] = buckets[nd] || []).push(k);
+						}
+					}
+				}
+			}
+			return { dist: dist, from: from };
+		};
+		// cut through along the cheapest way to hex k, then everything joined to it is reached
+		var carve = function (r, k, ford) {
+			var opened = [];
+			for (; k >= 0 && r.dist[k] > 0; k = r.from[k]) {
+				var kx = k % cols, ky = (k - kx) / cols;
+				if (terrain[kx][ky] === T.mountains) cutPass(kx, ky);
+				else if (ford && terrain[kx][ky] === T.ocean) terrain[kx][ky] = map[kx][ky] = T.lake;
+				r.dist[k] = 0;
+				opened.push(k);
+			}
+			while (opened.length) {
+				var o = opened.pop(), qx = o % cols, qy = (o - qx) / cols;
+				for (var dd = 0; dd < 6; dd++) {
+					var nb = G.neighbour(qx, qy, dd);
+					if (!inside(nb[0], nb[1]) || !G.isPassable(terrain[nb[0]][nb[1]])) continue;
+					var nk = idx(nb[0], nb[1]);
+					if (r.dist[nk] > 0) { r.dist[nk] = 0; opened.push(nk); }
+				}
+			}
+		};
+		// the ship must be reachable, if need be through the shallows
+		var res = walk(50);
+		if (res.dist[idx(heart[0], heart[1])] > 0) carve(res, idx(heart[0], heart[1]), true);
+		// then every walled-off region gets a pass, nearest first
+		res = walk(Infinity);
+		var order = [];
+		for (i = 0; i < cols * rows; i++) {
+			if (res.dist[i] > 0 && res.dist[i] < Infinity && G.isPassable(terrain[i % cols][(i - i % cols) / cols])) order.push(i);
+		}
+		order.sort(function (a, b) { return res.dist[a] - res.dist[b] || a - b; });
+		for (i = 0; i < order.length; i++) {
+			if (res.dist[order[i]] > 0) carve(res, order[i], false);
+		}
+		var reachable = new Uint8Array(cols * rows);
+		for (i = 0; i < cols * rows; i++) reachable[i] = res.dist[i] === 0 ? 1 : 0;
+
+		// 7. Multi-hex sites, only where the wanderer can walk to them.
 		var addSite = function (kind, anchor, size, ok, ground) {
 			var hexes = grow(anchor, size, ok);
 			if (hexes.length < 3) return false;
@@ -367,7 +460,7 @@ var WorldGen = {
 					(G.isTerrain(map[x][y]) || (x === a[0] && y === a[1]));
 			});
 		}
-		var siteOk = function (x, y) { return free(x, y) && land(x, y) && terrain[x][y] !== T.mountains; };
+		var siteOk = function (x, y) { return free(x, y) && reachable[idx(x, y)] && land(x, y); };
 		var towardHeart = function (power) {
 			return function (x, y) {
 				return siteOk(x, y) && rand() < Math.pow(1 - G.distance([x, y], heart) / (cols * 0.9), power);
@@ -389,8 +482,8 @@ var WorldGen = {
 		return {
 			gen: G.VERSION, seed: seed, cols: cols, rows: rows,
 			capital: cap.slice(), warHeart: heart, coreOffset: [ox, oy],
-			map: map, terrain: terrain, sites: sites, formations: formations,
-			siteAt: siteAt, formationAt: formationAt
+			map: map, terrain: terrain, sites: sites, formations: formations, passes: passes,
+			reachable: reachable, siteAt: siteAt, formationAt: formationAt
 		};
 	},
 

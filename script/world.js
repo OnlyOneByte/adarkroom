@@ -248,7 +248,9 @@ var World = {
       }
       mask = WorldGen.decodeMask(w.hex.mask, gen.cols, gen.rows);
     }
-    World.hex = { gen: gen, map: map, mask: mask };
+    var passes = {};
+    gen.passes.forEach(function(p) { passes[p[0] + ',' + p[1]] = true; });
+    World.hex = { gen: gen, map: map, mask: mask, passes: passes };
     World.VILLAGE_POS = gen.capital.slice();
     World.seenAll = false;
     if(first) {
@@ -375,16 +377,21 @@ var World = {
     }
 
     for(var x = 0; x < Math.abs(xDist); x++) {
-      if(World.isTerrain(World.state.map[closestRoad[0] + (xDir*x)][yIntersect])) {
+      if(World.roadCanCross(World.state.map[closestRoad[0] + (xDir*x)][yIntersect])) {
         World.state.map[closestRoad[0] + (xDir*x)][yIntersect] = World.TILE.ROAD;
       }
     }
     for(var y = 0; y < Math.abs(yDist); y++) {
-      if(World.isTerrain(World.state.map[xIntersect][closestRoad[1] + (yDir*y)])) {
+      if(World.roadCanCross(World.state.map[xIntersect][closestRoad[1] + (yDir*y)])) {
         World.state.map[xIntersect][closestRoad[1] + (yDir*y)] = World.TILE.ROAD;
       }
     }
     World.drawMap();
+  },
+
+  // roads go over open ground only; on the hex map they don't bridge seas or climb mountains
+  roadCanCross: function(tile) {
+    return World.isTerrain(tile) && WorldGen.isPassable(tile);
   },
 
   updateSupplies: function() {
@@ -491,13 +498,45 @@ var World = {
     }
   },
 
+  /*
+   * Movement on the hex map. Open ocean waits for boats; mountains can only be
+   * crossed at their passes (which are hills); rough ground costs two moves.
+   */
+  ROUGH: ['hills', 'forest', 'jungle', 'swamp'],
+
+  canEnter: function(tile) {
+    if(!World.hex) return true;
+    if(tile === WorldGen.TERRAIN.ocean) return World.canSail();
+    return WorldGen.isPassable(tile);
+  },
+
+  // hook: boats (a later phase) open the sea
+  canSail: function() {
+    return false;
+  },
+
+  // moves a step onto this tile costs; each move eats food and water like a prologue step
+  moveCost: function(tile) {
+    if(!World.hex) return 1;
+    for(var i = 0; i < World.ROUGH.length; i++) {
+      if(tile === WorldGen.TERRAIN[World.ROUGH[i]]) return 2;
+    }
+    return 1;
+  },
+
   move: function(direction) {
     var oldTile = World.state.map[World.curPos[0]][World.curPos[1]];
+    var to = World.state.map[World.curPos[0] + direction[0]][World.curPos[1] + direction[1]];
+    if(!World.canEnter(to)) {
+      Notifications.notify(World, to === WorldGen.TERRAIN.ocean ?
+        _('the sea is too deep to wade.') : _('the mountains are too steep to climb.'));
+      return;
+    }
     World.curPos[0] += direction[0];
     World.curPos[1] += direction[1];
     World.narrateMove(oldTile, World.state.map[World.curPos[0]][World.curPos[1]]);
     World.lightMap(World.curPos[0], World.curPos[1], World.state.mask);
-    if(World.hex) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
+    if(World.hex && World.follow) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
     World.drawMap();
     World.doSpace();
 
@@ -544,6 +583,12 @@ var World = {
         break;
       case 67: // C
         if(World.hex) World.moveHex(1);
+        break;
+      case 32: // space: back to the wanderer
+        if(World.hex) {
+          event.preventDefault();
+          World.recentre();
+        }
         break;
       default:
         break;
@@ -717,9 +762,10 @@ var World = {
         Events.startEvent(Events.Setpieces[World.LANDMARKS[curTile].scene]);
       }
     } else {
-      if(World.useSupplies()) {
-        World.checkFight();
+      for(var i = World.moveCost(curTile); i > 0; i--) {
+        if(!World.useSupplies()) return;
       }
+      World.checkFight();
     }
   },
 
@@ -736,7 +782,6 @@ var World = {
   },
 
   // Encounters are written for the three wasteland grounds; the new terrains borrow theirs.
-  // provisional -- pending design: which encounters belong to which terrain
   encounterTerrain: function(tile) {
     var T = WorldGen.TERRAIN;
     switch(tile) {
@@ -1149,6 +1194,7 @@ var World = {
       .css({ width: World.VIEW[0] + 'px', height: World.VIEW[1] + 'px' }).appendTo(map);
     $('<span>').addClass('landmark hexProbe').appendTo(map);
     $('<div>').attr('id', 'hexInfo').html('&nbsp;').insertAfter(map);
+    $('<div>').attr('id', 'hexHint').text(_('drag to look around. space to come back.')).insertAfter('#hexInfo');
 
     // drag or scroll to look around; a click without a drag steps toward it
     var start = null;
@@ -1162,6 +1208,7 @@ var World = {
       if(Math.abs(dx) + Math.abs(dy) > 4) World._dragged = true;
       if(World._dragged) {
         World.cam = [start.cam[0] - dx, start.cam[1] - dy];
+        World.follow = false; // looking around: the view stays put until space
         World.drawHexMap();
       }
     }).on('mouseup', function() {
@@ -1171,9 +1218,17 @@ var World = {
     canvas[0].addEventListener('wheel', function(e) {
       e.preventDefault();
       World.cam = [World.cam[0] + (e.shiftKey ? e.deltaY : e.deltaX), World.cam[1] + (e.shiftKey ? 0 : e.deltaY)];
+      World.follow = false;
       World.drawHexMap();
     }, { passive: false });
     return map;
+  },
+
+  // the view follows the wanderer again
+  recentre: function() {
+    World.follow = true;
+    World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
+    World.drawHexMap();
   },
 
   // viewport origin in map pixels
@@ -1210,6 +1265,7 @@ var World = {
     if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
     var site = World.siteAt(x, y);
     if(site) return WorldGen.SITES[site.kind].label;
+    if(World.hex.passes[x + ',' + y]) return WorldGen.PASS_LABEL;
     var f = World.formationAt(x, y);
     if(f) return WorldGen.FORMATIONS[f.kind];
     for(var k in WorldGen.TERRAIN) {
@@ -1517,6 +1573,7 @@ var World = {
     World.usedOutposts = {};
     World.curPos = World.copyPos(World.VILLAGE_POS);
     World.cam = null;
+    World.follow = true;
     World.drawMap();
     World.setTitle();
     AudioEngine.playBackgroundMusic(AudioLibrary.MUSIC_WORLD);
