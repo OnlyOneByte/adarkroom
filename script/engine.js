@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 1.3,
+    VERSION: 2.0,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -226,6 +226,12 @@
       }
       if($SM.get('stores.compass', true) > 0) {
         Path.init();
+      }
+      if($SM.get('features.location.city')) {
+        City.init();
+      } else {
+        $.Dispatch('stateUpdate').subscribe(City.checkUnlock);
+        City.checkUnlock();
       }
       if ($SM.get('features.location.fabricator')) {
         Fabricator.init();
@@ -719,7 +725,10 @@
               else if ((Engine.activeModule == Ship || Engine.activeModule == Fabricator) && Path.tab) {
                 Engine.travelTo(Path);
               }
-              else if (Engine.activeModule == Path && Outside.tab) {
+              else if (Engine.activeModule == Path && City.tab) {
+                Engine.travelTo(City);
+              }
+              else if ((Engine.activeModule == Path || Engine.activeModule == City) && Outside.tab) {
                 Engine.travelTo(Outside);
               } 
               else if (Engine.activeModule == Outside && Room.tab) {
@@ -734,7 +743,10 @@
               if (Engine.activeModule == Room && Outside.tab) {
                 Engine.travelTo(Outside);
               }
-              else if (Engine.activeModule == Outside && Path.tab){
+              else if (Engine.activeModule == Outside && City.tab){
+                Engine.travelTo(City);
+              }
+              else if ((Engine.activeModule == Outside || Engine.activeModule == City) && Path.tab){
                 Engine.travelTo(Path);
               }
               else if(Engine.activeModule == Path && Fabricator.tab) {

@@ -946,9 +946,11 @@ var Room = {
 			var storeName = el.attr('id').substring(4).replace('-', ' ');
 			for (var incomeSource in $SM.get('income')) {
 				var income = $SM.get('income["' + incomeSource + '"]');
+				// these stores are the village's; other cities' income goes elsewhere
+				if (income.city) continue;
 				for (var store in income.stores) {
 					if (store == storeName && income.stores[store] !== 0) {
-						$('<div>').addClass('row_key').text(_(incomeSource)).appendTo(tt);
+						$('<div>').addClass('row_key').text(income.name || _(incomeSource)).appendTo(tt);
 						$('<div>')
 							.addClass('row_val')
 							.text(Engine.getIncomeMsg(income.stores[store], income.delay))

@@ -315,6 +315,12 @@ var StateManager = {
 				$SM.remove('cityCleared');
 			}
 			$SM.set('version', 1.3);
+			version = 1.3;
+		}
+		if(version == 1.3) {
+			// v2.0 added the town; its state (game.city) is created when it unlocks
+			Engine.log('upgraded save to v2.0');
+			$SM.set('version', 2.0);
 		}
 	},
 
@@ -363,11 +369,13 @@ var StateManager = {
 					Engine.log('collection income from ' + source);
 					if(source == 'thieves') $SM.addStolen(income.stores);
 
+					// city-scoped sources (income.city) pay into that city's own stores
+					var target = income.city ? 'game.cities["' + income.city + '"].stores' : 'stores';
 					var cost = income.stores;
 					var ok = true;
 					if (source != 'thieves') {
 						for (var k in cost) {
-							var have = $SM.get('stores["' + k + '"]', true);
+							var have = $SM.get(target + '["' + k + '"]', true);
 							if (have + cost[k] < 0) {
 								ok = false;
 								break;
@@ -376,7 +384,7 @@ var StateManager = {
 					}
 
 					if(ok){
-						$SM.addM('stores', income.stores, true);
+						$SM.addM(target, income.stores, true);
 					}
 					changed = true;
 					if(typeof income.delay == 'number') {
