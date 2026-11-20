@@ -1,0 +1,44 @@
+div#cityBuildBtns {
+	position: absolute;
+	top: 0px;
+	left: 0px;
+}
+
+div#cityBuildBtns:before {
+	content: attr(data-legend);
+	position: relative;
+	top: -5px;
+}
+
+div#town {
+	position: absolute;
+	top: 0px;
+	right: 0px;
+	border: 1px solid black;
+	cursor: default;
+	padding: 5px 10px;
+	width: 200px;
+	min-height: 10px;
+}
+
+div#town:before {
+	position: absolute;
+	background: white;
+	content: attr(data-legend);
+	left: 8px;
+	top: -13px;
+}
+
+div#citizens {
+	position: absolute;
+	top: -13px;
+	right: 10px;
+	background-color: white;
+}
+
+div#cityWorkers {
+	position: absolute;
+	top: -4px;
+	left: 160px;
+	width: 150px;
+}

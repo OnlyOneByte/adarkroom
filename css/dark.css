@@ -36,11 +36,11 @@ div#population {
 	background-color: #272823;
 }
 
-div#village:before {
+div#village:before, div#town:before, div#citizens {
 	background: #272823;
 }
 
-div#village {
+div#village, div#town {
 	border: 1px solid #EEE;
 }
 
