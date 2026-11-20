@@ -135,6 +135,8 @@ var City = {
 	unlock: function () {
 		City.init();
 		Notifications.notify(null, _("the village has outgrown its huts."));
+		// the world opens up into the hex map; without a compass it waits for World.init
+		if (World.panel) World.openHexMap();
 		Engine.event('progress', 'city');
 	},
 
