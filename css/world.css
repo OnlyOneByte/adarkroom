@@ -72,3 +72,29 @@ div.supplyItem {
 	padding: 0 5px;
 	cursor: default;
 }
+/* the hex map is drawn on a canvas in the map's colours */
+#map.hex {
+	line-height: normal;
+	letter-spacing: normal;
+	cursor: pointer;
+}
+
+#map.hex canvas {
+	display: block;
+}
+
+#map .hexProbe {
+	display: none;
+}
+
+#hexInfo {
+	height: 20px;
+	margin-top: 4px;
+	font-size: 14px;
+	color: #999;
+}
+
+#hexHint {
+	font-size: 12px;
+	color: #999;
+}

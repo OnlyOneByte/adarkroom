@@ -158,8 +158,10 @@ var World = {
     if(typeof $SM.get('features.location.world') == 'undefined') {
       $SM.set('features.location.world', true);
       $SM.set('features.executioner', true);
+      var seed = WorldGen.newSeed();
       $SM.setM('game.world', {
-        map: World.generateMap(),
+        seed: seed,
+        map: World.generateMap(WorldGen.rng(seed)),
         mask: World.newMask()
       });
     }
@@ -188,17 +190,129 @@ var World = {
 
     Engine.updateOuterSlider();
 
-    // Map the ship and show compass tooltip
-    World.ship = World.mapSearch(World.TILE.SHIP,$SM.get('game.world.map'),1);
-    World.dir = World.compassDir(World.ship[0]);
-    // compass tooltip text
-    Room.compassTooltip(World.dir);
+    if($SM.get('features.location.city')) {
+      // the town is open: the world is the hex map
+      World.openHexMap();
+    } else {
+      World.pointCompass($SM.get('game.world.map'));
+    }
 
     // Check if everything has been seen
     World.testMap();
 
     //subscribe to stateUpdates
     $.Dispatch('stateUpdate').subscribe(World.handleStateUpdates);
+  },
+
+  // Map the ship and show compass tooltip
+  pointCompass: function(map) {
+    World.ship = World.mapSearch(World.TILE.SHIP, map, 1);
+    World.dir = World.compassDir(World.ship[0]);
+    // compass tooltip text
+    Room.compassTooltip(World.dir);
+  },
+
+  /*
+   * The hex map. When the town opens, the same world re-projects onto hexes
+   * (WorldGen.generate): the square map becomes its core and stays in the save,
+   * frozen, as the generator's input. The save then holds only
+   *   game.world.seed   the world's seed
+   *   game.world.hex    { gen, delta: { 'x,y': tile }, mask: <bits> }
+   * and everything else is regenerated on load. World.hex keeps the live copy.
+   */
+  openHexMap: function() {
+    if(World.state) {
+      // out on a trek: the world opens up when the wanderer gets home
+      World._hexPending = true;
+      return;
+    }
+    var w = $SM.get('game.world');
+    var first = !w.hex;
+    if(typeof w.seed != 'number') {
+      w.seed = WorldGen.newSeed();
+    }
+    var gen = WorldGen.generate(w.seed, w.map);
+    var map = gen.map.map(function(col) { return col.slice(); });
+    var mask;
+    if(first) {
+      mask = World.newHexMask(gen);
+      for(var x = 0; x < w.map.length; x++) {
+        for(var y = 0; y < w.map[x].length; y++) {
+          if(w.mask[x][y]) mask[x + gen.coreOffset[0]][y + gen.coreOffset[1]] = true;
+        }
+      }
+    } else {
+      for(var k in w.hex.delta) {
+        var p = k.split(',');
+        map[+p[0]][+p[1]] = w.hex.delta[k];
+      }
+      mask = WorldGen.decodeMask(w.hex.mask, gen.cols, gen.rows);
+    }
+    var passes = {};
+    gen.passes.forEach(function(p) { passes[p[0] + ',' + p[1]] = true; });
+    World.hex = { gen: gen, map: map, mask: mask, passes: passes };
+    World.VILLAGE_POS = gen.capital.slice();
+    World.seenAll = false;
+    if(first) {
+      World.saveHex(w);
+      Notifications.notify(null, _('the world is bigger than the wasteland.'));
+      Engine.event('progress', 'hex map');
+    }
+    World.pointCompass(map);
+  },
+
+  newHexMask: function(gen) {
+    var mask = new Array(gen.cols);
+    for(var i = 0; i < gen.cols; i++) {
+      mask[i] = new Array(gen.rows);
+    }
+    return mask;
+  },
+
+  // Commits World.hex to the save as seed + deltas. flags: the trek's other world state.
+  saveHex: function(flags) {
+    var gen = World.hex.gen, map = World.hex.map, delta = {};
+    for(var x = 0; x < gen.cols; x++) {
+      for(var y = 0; y < gen.rows; y++) {
+        if(map[x][y] !== gen.map[x][y]) delta[x + ',' + y] = map[x][y];
+      }
+    }
+    var old = $SM.get('game.world');
+    var world = $.extend({}, flags, {
+      seed: gen.seed,
+      map: old.map,
+      mask: old.mask,
+      hex: { gen: gen.gen, delta: delta, mask: WorldGen.encodeMask(World.hex.mask, gen.cols, gen.rows) }
+    });
+    $SM.setM('game.world', world);
+  },
+
+  isHex: function() {
+    return !!World.hex;
+  },
+
+  // map size: the hex world's, or the prologue's 61x61
+  cols: function() {
+    return World.hex ? World.hex.gen.cols : World.RADIUS * 2 + 1;
+  },
+
+  rows: function() {
+    return World.hex ? World.hex.gen.rows : World.RADIUS * 2 + 1;
+  },
+
+  // Hex data for later phases (yields, movement, city-states): nothing reads them for rules yet.
+  terrainAt: function(x, y) {
+    return World.hex.gen.terrain[x][y];
+  },
+
+  siteAt: function(x, y) {
+    var i = World.hex.gen.siteAt[x + y * World.hex.gen.cols];
+    return i < 0 ? null : World.hex.gen.sites[i];
+  },
+
+  formationAt: function(x, y) {
+    var i = World.hex.gen.formationAt[x + y * World.hex.gen.cols];
+    return i < 0 ? null : World.hex.gen.formations[i];
   },
 
   clearDungeon: function() {
@@ -222,7 +336,7 @@ var World = {
       for (var i = 0; i < Math.pow(World.getDistance(startPos, World.VILLAGE_POS) + 2, 2); i++) {
         searchX = startPos[0] + x;
         searchY = startPos[1] + y;
-        if (0 < searchX && searchX < World.RADIUS * 2 && 0 < searchY && searchY < World.RADIUS * 2) {
+        if (0 < searchX && searchX < World.cols() - 1 && 0 < searchY && searchY < World.rows() - 1) {
           // check for road
           var tile = World.state.map[searchX][searchY];
           if (
@@ -263,16 +377,21 @@ var World = {
     }
 
     for(var x = 0; x < Math.abs(xDist); x++) {
-      if(World.isTerrain(World.state.map[closestRoad[0] + (xDir*x)][yIntersect])) {
+      if(World.roadCanCross(World.state.map[closestRoad[0] + (xDir*x)][yIntersect])) {
         World.state.map[closestRoad[0] + (xDir*x)][yIntersect] = World.TILE.ROAD;
       }
     }
     for(var y = 0; y < Math.abs(yDist); y++) {
-      if(World.isTerrain(World.state.map[xIntersect][closestRoad[1] + (yDir*y)])) {
+      if(World.roadCanCross(World.state.map[xIntersect][closestRoad[1] + (yDir*y)])) {
         World.state.map[xIntersect][closestRoad[1] + (yDir*y)] = World.TILE.ROAD;
       }
     }
     World.drawMap();
+  },
+
+  // roads go over open ground only; on the hex map they don't bridge seas or climb mountains
+  roadCanCross: function(tile) {
+    return World.isTerrain(tile) && WorldGen.isPassable(tile);
   },
 
   updateSupplies: function() {
@@ -358,7 +477,7 @@ var World = {
 
   moveSouth: function() {
     Engine.log('South');
-    if(World.curPos[1] < World.RADIUS * 2) World.move(World.SOUTH);
+    if(World.curPos[1] < World.rows() - 1) World.move(World.SOUTH);
   },
 
   moveWest: function() {
@@ -368,15 +487,56 @@ var World = {
 
   moveEast: function() {
     Engine.log('East');
-    if(World.curPos[0] < World.RADIUS * 2) World.move(World.EAST);
+    if(World.curPos[0] < World.cols() - 1) World.move(World.EAST);
+  },
+
+  // one of the hex directions, WorldGen._DIRS order: E, SE, SW, W, NW, NE
+  moveHex: function(dir) {
+    var to = WorldGen.neighbour(World.curPos[0], World.curPos[1], dir);
+    if(to[0] >= 0 && to[1] >= 0 && to[0] < World.cols() && to[1] < World.rows()) {
+      World.move([to[0] - World.curPos[0], to[1] - World.curPos[1]]);
+    }
+  },
+
+  /*
+   * Movement on the hex map. Open ocean waits for boats; mountains can only be
+   * crossed at their passes (which are hills); rough ground costs two moves.
+   */
+  ROUGH: ['hills', 'forest', 'jungle', 'swamp'],
+
+  canEnter: function(tile) {
+    if(!World.hex) return true;
+    if(tile === WorldGen.TERRAIN.ocean) return World.canSail();
+    return WorldGen.isPassable(tile);
+  },
+
+  // hook: boats (a later phase) open the sea
+  canSail: function() {
+    return false;
+  },
+
+  // moves a step onto this tile costs; each move eats food and water like a prologue step
+  moveCost: function(tile) {
+    if(!World.hex) return 1;
+    for(var i = 0; i < World.ROUGH.length; i++) {
+      if(tile === WorldGen.TERRAIN[World.ROUGH[i]]) return 2;
+    }
+    return 1;
   },
 
   move: function(direction) {
     var oldTile = World.state.map[World.curPos[0]][World.curPos[1]];
+    var to = World.state.map[World.curPos[0] + direction[0]][World.curPos[1] + direction[1]];
+    if(!World.canEnter(to)) {
+      Notifications.notify(World, to === WorldGen.TERRAIN.ocean ?
+        _('the sea is too deep to wade.') : _('the mountains are too steep to climb.'));
+      return;
+    }
     World.curPos[0] += direction[0];
     World.curPos[1] += direction[1];
     World.narrateMove(oldTile, World.state.map[World.curPos[0]][World.curPos[1]]);
     World.lightMap(World.curPos[0], World.curPos[1], World.state.mask);
+    if(World.hex && World.follow) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
     World.drawMap();
     World.doSpace();
 
@@ -411,6 +571,25 @@ var World = {
       case 68:
         World.moveEast();
         break;
+      // on hexes, up and down zig-zag; these step along the other diagonals
+      case 81: // Q
+        if(World.hex) World.moveHex(4);
+        break;
+      case 69: // E
+        if(World.hex) World.moveHex(5);
+        break;
+      case 90: // Z
+        if(World.hex) World.moveHex(2);
+        break;
+      case 67: // C
+        if(World.hex) World.moveHex(1);
+        break;
+      case 32: // space: back to the wanderer
+        if(World.hex) {
+          event.preventDefault();
+          World.recentre();
+        }
+        break;
       default:
         break;
     }
@@ -433,6 +612,10 @@ var World = {
   },
 
   click: function(event) {
+    if(World.hex) {
+      if(!World._dragged) World.clickHex(event);
+      return;
+    }
     var map = $('#map'),
       // measure clicks relative to the centre of the current location
       centreX = map.offset().left + map.width() * World.curPos[0] / (World.RADIUS * 2),
@@ -579,20 +762,43 @@ var World = {
         Events.startEvent(Events.Setpieces[World.LANDMARKS[curTile].scene]);
       }
     } else {
-      if(World.useSupplies()) {
-        World.checkFight();
+      for(var i = World.moveCost(curTile); i > 0; i--) {
+        if(!World.useSupplies()) return;
       }
+      World.checkFight();
     }
   },
 
   getDistance: function(from, to) {
     from = from || World.curPos;
     to = to || World.VILLAGE_POS;
+    if(World.hex) return WorldGen.distance(from, to);
     return Math.abs(from[0] - to[0]) + Math.abs(from[1] - to[1]);
   },
 
   getTerrain: function() {
-    return World.state.map[World.curPos[0]][World.curPos[1]];
+    var tile = World.state.map[World.curPos[0]][World.curPos[1]];
+    return World.hex ? World.encounterTerrain(tile) : tile;
+  },
+
+  // Encounters are written for the three wasteland grounds; the new terrains borrow theirs.
+  encounterTerrain: function(tile) {
+    var T = WorldGen.TERRAIN;
+    switch(tile) {
+      case T.jungle:
+      case T.swamp:
+        return World.TILE.FOREST;
+      case T.hills:
+      case T.tundra:
+      case T.lake:
+      case T.ocean:
+        return World.TILE.FIELD;
+      case T.desert:
+      case T.wastes:
+      case T.mountains:
+        return World.TILE.BARRENS;
+    }
+    return tile;
   },
 
   getDamage: function(thing) {
@@ -656,6 +862,18 @@ var World = {
 
   uncoverMap: function(x, y, r, mask) {
     mask[x][y] = true;
+    if(World.hex) {
+      var cols = World.cols(), rows = World.rows();
+      for(var dy = -r; dy <= r; dy++) {
+        for(var dx = -r - 1; dx <= r + 1; dx++) {
+          var hx = x + dx, hy = y + dy;
+          if(hx >= 0 && hy >= 0 && hx < cols && hy < rows && WorldGen.distance([x, y], [hx, hy]) <= r) {
+            mask[hx][hy] = true;
+          }
+        }
+      }
+      return;
+    }
     for(var i = -r; i <= r; i++) {
       for(var j = -r + Math.abs(i); j <= r - Math.abs(i); j++) {
         if(y + j >= 0 && y + j <= World.RADIUS * 2 &&
@@ -670,7 +888,7 @@ var World = {
   testMap: function() {
     if(!World.seenAll) {
       var dark; 
-      var mask = $SM.get('game.world.mask');
+      var mask = World.committedMask();
       loop:
       for(var i = 0; i < mask.length; i++) {
         for(var j = 0; j < mask[i].length; j++) {
@@ -686,17 +904,33 @@ var World = {
 
   applyMap: function() {
     if(!World.seenAll){
-      var x,y,mask = $SM.get('game.world.mask');
+      var x,y,mask = World.committedMask();
       do {
-        x = Math.floor(Math.random() * (World.RADIUS * 2 + 1));
-        y = Math.floor(Math.random() * (World.RADIUS * 2 + 1));
+        x = Math.floor(Math.random() * World.cols());
+        y = Math.floor(Math.random() * World.rows());
       } while (mask[x][y]);
       World.uncoverMap(x, y, 5, mask);
+      if(World.hex && !World.state) World.saveHex(World.worldFlags());
     }
     World.testMap();
   },
 
-  generateMap: function() {
+  committedMask: function() {
+    return World.hex ? World.hex.mask : $SM.get('game.world.mask');
+  },
+
+  // game.world without the maps: the flags treks set (ship, mines, executioner...)
+  worldFlags: function() {
+    var flags = $.extend(true, {}, $SM.get('game.world'));
+    delete flags.map;
+    delete flags.mask;
+    delete flags.hex;
+    delete flags.seed;
+    return flags;
+  },
+
+  generateMap: function(rand) {
+    rand = rand || Math.random;
     var map = new Array(World.RADIUS * 2 + 1);
     for(var i = 0; i <= World.RADIUS * 2; i++) {
       map[i] = new Array(World.RADIUS * 2 + 1);
@@ -721,7 +955,7 @@ var World = {
           y = World.RADIUS + (7 * r) - t;
         }
 
-        map[x][y] = World.chooseTile(x, y, map);
+        map[x][y] = World.chooseTile(x, y, map, rand);
       }
     }
 
@@ -729,7 +963,7 @@ var World = {
     for(var k in World.LANDMARKS) {
       var landmark = World.LANDMARKS[k];
       for(var l = 0; l < landmark.num; l++) {
-        var pos = World.placeLandmark(landmark.minRadius, landmark.maxRadius, k, map);
+        var pos = World.placeLandmark(landmark.minRadius, landmark.maxRadius, k, map, rand);
       }
     }
 
@@ -747,15 +981,15 @@ var World = {
     var index = 0;
     var targets = [];
     search: // label for coordinate research
-    for(var i = 0; i <= World.RADIUS * 2; i++){
-      for(var j = 0; j <= World.RADIUS * 2; j++){
+    for(var i = 0; i < map.length; i++){
+      for(var j = 0; j < map[i].length; j++){
         if(map[i][j].charAt(0) === target){
           // search result is stored as an object;
           // items are listed as they appear in the map, tl-br
           // each item has relative coordinates and a compass-type direction
           targets[index] = {
-            x : i - World.RADIUS,
-            y : j - World.RADIUS,
+            x : i - World.VILLAGE_POS[0],
+            y : j - World.VILLAGE_POS[1],
           };
           index++;
           if(index === max){
@@ -782,15 +1016,16 @@ var World = {
     return dir;
   },
 
-  placeLandmark: function(minRadius, maxRadius, landmark, map) {
+  placeLandmark: function(minRadius, maxRadius, landmark, map, rand) {
+    rand = rand || Math.random;
 
     var x = World.RADIUS, y = World.RADIUS;
     while(!World.isTerrain(map[x][y])) {
-      var r = Math.floor(Math.random() * (maxRadius - minRadius)) + minRadius;
-      var xDist = Math.floor(Math.random() * r);
+      var r = Math.floor(rand() * (maxRadius - minRadius)) + minRadius;
+      var xDist = Math.floor(rand() * r);
       var yDist = r - xDist;
-      if(Math.random() < 0.5) xDist = -xDist;
-      if(Math.random() < 0.5) yDist = -yDist;
+      if(rand() < 0.5) xDist = -xDist;
+      if(rand() < 0.5) yDist = -yDist;
       x = World.RADIUS + xDist;
       if(x < 0) x = 0;
       if(x > World.RADIUS * 2) x = World.RADIUS * 2;
@@ -803,10 +1038,10 @@ var World = {
   },
 
   isTerrain: function(tile) {
-    return tile == World.TILE.FOREST || tile == World.TILE.FIELD || tile == World.TILE.BARRENS;
+    return WorldGen.isTerrain(tile);
   },
 
-  chooseTile: function(x, y, map) {
+  chooseTile: function(x, y, map, rand) {
 
     var adjacent = [
       y > 0 ? map[x][y-1] : null,
@@ -850,7 +1085,7 @@ var World = {
     });
 
     var c = 0;
-    var r = Math.random();
+    var r = (rand || Math.random)();
     for(var l in list) {
       var prob = list[l];
       c += parseFloat(prob.substring(0,prob.length - 1));
@@ -867,6 +1102,10 @@ var World = {
   },
 
   drawMap: function() {
+    if(World.hex) {
+      World.drawHexMap();
+      return;
+    }
     var map = $('#map');
     if(map.length === 0) {
       map = new $('<div>').attr('id', 'map').appendTo('#worldOuter');
@@ -915,6 +1154,234 @@ var World = {
     map.html(mapString);
   },
 
+  /*
+   * Hex map rendering: thin monochrome outlines, one glyph per hex, the map's own
+   * font, fog left blank. Only the hexes inside the viewport are drawn.
+   */
+  HEX_SIZE: 9,          // centre to corner, px
+  VIEW: [600, 420],     // viewport, px
+
+  hexCentre: function(x, y) {
+    var w = Math.sqrt(3) * World.HEX_SIZE;
+    return [w * (x + 0.5 * (y & 1)) + w / 2, 1.5 * World.HEX_SIZE * y + World.HEX_SIZE];
+  },
+
+  // the hex under a point in map pixels
+  hexAt: function(px, py) {
+    var s = World.HEX_SIZE, w = Math.sqrt(3) * s;
+    px -= w / 2;
+    py -= s;
+    // pixel -> axial (pointy-top), then round in cube coordinates
+    var q = (Math.sqrt(3) / 3 * px - py / 3) / s, r = (2 / 3 * py) / s;
+    var cx = q, cz = r, cy = -cx - cz;
+    var rx = Math.round(cx), ry = Math.round(cy), rz = Math.round(cz);
+    var ex = Math.abs(rx - cx), ey = Math.abs(ry - cy), ez = Math.abs(rz - cz);
+    if(ex > ey && ex > ez) rx = -ry - rz;
+    else if(ey <= ez) rz = -rx - ry;
+    return [rx + (rz - (rz & 1)) / 2, rz];
+  },
+
+  setupHexView: function() {
+    var map = $('#map');
+    if(map.length === 0) {
+      map = $('<div>').attr('id', 'map').appendTo('#worldOuter');
+      map.click(World.click);
+    }
+    if(map.hasClass('hex')) return map;
+    map.empty().addClass('hex');
+    var dpr = window.devicePixelRatio || 1;
+    var canvas = $('<canvas>').attr({ width: World.VIEW[0] * dpr, height: World.VIEW[1] * dpr })
+      .css({ width: World.VIEW[0] + 'px', height: World.VIEW[1] + 'px' }).appendTo(map);
+    $('<span>').addClass('landmark hexProbe').appendTo(map);
+    $('<div>').attr('id', 'hexInfo').html('&nbsp;').insertAfter(map);
+    $('<div>').attr('id', 'hexHint').text(_('drag to look around. space to come back.')).insertAfter('#hexInfo');
+
+    // drag or scroll to look around; a click without a drag steps toward it
+    var start = null;
+    canvas.on('mousedown', function(e) {
+      start = { x: e.pageX, y: e.pageY, cam: World.cam.slice() };
+      World._dragged = false;
+    });
+    $(document).on('mousemove', function(e) {
+      if(!start) return;
+      var dx = e.pageX - start.x, dy = e.pageY - start.y;
+      if(Math.abs(dx) + Math.abs(dy) > 4) World._dragged = true;
+      if(World._dragged) {
+        World.cam = [start.cam[0] - dx, start.cam[1] - dy];
+        World.follow = false; // looking around: the view stays put until space
+        World.drawHexMap();
+      }
+    }).on('mouseup', function() {
+      start = null;
+    });
+    canvas.on('mousemove', function(e) { World.hoverHex(e); });
+    canvas[0].addEventListener('wheel', function(e) {
+      e.preventDefault();
+      World.cam = [World.cam[0] + (e.shiftKey ? e.deltaY : e.deltaX), World.cam[1] + (e.shiftKey ? 0 : e.deltaY)];
+      World.follow = false;
+      World.drawHexMap();
+    }, { passive: false });
+    return map;
+  },
+
+  // the view follows the wanderer again
+  recentre: function() {
+    World.follow = true;
+    World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
+    World.drawHexMap();
+  },
+
+  // viewport origin in map pixels
+  viewOrigin: function() {
+    return [World.cam[0] - World.VIEW[0] / 2, World.cam[1] - World.VIEW[1] / 2];
+  },
+
+  clickHex: function(event) {
+    var off = $('#map canvas').offset(), o = World.viewOrigin();
+    var me = World.hexCentre(World.curPos[0], World.curPos[1]);
+    var dx = event.pageX - off.left + o[0] - me[0], dy = event.pageY - off.top + o[1] - me[1];
+    if(dx === 0 && dy === 0) return;
+    var a = Math.atan2(dy, dx) * 180 / Math.PI;
+    World.moveHex(((Math.round(a / 60) % 6) + 6) % 6);
+  },
+
+  hoverHex: function(event) {
+    if(!World.state) return;
+    var off = $('#map canvas').offset(), o = World.viewOrigin();
+    var h = World.hexAt(event.pageX - off.left + o[0], event.pageY - off.top + o[1]);
+    $('#hexInfo').html(World.hexLabel(h[0], h[1]) || '&nbsp;');
+  },
+
+  TERRAIN_NAMES: {
+    field: _('field'), forest: _('forest'), barrens: _('barrens'), hills: _('hills'),
+    mountains: _('mountains'), lake: _('lake'), ocean: _('ocean'), desert: _('desert'),
+    swamp: _('swamp'), tundra: _('tundra'), jungle: _('jungle'), wastes: _('wastes')
+  },
+
+  hexLabel: function(x, y) {
+    if(x < 0 || y < 0 || x >= World.cols() || y >= World.rows() || !World.state.mask[x][y]) return null;
+    var c = World.state.map[x][y];
+    if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
+    if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
+    var site = World.siteAt(x, y);
+    if(site) return WorldGen.SITES[site.kind].label;
+    if(World.hex.passes[x + ',' + y]) return WorldGen.PASS_LABEL;
+    var f = World.formationAt(x, y);
+    if(f) return WorldGen.FORMATIONS[f.kind];
+    for(var k in WorldGen.TERRAIN) {
+      if(WorldGen.TERRAIN[k] === c) return World.TERRAIN_NAMES[k];
+    }
+    return null;
+  },
+
+  // what a hex shows: [glyph, bold]
+  hexGlyph: function(x, y) {
+    var c = World.state.map[x][y];
+    if(c == World.TILE.VILLAGE) return [c, true];
+    if(typeof World.LANDMARKS[c] != 'undefined' && (c != World.TILE.OUTPOST || !World.outpostUsed(x, y))) return [c, true];
+    var site = World.siteAt(x, y);
+    if(site && WorldGen.isTerrain(c)) {
+      // a site shows its own glyph across all its hexes; the wasteland's towns keep theirs
+      var a = World.state.map[site.anchor[0]][site.anchor[1]].charAt(0);
+      return [WorldGen.isTerrain(a) ? WorldGen.SITES[site.kind].glyph : a, false];
+    }
+    return [c.charAt(0), false];
+  },
+
+  drawHexMap: function() {
+    var map = World.setupHexView();
+    var canvas = map.find('canvas')[0], ctx = canvas.getContext('2d');
+    var gen = World.hex.gen, mask = World.state.mask;
+    var s = World.HEX_SIZE, w = Math.sqrt(3) * s, rh = 1.5 * s;
+    var dpr = canvas.width / World.VIEW[0];
+    if(!World.cam) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
+    var o = World.viewOrigin();
+    var c0 = Math.max(0, Math.floor(o[0] / w) - 1), c1 = Math.min(gen.cols - 1, Math.ceil((o[0] + World.VIEW[0]) / w));
+    var r0 = Math.max(0, Math.floor(o[1] / rh) - 1), r1 = Math.min(gen.rows - 1, Math.ceil((o[1] + World.VIEW[1]) / rh));
+    var style = window.getComputedStyle(map[0]);
+    var dim = style.color, bright = window.getComputedStyle(map.find('.hexProbe')[0]).color;
+    var corners = [];
+    for(var i = 0; i < 6; i++) {
+      var ang = Math.PI / 180 * (60 * i - 30);
+      corners.push([s * Math.cos(ang), s * Math.sin(ang)]);
+    }
+    var x, y, p;
+
+    ctx.setTransform(dpr, 0, 0, dpr, -o[0] * dpr, -o[1] * dpr);
+    ctx.clearRect(o[0], o[1], World.VIEW[0], World.VIEW[1]);
+
+    // outlines of every seen hex, in one stroke
+    ctx.beginPath();
+    for(y = r0; y <= r1; y++) {
+      for(x = c0; x <= c1; x++) {
+        if(!mask[x][y]) continue;
+        p = World.hexCentre(x, y);
+        ctx.moveTo(p[0] + corners[0][0], p[1] + corners[0][1]);
+        for(i = 1; i < 6; i++) ctx.lineTo(p[0] + corners[i][0], p[1] + corners[i][1]);
+        ctx.closePath();
+      }
+    }
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = dim;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+
+    // edges where a multi-hex feature ends: solid for sites, dashed for natural formations
+    var edges = function(at, bold) {
+      ctx.beginPath();
+      for(y = r0; y <= r1; y++) {
+        for(x = c0; x <= c1; x++) {
+          var id = at[x + y * gen.cols];
+          if(id < 0 || !mask[x][y]) continue;
+          p = World.hexCentre(x, y);
+          for(var d = 0; d < 6; d++) {
+            var n = WorldGen.neighbour(x, y, d);
+            var nid = n[0] < 0 || n[1] < 0 || n[0] >= gen.cols || n[1] >= gen.rows ? -1 : at[n[0] + n[1] * gen.cols];
+            if(nid === id) continue;
+            ctx.moveTo(p[0] + corners[d][0], p[1] + corners[d][1]);
+            ctx.lineTo(p[0] + corners[(d + 1) % 6][0], p[1] + corners[(d + 1) % 6][1]);
+          }
+        }
+      }
+      ctx.strokeStyle = bold ? bright : dim;
+      ctx.lineWidth = bold ? 1.5 : 1;
+      ctx.setLineDash(bold ? [] : [2, 2]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    edges(gen.formationAt, false);
+    edges(gen.siteAt, true);
+
+    // the capital: a second ring
+    var cap = World.hexCentre(gen.capital[0], gen.capital[1]);
+    if(cap[0] > o[0] - w && cap[0] < o[0] + World.VIEW[0] + w && cap[1] > o[1] - s && cap[1] < o[1] + World.VIEW[1] + s) {
+      ctx.beginPath();
+      for(i = 0; i < 6; i++) ctx.lineTo(cap[0] + corners[i][0] * 1.35, cap[1] + corners[i][1] * 1.35);
+      ctx.closePath();
+      ctx.strokeStyle = bright;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    // glyphs
+    var family = style.fontFamily;
+    var plain = '11px ' + family, bold = 'bold 12px ' + family;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for(y = r0; y <= r1; y++) {
+      for(x = c0; x <= c1; x++) {
+        var me = World.curPos[0] == x && World.curPos[1] == y;
+        if(!mask[x][y] && !me) continue;
+        var g = me ? ['@', true] : World.hexGlyph(x, y);
+        p = World.hexCentre(x, y);
+        ctx.font = g[1] ? bold : plain;
+        ctx.fillStyle = g[1] || me ? bright : dim;
+        ctx.fillText(g[0], p[0], p[1] + 1);
+      }
+    }
+  },
+
   die: function() {
     if(!World.dead) {
       World.dead = true;
@@ -947,7 +1414,16 @@ var World = {
 
   goHome: function() {
     // Home safe! Commit the changes.
-    $SM.setM('game.world', World.state);
+    if(World.hex) {
+      World.hex.map = World.state.map;
+      World.hex.mask = World.state.mask;
+      var flags = $.extend({}, World.state);
+      delete flags.map;
+      delete flags.mask;
+      World.saveHex(flags);
+    } else {
+      $SM.setM('game.world', World.state);
+    }
     World.testMap();
 
     if(World.state.sulphurmine && $SM.get('game.buildings["sulphur mine"]', true) === 0) {
@@ -973,6 +1449,10 @@ var World = {
     }
     World.redeemBlueprints();
     World.state = null;
+    if(World._hexPending) {
+      World._hexPending = false;
+      World.openHexMap();
+    }
 
     if(Path.outfit['cured meat'] > 0) {
       Button.setDisabled($('#embarkButton'), false);
@@ -1077,7 +1557,13 @@ var World = {
     Button.clearCooldown($('#embarkButton'));
     Engine.keyLock = false;
     // Explore in a temporary world-state. We'll commit the changes if you return home safe.
-    World.state = $.extend(true, {}, $SM.get('game.world'));
+    if(World.hex) {
+      World.state = World.worldFlags();
+      World.state.map = World.hex.map.map(function(col) { return col.slice(); });
+      World.state.mask = World.hex.mask.map(function(col) { return col.slice(); });
+    } else {
+      World.state = $.extend(true, {}, $SM.get('game.world'));
+    }
     World.setWater(World.getMaxWater());
     World.setHp(World.getMaxHealth());
     World.foodMove = 0;
@@ -1086,6 +1572,8 @@ var World = {
     World.thirst = false;
     World.usedOutposts = {};
     World.curPos = World.copyPos(World.VILLAGE_POS);
+    World.cam = null;
+    World.follow = true;
     World.drawMap();
     World.setTitle();
     AudioEngine.playBackgroundMusic(AudioLibrary.MUSIC_WORLD);

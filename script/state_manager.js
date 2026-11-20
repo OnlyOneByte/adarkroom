@@ -321,6 +321,17 @@ var StateManager = {
 			// v2.0 added the town; its state (game.city) is created when it unlocks
 			Engine.log('upgraded save to v2.0');
 			$SM.set('version', 2.0);
+			version = 2.0;
+		}
+		if(version == 2.0) {
+			// v2.1 grows the world from a seed; maps made before it get one now.
+			// A town that is already open gets its hex map when World.init runs.
+			if($SM.get('game.world') && typeof $SM.get('game.world.seed') != 'number') {
+				$SM.set('game.world.seed', WorldGen.newSeed(), true);
+			}
+			Engine.log('upgraded save to v2.1');
+			$SM.set('version', 2.1);
+			version = 2.1;
 		}
 	},
 
