@@ -458,3 +458,57 @@ test('a pack filled to the brim stays within its capacity on a hex trek', async 
   expect(r.outfit['cured meat']).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test('200 worlds: every landmark, site, pass and the ship can be walked to; nothing overlaps', async ({ page }) => {
+  test.setTimeout(120000);
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    if (!World.panel) World.init(); // sets up the landmarks, so the wasteland core is the real one
+    const bad = [], T = WorldGen.TERRAIN;
+    let slowest = 0;
+    for (let seed = 1; seed <= 200; seed++) {
+      const square = World.generateMap(WorldGen.rng(seed));
+      const t0 = performance.now();
+      const g = WorldGen.generate(seed, square);
+      slowest = Math.max(slowest, performance.now() - t0);
+      const C = g.cols, at = (x, y) => x + y * C;
+      const inside = (x, y) => x >= 0 && y >= 0 && x < C && y < g.rows;
+      // flood fill on foot from the capital, independent of the generator's own answer
+      const seen = new Uint8Array(C * g.rows), q = [g.capital];
+      seen[at(g.capital[0], g.capital[1])] = 1;
+      while (q.length) {
+        const [x, y] = q.pop();
+        for (let d = 0; d < 6; d++) {
+          const [nx, ny] = WorldGen.neighbour(x, y, d);
+          if (!inside(nx, ny) || seen[at(nx, ny)] || !WorldGen.isPassable(g.map[nx][ny])) continue;
+          seen[at(nx, ny)] = 1;
+          q.push([nx, ny]);
+        }
+      }
+      const ground = g.terrain[g.capital[0]][g.capital[1]];
+      if (g.map[g.capital[0]][g.capital[1]] !== 'A' || WorldGen.isWater(ground) || ground === T.mountains) bad.push([seed, 'capital']);
+      let ships = 0;
+      for (let x = 0; x < C; x++) {
+        for (let y = 0; y < g.rows; y++) {
+          const c = g.map[x][y];
+          if (!WorldGen.isTerrain(g.terrain[x][y]) || typeof c !== 'string' || !c) bad.push([seed, 'tile', x, y]);
+          else if (World.LANDMARKS[c.charAt(0)] && !seen[at(x, y)]) bad.push([seed, 'landmark', c, x, y]);
+          if (c && c.charAt(0) === World.TILE.SHIP) ships++;
+          if (!!seen[at(x, y)] !== !!g.reachable[at(x, y)]) bad.push([seed, 'reachable', x, y]);
+        }
+      }
+      if (ships !== 1 || !seen[at(g.warHeart[0], g.warHeart[1])]) bad.push([seed, 'ship']);
+      const owner = new Int16Array(C * g.rows).fill(-1);
+      g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => {
+        if (owner[at(x, y)] >= 0 || g.formationAt[at(x, y)] >= 0 || !seen[at(x, y)]) bad.push([seed, 'site', i, x, y]);
+        owner[at(x, y)] = i;
+      }));
+      // a pass is hills you can reach; a crater dropped on one is open ground, not a pass
+      g.passes.forEach(([x, y]) => { if (g.terrain[x][y] !== T.hills || !seen[at(x, y)]) bad.push([seed, 'pass', x, y]); });
+    }
+    return { bad: bad.slice(0, 20), slowest };
+  });
+  expect(r.bad).toEqual([]);
+  expect(r.slowest).toBeLessThan(250); // ms for one world, well inside a load
+  expect(errors).toEqual([]);
+});
