@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.0,
+    VERSION: 2.1,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -553,6 +553,10 @@
         $('.lightsOff').text(_('lights off.'));
         $SM.set('config.lightsOff', false, true);
       }
+      // the hex map is a canvas: repaint it in the new colours, once the sheet has loaded too
+      var repaint = function() { if (World.hex && World.state) World.drawHexMap(); };
+      $('link[title="darkenLights"]').off('load').on('load', repaint);
+      repaint();
     },
 
     confirmHyperMode: function(){
