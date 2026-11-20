@@ -130,7 +130,18 @@ var Ship = {
 		return $SM.get('game.spaceShip.hull');
 	},
 	
+	// Space travel needs the whole world conquered (DESIGN.md "Arc"). Nothing sets this
+	// until conquest exists, so lift-off stays locked.
+	actOneComplete: function() {
+		return !!$SM.get('game.actOne.complete');
+	},
+
 	checkLiftOff: function() {
+		if(!Ship.actOneComplete()) {
+			Notifications.notify(Ship, _("not yet. the world isn't won."));
+			Button.clearCooldown($('#liftoffButton'));
+			return;
+		}
 		if(!$SM.get('game.spaceShip.seenWarning')) {
 			Events.startEvent({
 				title: _('Ready to Leave?'),
