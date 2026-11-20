@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node dev-server.js",
     "update_pot": "pybabel extract -F lang/babel.cfg -c \"TRANSLATORS\" script -o lang/adarkroom.pot",
-    "test": "playwright test"
+    "test": "playwright test",
+    "sim": "node tools/sim.js"
   },
   "dependencies": {
     "express": "^4.17.1"

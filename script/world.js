@@ -37,6 +37,7 @@ var World = {
   MEDS_HEAL: 20,
   HYPO_HEAL: 30,
   FIGHT_DELAY: 3, // At least three moves between fights
+  warned: { food: false, water: false }, // stages of hunger and thirst brought this step
   NORTH: [ 0, -1],
   SOUTH: [ 0,  1],
   WEST:  [-1,  0],
@@ -130,30 +131,7 @@ var World = {
       options
     );
 
-    // Setup probabilities. Sum must equal 1.
-    World.TILE_PROBS[World.TILE.FOREST] = 0.15;
-    World.TILE_PROBS[World.TILE.FIELD] = 0.35;
-    World.TILE_PROBS[World.TILE.BARRENS] = 0.5;
-
-    // Setpiece definitions
-    World.LANDMARKS[World.TILE.OUTPOST] = { num: 0, minRadius: 0, maxRadius: 0, scene: 'outpost', label: _('An&nbsp;Outpost') };
-    World.LANDMARKS[World.TILE.IRON_MINE] = { num: 1, minRadius: 5, maxRadius: 5, scene: 'ironmine', label:  _('Iron&nbsp;Mine') };
-    World.LANDMARKS[World.TILE.COAL_MINE] = { num: 1, minRadius: 10, maxRadius: 10, scene: 'coalmine', label:  _('Coal&nbsp;Mine') };
-    World.LANDMARKS[World.TILE.SULPHUR_MINE] = { num: 1, minRadius: 20, maxRadius: 20, scene: 'sulphurmine', label:  _('Sulphur&nbsp;Mine') };
-    World.LANDMARKS[World.TILE.HOUSE] = { num: 10, minRadius: 0, maxRadius: World.RADIUS * 1.5, scene: 'house', label:  _('An&nbsp;Old&nbsp;House') };
-    World.LANDMARKS[World.TILE.CAVE] = { num: 5, minRadius: 3, maxRadius: 10, scene: 'cave', label:  _('A&nbsp;Damp&nbsp;Cave') };
-    World.LANDMARKS[World.TILE.TOWN] = { num: 10, minRadius: 10, maxRadius: 20, scene: 'town', label:  _('An&nbsp;Abandoned&nbsp;Town') };
-    World.LANDMARKS[World.TILE.CITY] = { num: 20, minRadius: 20, maxRadius: World.RADIUS * 1.5, scene: 'city', label:  _('A&nbsp;Ruined&nbsp;City') };
-    World.LANDMARKS[World.TILE.SHIP] = { num: 1, minRadius: 28, maxRadius: 28, scene: 'ship', label:  _('A&nbsp;Crashed&nbsp;Starship')};
-    World.LANDMARKS[World.TILE.BOREHOLE] = { num: 10, minRadius: 15, maxRadius: World.RADIUS * 1.5, scene: 'borehole', label:  _('A&nbsp;Borehole')};
-    World.LANDMARKS[World.TILE.BATTLEFIELD] = { num: 5, minRadius: 18, maxRadius: World.RADIUS * 1.5, scene: 'battlefield', label:  _('A&nbsp;Battlefield')};
-    World.LANDMARKS[World.TILE.SWAMP] = { num: 1, minRadius: 15, maxRadius: World.RADIUS * 1.5, scene: 'swamp', label:  _('A&nbsp;Murky&nbsp;Swamp')};
-    World.LANDMARKS[World.TILE.EXECUTIONER] = { num: 1, minRadius: 28, maxRadius: 28, scene: 'executioner', 'label': _('A&nbsp;Ravaged&nbsp;Battleship')};
-
-    // Only add the cache if there is prestige data
-    if($SM.get('previous.stores')) {
-      World.LANDMARKS[World.TILE.CACHE] = { num: 1, minRadius: 10, maxRadius: World.RADIUS * 1.5, scene: 'cache', label:  _('A&nbsp;Destroyed&nbsp;Village')};
-    }
+    World.setupLandmarks();
 
     if(typeof $SM.get('features.location.world') == 'undefined') {
       $SM.set('features.location.world', true);
@@ -204,6 +182,34 @@ var World = {
     $.Dispatch('stateUpdate').subscribe(World.handleStateUpdates);
   },
 
+  // the square map's ground probabilities and landmarks (no DOM, so the balance simulator can use them)
+  setupLandmarks: function() {
+    // Setup probabilities. Sum must equal 1.
+    World.TILE_PROBS[World.TILE.FOREST] = 0.15;
+    World.TILE_PROBS[World.TILE.FIELD] = 0.35;
+    World.TILE_PROBS[World.TILE.BARRENS] = 0.5;
+
+    // Setpiece definitions
+    World.LANDMARKS[World.TILE.OUTPOST] = { num: 0, minRadius: 0, maxRadius: 0, scene: 'outpost', label: _('An&nbsp;Outpost') };
+    World.LANDMARKS[World.TILE.IRON_MINE] = { num: 1, minRadius: 5, maxRadius: 5, scene: 'ironmine', label:  _('Iron&nbsp;Mine') };
+    World.LANDMARKS[World.TILE.COAL_MINE] = { num: 1, minRadius: 10, maxRadius: 10, scene: 'coalmine', label:  _('Coal&nbsp;Mine') };
+    World.LANDMARKS[World.TILE.SULPHUR_MINE] = { num: 1, minRadius: 20, maxRadius: 20, scene: 'sulphurmine', label:  _('Sulphur&nbsp;Mine') };
+    World.LANDMARKS[World.TILE.HOUSE] = { num: 10, minRadius: 0, maxRadius: World.RADIUS * 1.5, scene: 'house', label:  _('An&nbsp;Old&nbsp;House') };
+    World.LANDMARKS[World.TILE.CAVE] = { num: 5, minRadius: 3, maxRadius: 10, scene: 'cave', label:  _('A&nbsp;Damp&nbsp;Cave') };
+    World.LANDMARKS[World.TILE.TOWN] = { num: 10, minRadius: 10, maxRadius: 20, scene: 'town', label:  _('An&nbsp;Abandoned&nbsp;Town') };
+    World.LANDMARKS[World.TILE.CITY] = { num: 20, minRadius: 20, maxRadius: World.RADIUS * 1.5, scene: 'city', label:  _('A&nbsp;Ruined&nbsp;City') };
+    World.LANDMARKS[World.TILE.SHIP] = { num: 1, minRadius: 28, maxRadius: 28, scene: 'ship', label:  _('A&nbsp;Crashed&nbsp;Starship')};
+    World.LANDMARKS[World.TILE.BOREHOLE] = { num: 10, minRadius: 15, maxRadius: World.RADIUS * 1.5, scene: 'borehole', label:  _('A&nbsp;Borehole')};
+    World.LANDMARKS[World.TILE.BATTLEFIELD] = { num: 5, minRadius: 18, maxRadius: World.RADIUS * 1.5, scene: 'battlefield', label:  _('A&nbsp;Battlefield')};
+    World.LANDMARKS[World.TILE.SWAMP] = { num: 1, minRadius: 15, maxRadius: World.RADIUS * 1.5, scene: 'swamp', label:  _('A&nbsp;Murky&nbsp;Swamp')};
+    World.LANDMARKS[World.TILE.EXECUTIONER] = { num: 1, minRadius: 28, maxRadius: 28, scene: 'executioner', 'label': _('A&nbsp;Ravaged&nbsp;Battleship')};
+
+    // Only add the cache if there is prestige data
+    if($SM.get('previous.stores')) {
+      World.LANDMARKS[World.TILE.CACHE] = { num: 1, minRadius: 10, maxRadius: World.RADIUS * 1.5, scene: 'cache', label:  _('A&nbsp;Destroyed&nbsp;Village')};
+    }
+  },
+
   // Map the ship and show compass tooltip
   pointCompass: function(map) {
     World.ship = World.mapSearch(World.TILE.SHIP, map, 1);
@@ -231,10 +237,13 @@ var World = {
     if(typeof w.seed != 'number') {
       w.seed = WorldGen.newSeed();
     }
-    var gen = WorldGen.generate(w.seed, w.map);
+    // the deltas only fit the generator that made them; from another one, project the wasteland afresh
+    var stale = !first && w.hex.gen !== WorldGen.VERSION;
+    if(stale) Engine.log('hex map from generator ' + w.hex.gen + ', now ' + WorldGen.VERSION + ': re-projected');
+    var gen = WorldGen.generate(w.seed, w.map, w.clearedMines);
     var map = gen.map.map(function(col) { return col.slice(); });
     var mask;
-    if(first) {
+    if(first || stale) {
       mask = World.newHexMask(gen);
       for(var x = 0; x < w.map.length; x++) {
         for(var y = 0; y < w.map[x].length; y++) {
@@ -250,9 +259,10 @@ var World = {
     }
     var passes = {};
     gen.passes.forEach(function(p) { passes[p[0] + ',' + p[1]] = true; });
-    World.hex = { gen: gen, map: map, mask: mask, passes: passes };
+    World.hex = { gen: gen, map: map, mask: mask, passes: passes, danger: Danger.field(gen) };
     World.VILLAGE_POS = gen.capital.slice();
     World.seenAll = false;
+    if(stale) World.saveHex(w);
     if(first) {
       World.saveHex(w);
       Notifications.notify(null, _('the world is bigger than the wasteland.'));
@@ -315,8 +325,50 @@ var World = {
     return i < 0 ? null : World.hex.gen.formations[i];
   },
 
+  /*
+   * Danger (script/danger.js): 0-10 per hex, scaled by the game's difficulty.
+   * Everything on the hex map that gets harder further out reads it.
+   */
+  difficulty: function() {
+    var d = $SM.get('game.difficulty');
+    return Danger.DIFFICULTY[d] ? d : Danger.DEFAULT_DIFFICULTY;
+  },
+
+  dangerAt: function(x, y) {
+    return Danger.at(World.hex.danger, World.hex.gen.cols, x, y, World.difficulty());
+  },
+
+  // the distance the prologue's encounters are picked by; on the hex map, danger stands in for it
+  dangerDistance: function() {
+    if(!World.hex) return World.getDistance();
+    return Danger.encounterDistance(World.dangerAt(World.curPos[0], World.curPos[1]));
+  },
+
+  // one line the first time the wanderer walks into each band
+  BAND_HINTS: [
+    null,
+    _('the quiet out here feels watched.'),
+    _('the air tastes of ash.'),
+    _('spent shells crunch underfoot.'),
+    _('nothing grows here. nothing should.')
+  ],
+
+  checkBand: function() {
+    var band = Danger.band(World.dangerAt(World.curPos[0], World.curPos[1]));
+    if(band > $SM.get('game.danger.band', true)) {
+      $SM.set('game.danger.band', band);
+      if(World.BAND_HINTS[band]) Notifications.notify(World, World.BAND_HINTS[band]);
+    }
+  },
+
   clearDungeon: function() {
     Engine.event('progress', 'dungeon cleared');
+    // a mine cleared in the prologue is remembered, so the hex map keeps its deposit
+    var cleared = World.state.map[World.curPos[0]][World.curPos[1]].charAt(0);
+    if(!World.hex && (cleared === World.TILE.IRON_MINE || cleared === World.TILE.COAL_MINE || cleared === World.TILE.SULPHUR_MINE)) {
+      World.state.clearedMines = World.state.clearedMines || {};
+      World.state.clearedMines[World.curPos[0] + ',' + World.curPos[1]] = cleared;
+    }
     World.state.map[World.curPos[0]][World.curPos[1]] = World.TILE.OUTPOST;
     World.drawRoad();
   },
@@ -537,6 +589,10 @@ var World = {
     World.narrateMove(oldTile, World.state.map[World.curPos[0]][World.curPos[1]]);
     World.lightMap(World.curPos[0], World.curPos[1], World.state.mask);
     if(World.hex && World.follow) World.cam = World.hexCentre(World.curPos[0], World.curPos[1]);
+    if(World.hex) {
+      World.checkBand();
+      World.scavengePack();
+    }
     World.drawMap();
     World.doSpace();
 
@@ -639,16 +695,16 @@ var World = {
   checkDanger: function() {
     World.danger = typeof World.danger == 'undefined' ? false: World.danger;
     if(!World.danger) {
-      if($SM.get('stores["i armour"]', true) === 0 && World.getDistance() >= 8) {
+      if($SM.get('stores["i armour"]', true) === 0 && World.dangerDistance() >= 8) {
         World.danger = true;
         return true;
       }
-      if($SM.get('stores["s armour"]', true) === 0 && World.getDistance() >= 18) {
+      if($SM.get('stores["s armour"]', true) === 0 && World.dangerDistance() >= 18) {
         World.danger = true;
         return true;
       }
     } else {
-      if(World.getDistance() < 8) {
+      if(World.dangerDistance() < 8) {
         World.danger = false;
         return true;
       }
@@ -678,6 +734,9 @@ var World = {
         if(!World.starvation) {
           Notifications.notify(World, _('starvation sets in'));
           World.starvation = true;
+          World.warned.food = true;
+        } else if(World.warned.food) {
+          // rough ground: the second move of a step that just brought the warning doesn't kill
         } else {
           $SM.set('character.starved', $SM.get('character.starved', true));
           $SM.add('character.starved', 1);
@@ -707,6 +766,9 @@ var World = {
         if(!World.thirst) {
           Notifications.notify(World, _('the thirst becomes unbearable'));
           World.thirst = true;
+          World.warned.water = true;
+        } else if(World.warned.water) {
+          // as for food: at most one stage of thirst per step
         } else {
           $SM.set('character.dehydrated', $SM.get('character.dehydrated', true));
           $SM.add('character.dehydrated', 1);
@@ -739,7 +801,7 @@ var World = {
     World.fightMove = typeof World.fightMove == 'number' ? World.fightMove : 0;
     World.fightMove++;
     if(World.fightMove > World.FIGHT_DELAY) {
-      var chance = World.FIGHT_CHANCE;
+      var chance = World.hex ? Danger.fightChance(World.dangerAt(World.curPos[0], World.curPos[1])) : World.FIGHT_CHANCE;
       chance *= $SM.hasPerk('stealthy') ? 0.5 : 1;
       if(Math.random() < chance) {
         World.fightMove = 0;
@@ -750,6 +812,11 @@ var World = {
 
   doSpace: function() {
     var curTile = World.state.map[World.curPos[0]][World.curPos[1]];
+
+    var pack = World.state.pack;
+    if(World.hex && pack && pack.at[0] === World.curPos[0] && pack.at[1] === World.curPos[1]) {
+      World.recoverPack();
+    }
 
     if(curTile == World.TILE.VILLAGE) {
       World.goHome();
@@ -762,6 +829,8 @@ var World = {
         Events.startEvent(Events.Setpieces[World.LANDMARKS[curTile].scene]);
       }
     } else {
+      // a step on rough ground eats twice, but brings at most one stage of thirst or starvation
+      World.warned = { food: false, water: false };
       for(var i = World.moveCost(curTile); i > 0; i--) {
         if(!World.useSupplies()) return;
       }
@@ -1263,7 +1332,10 @@ var World = {
   },
 
   hexLabel: function(x, y) {
-    if(x < 0 || y < 0 || x >= World.cols() || y >= World.rows() || !World.state.mask[x][y]) return null;
+    if(x < 0 || y < 0 || x >= World.cols() || y >= World.rows()) return null;
+    var pack = World.state.pack;
+    if(pack && pack.at[0] === x && pack.at[1] === y) return World.packLabel(pack);
+    if(!World.state.mask[x][y]) return null;
     var c = World.state.map[x][y];
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
     if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
@@ -1373,17 +1445,90 @@ var World = {
     var plain = '11px ' + family, bold = 'bold 12px ' + family;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
+    // the dropped pack shows even in the fog: the trek that saw that hex was lost
+    var pack = World.state.pack;
     for(y = r0; y <= r1; y++) {
       for(x = c0; x <= c1; x++) {
         var me = World.curPos[0] == x && World.curPos[1] == y;
-        if(!mask[x][y] && !me) continue;
-        var g = me ? ['@', true] : World.hexGlyph(x, y);
+        var atPack = pack && pack.at[0] === x && pack.at[1] === y;
+        if(!mask[x][y] && !me && !atPack) continue;
+        var g = me ? ['@', true] : (atPack ? [World.PACK_GLYPH, true] : World.hexGlyph(x, y));
         p = World.hexCentre(x, y);
         ctx.font = g[1] ? bold : plain;
         ctx.fillStyle = g[1] || me ? bright : dim;
         ctx.fillText(g[0], p[0], p[1] + 1);
       }
     }
+  },
+
+  /*
+   * The corpse run, on the hex map. Dying on a trek drops the pack where the wanderer
+   * fell, in the committed world: game.world.pack = { at: [x, y], items: { thing: n }, left }.
+   * One at a time, a new death replaces it. Scavengers take a share (left shrinks) every
+   * step the wanderer walks, faster where it's more dangerous; reaching it takes back the rest.
+   */
+  PACK_GLYPH: '+',
+
+  // what is left in a pack: { thing: n }, or null once the scavengers have had it all
+  packLeft: function(pack) {
+    var out = null;
+    for(var k in pack.items) {
+      var n = Math.floor(pack.items[k] * pack.left);
+      if(n > 0) {
+        out = out || {};
+        out[k] = n;
+      }
+    }
+    return out;
+  },
+
+  dropPack: function() {
+    var items = null;
+    for(var k in Path.outfit) {
+      if(Path.outfit[k] > 0) {
+        items = items || {};
+        items[k] = Path.outfit[k];
+      }
+    }
+    if(items) {
+      $SM.set('game.world.pack', { at: World.curPos.slice(), items: items, left: 1 });
+    } else {
+      $SM.remove('game.world.pack');
+    }
+  },
+
+  scavengePack: function() {
+    var pack = World.state.pack;
+    if(!pack) return;
+    pack.left *= 1 - Danger.scavengeRate(World.dangerAt(pack.at[0], pack.at[1]));
+    if(!World.packLeft(pack)) delete World.state.pack;
+  },
+
+  recoverPack: function() {
+    var left = World.packLeft(World.state.pack), rest = null;
+    delete World.state.pack;
+    if(!left) return;
+    for(var k in left) {
+      var n = Math.max(0, Math.min(left[k], Math.floor(Path.getFreeSpace() / Path.getWeight(k))));
+      Path.outfit[k] = (Path.outfit[k] || 0) + n;
+      if(n < left[k]) {
+        rest = rest || {};
+        rest[k] = left[k] - n;
+      }
+    }
+    if(rest) {
+      World.state.pack = { at: World.curPos.slice(), items: rest, left: 1 };
+      Notifications.notify(World, _('the pack lies where it fell. there is more than can be carried.'));
+    } else {
+      Notifications.notify(World, _('the pack lies where it fell. took what the scavengers left.'));
+    }
+    World.updateSupplies();
+  },
+
+  packLabel: function(pack) {
+    var left = World.packLeft(pack), list = [];
+    for(var k in left) list.push(_(k) + '&nbsp;' + left[k]);
+    return _('the&nbsp;pack:') + '&nbsp;' + list.join(',&nbsp;');
   },
 
   die: function() {
@@ -1394,6 +1539,7 @@ var World = {
       Engine.keyLock = true;
       // Dead! Discard any world changes and go home
       Notifications.notify(World, _('the world fades'));
+      if(World.hex) World.dropPack();
       World.state = null;
       Path.outfit = {};
       $SM.remove('outfit');

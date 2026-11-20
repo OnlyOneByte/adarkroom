@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState } from './helpers.js';
+import { openGame, getState, freshToTown, onHexTrek } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 // made by the unmodified old games; see fixtures/generate-world-saves.js
@@ -9,44 +9,6 @@ const v13 = load('v1.3-world');
 const v20 = load('v2.0-town');
 
 const TERRAINS = 12;
-
-// A fresh game that has walked the square map, then opens the town the normal way.
-async function freshToTown(page) {
-  const errors = await openGame(page);
-  await page.locator('#lightButton').click();
-  await page.evaluate(() => {
-    clearTimeout(Events._eventTimeout); // no random events mid-test
-    Room.unlockForest();
-    $SM.set('game.builder.level', 4);
-    $SM.set('game.temperature', Room.TempEnum.Hot);
-    $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1, waterskin: 1 });
-    WorldGen.newSeed = () => 4242; // the same world every run
-    if (!Path.tab) Path.init();
-    // pack cured meat the way the player does, through the outfitting buttons, as much as fits
-    window.packMeat = () => {
-      Path.updateOutfitting();
-      Path.increaseSupply.call($('#outfit_row_cured-meat .upBtn')[0], { data: 1000 });
-    };
-  });
-  // a trek on the square map: walk east, come home
-  const square = await page.evaluate(() => {
-    packMeat();
-    Path.embark();
-    Math.random = () => 0.99; // no fights
-    for (let i = 0; i < 5; i++) World.moveEast();
-    World.goHome();
-    return { map: $SM.get('game.world.map'), mask: $SM.get('game.world.mask'), hex: !!World.hex };
-  });
-  expect(square.hex).toBe(false);
-  expect(square.map.length).toBe(61);
-  // 20 huts and a trading post, built through the room
-  await page.evaluate(() => {
-    for (let i = 0; i < 20; i++) Room.build($('<div>').attr('buildThing', 'hut'));
-  });
-  expect(await page.evaluate(() => !!World.hex)).toBe(false);
-  await page.evaluate(() => Room.build($('<div>').attr('buildThing', 'trading post')));
-  return { errors, square };
-}
 
 // Everything the tests check about a hex world, read in the page.
 function page_summary() {
@@ -120,7 +82,7 @@ test('fresh save: the town opens the Huge hex map, built from the same world', a
 
   // the save holds a seed and deltas, not the hex world
   const saved = await page.evaluate(() => JSON.parse(localStorage.gameState));
-  expect(saved.version).toBe(2.1);
+  expect(saved.version).toBe(2.2);
   expect(typeof saved.game.world.seed).toBe('number');
   expect(saved.game.world.hex.gen).toBe(1);
   expect(Object.keys(saved.game.world.hex.delta)).toEqual([]);
@@ -203,7 +165,7 @@ test('a v1.3 save with a full village and a walked map migrates and opens the he
   await page.clock.install();
   const errors = await openGame(page, { save: v13 });
   const state = await getState(page);
-  expect(state.version).toBe(2.1);
+  expect(state.version).toBe(2.2);
   expect(state.features.location.city).toBe(true);
   expect(typeof state.game.world.seed).toBe('number');
   expect(state.game.world.map).toEqual(v13.game.world.map); // the prologue map is kept as is
@@ -220,7 +182,7 @@ test('a v1.3 save without the town keeps the square map until the town opens', a
   save.game.buildings.hut = 10;
   const errors = await openGame(page, { save });
   expect(await page.evaluate(() => !!World.hex)).toBe(false);
-  expect(await page.evaluate(() => $SM.get('version'))).toBe(2.1);
+  expect(await page.evaluate(() => $SM.get('version'))).toBe(2.2);
   await page.evaluate(() => $SM.set('game.buildings["hut"]', 20));
   expect(await page.evaluate(() => !!World.hex)).toBe(true);
   expect(await page.evaluate(revealedKept, v13.game.world)).toBe(true);
@@ -231,7 +193,7 @@ test('a v2.0 save with an open town loads into the hex map', async ({ page }) =>
   await page.clock.install();
   const errors = await openGame(page, { save: v20 });
   const state = await getState(page);
-  expect(state.version).toBe(2.1);
+  expect(state.version).toBe(2.2);
   expect(state.game.cities).toEqual(v20.game.cities);
   expect(state.game.world.hex.gen).toBe(1);
   expect(await page.evaluate(revealedKept, v20.game.world)).toBe(true);
@@ -252,57 +214,31 @@ test('drawing the hex viewport stays inside a frame budget, in both themes', asy
     // reveal the whole world so every hex in view is drawn
     const g = World.hex.gen;
     for (let x = 0; x < g.cols; x++) for (let y = 0; y < g.rows; y++) World.state.mask[x][y] = true;
+    // the median of 20 draws after a warm-up, so one slow frame on a busy runner doesn't decide it
     const time = () => {
-      World.drawHexMap(); // warm up
-      const t0 = performance.now();
+      for (let i = 0; i < 3; i++) World.drawHexMap(); // warm up
+      const draws = [];
       for (let i = 0; i < 20; i++) {
         World.cam = World.hexCentre(30 + i * 4, 40 + (i % 5) * 4);
+        const t0 = performance.now();
         World.drawHexMap();
+        draws.push(performance.now() - t0);
       }
-      return (performance.now() - t0) / 20;
+      draws.sort((a, b) => a - b);
+      return (draws[9] + draws[10]) / 2;
     };
     const light = time();
     Engine.turnLightsOff();
     const dark = time();
     return { light, dark, lightsOff: $SM.get('config.lightsOff') };
   });
+  // one 60 fps frame locally; shared CI runners are slower, so two frames there
+  const budget = process.env.CI ? 33 : 16;
   expect(timing.lightsOff).toBe(true);
-  expect(timing.light).toBeLessThan(16);
-  expect(timing.dark).toBeLessThan(16);
+  expect(timing.light).toBeLessThan(budget);
+  expect(timing.dark).toBeLessThan(budget);
   expect(errors).toEqual([]);
 });
-
-// Puts the wanderer on the hex map (seed 4242), with helpers to find and take a step.
-async function onHexTrek(page) {
-  const { errors } = await freshToTown(page);
-  await page.locator('#location_path').click();
-  await page.evaluate(() => {
-    packMeat();
-    Path.embark();
-    Math.random = () => 0.99; // no fights
-    // a reachable hex outside any site whose neighbour matches, and the direction to it
-    window.findStep = (from, to) => {
-      const g = World.hex.gen, m = World.state.map;
-      for (let y = 1; y < g.rows - 1; y++) {
-        for (let x = 1; x < g.cols - 1; x++) {
-          if (!g.reachable[x + y * g.cols] || World.siteAt(x, y) || !from(m[x][y], x, y)) continue;
-          for (let d = 0; d < 6; d++) {
-            const n = WorldGen.neighbour(x, y, d);
-            if (!World.siteAt(n[0], n[1]) && to(m[n[0]][n[1]], n[0], n[1])) return { at: [x, y], dir: d, to: n };
-          }
-        }
-      }
-      return null;
-    };
-    window.stepFrom = (s) => {
-      World.curPos = s.at.slice();
-      World.moveHex(s.dir);
-      return World.curPos.slice();
-    };
-  });
-  await page.waitForFunction(() => !$('#outerSlider').is(':animated')); // the slide to the map
-  return errors;
-}
 
 test('open ocean blocks the wanderer', async ({ page }) => {
   const errors = await onHexTrek(page);
@@ -607,6 +543,15 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
       }));
       // a pass is hills you can reach; a crater dropped on one is open ground, not a pass
       g.passes.forEach(([x, y]) => { if (g.terrain[x][y] !== T.hills || !seen[at(x, y)]) bad.push([seed, 'pass', x, y]); });
+      // and it leads somewhere: open ground on two sides that don't touch
+      g.passes.forEach(([x, y]) => {
+        const open = [];
+        for (let d = 0; d < 6; d++) {
+          const [nx, ny] = WorldGen.neighbour(x, y, d);
+          if (inside(nx, ny) && WorldGen.isPassable(g.terrain[nx][ny])) open.push(d);
+        }
+        if (!open.some((a) => open.some((b) => b - a >= 2 && b - a <= 4))) bad.push([seed, 'dead-end pass', x, y, open]);
+      });
     }
     return { bad: bad.slice(0, 20), slowest };
   });
