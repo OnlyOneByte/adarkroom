@@ -212,7 +212,7 @@ test('walking into a new band brings its hint once', async ({ page }) => {
     // walk east from the capital, recording each band's first step
     const seen = [];
     World.setWater(World.getMaxWater());
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 60 && $SM.get('game.danger.band', true) < 2; i++) {
       const before = $SM.get('game.danger.band', true);
       World.state.map[World.curPos[0] + 1][World.curPos[1]] = WorldGen.TERRAIN.field; // a clear way
       World.water = 99;
