@@ -353,6 +353,16 @@ test('B6: a founded city lays a road home; the road joins two cities, and carts 
   await page.evaluate(() => Network.draw());
   await page.locator('#land_road_city2').click();
   await expect(page.locator('#event')).toContainText('carts stand ready on the road to second town.');
+  // the event's mask covers the whole land view, its lower edge too (it was a fixed 700px tall)
+  await page.setViewportSize({ width: 1100, height: 1080 });
+  const masked = await page.evaluate(() => {
+    const r = $('#landMap canvas')[0].getBoundingClientRect();
+    const hit = document.elementFromPoint(r.left + 5, r.bottom - 5);
+    // the footer menu stays over the mask, usable mid-event as before
+    const m = $('.menu span').last()[0].getBoundingClientRect(), menu = document.elementFromPoint(m.left + 2, m.top + m.height / 2);
+    return { below700: r.bottom > 715, mask: !!hit && hit.closest('#event') !== null, menu: !!menu && !!menu.closest('.menu') };
+  });
+  expect(masked).toEqual({ below700: true, mask: true, menu: true });
   const before = await page.evaluate(() => ({ cap: $SM.get('stores.wood'), c2: $SM.get('game.cities.city2.stores.wood') || 0 }));
   await choose(page, 'send wood');
   // the cart is on its way: a second a road hex (provisional)
