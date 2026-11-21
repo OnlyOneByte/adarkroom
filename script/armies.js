@@ -386,6 +386,9 @@ var Armies = {
 		// a reload mid-trek wakes at home: craftsmen out with the wanderer wait where they were found
 		var fled = $SM.get('game.armies.fled') || {};
 		for (var id in fled) if (fled[id].party === 'with') fled[id].party = 'waiting';
+		Armies._after = $SM.get('game.armies.after');
+		// a siege whose end was not yet told when the game was saved tells it again
+		Armies.list().forEach(function (a) { if (a.siege && a.siege.over) Armies.tellEnd(a); });
 		Armies.adapt();
 		$.Dispatch('stateUpdate').subscribe(Armies.handleStateUpdates);
 		Armies.scheduleTick();
@@ -398,19 +401,23 @@ var Armies = {
 	 */
 	adapt: function () {
 		var share = City.jobShare, CS = CityStates;
+		// (asked per job of every city on each fire tick: the table is held, not looked up)
 		City.jobShare = function (cityId) {
-			return share.apply(City, arguments) * Armies.output($SM.get('game.armies.after["' + cityId + '"]'));
+			var after = Armies._after && Armies._after[cityId];
+			return after ? share.apply(City, arguments) * Armies.output(after) : share.apply(City, arguments);
 		};
 		var glyph = CS.glyphAt, label = CS.label, step = CS.onStep, die = CS.onDie, home = CS.onHome;
 		var pName = CS.partyName, pBack = CS.partyBack;
+		// (the map asks per hex drawn: one lookup kept by Armies.marks)
 		CS.glyphAt = function (x, y) {
-			if (Armies.armyAt(x, y)) return [Armies.GLYPH, true];
-			if (Armies.cacheAt(x, y)) return [World.PACK_GLYPH, true];
-			if (Armies.fledAt(x, y)) return [World.hex.gen.terrain[x][y], true];
+			var m = Armies.marks();
+			m = m && m[x + ',' + y];
+			if (m) return m === 'army' ? [Armies.GLYPH, true] : m === 'cache' ? [World.PACK_GLYPH, true] : [World.hex.gen.terrain[x][y], true];
 			return glyph.apply(CS, arguments);
 		};
 		CS.label = function (x, y) {
-			return Armies.label(x, y) || label.apply(CS, arguments);
+			var m = Armies.marks();
+			return (m && m[x + ',' + y] && Armies.label(x, y)) || label.apply(CS, arguments);
 		};
 		CS.onStep = function (x, y) {
 			Armies.onStep(x, y);
@@ -479,6 +486,18 @@ var Armies = {
 		return null;
 	},
 
+	// what armies put on the map, by hex: 'army', 'cache' or 'fled'; null when nothing (rebuilt on a change)
+	marks: function () {
+		if (Armies._marks !== undefined) return Armies._marks;
+		var m = {}, any = false, caches = Armies.get('caches') || {}, fled = Armies.get('fled') || {};
+		var put = function (at, k) { if (at && !m[at[0] + ',' + at[1]]) { m[at[0] + ',' + at[1]] = k; any = true; } };
+		Armies.list().forEach(function (a) { put(a.at, 'army'); });
+		for (var c in caches) if (Armies.cacheLeft(caches[c])) put(caches[c].at, 'cache');
+		for (var f in fled) if (fled[f].party === 'waiting') put(fled[f].at, 'fled');
+		Armies._marks = any ? m : null;
+		return Armies._marks;
+	},
+
 	cacheLeft: function (cache) {
 		var out = {}, any = false;
 		for (var k in cache.items) {
@@ -527,6 +546,7 @@ var Armies = {
 
 	update: function () {
 		if (!$SM.get('game.armies')) return;
+		delete Armies._marks;
 		var moved = false;
 		Armies.drill();
 		Armies.list().slice().forEach(function (a) {
@@ -539,6 +559,7 @@ var Armies = {
 			if (after[id].left <= 1) $SM.remove('game.armies.after["' + id + '"]', true);
 			else $SM.set('game.armies.after["' + id + '"].left', after[id].left - 1, true);
 		}
+		Armies._after = $SM.get('game.armies.after');
 		if (moved && World.hex && typeof Network != 'undefined') Network.draw();
 		CityStates.playQueued();
 		$SM.fireUpdate('game.armies');
@@ -727,32 +748,40 @@ var Armies = {
 		if (!A.soldiers(a)) return A.lostArmy(a);
 		if (r.sally) CityStates.queue(function () { Events.startEvent(Events.Armies.sally(c, r.sally)); });
 		if (r.breach) {
-			s.over = true;
 			s.stormed = A.soldiers(a);
-			var res = A.storm(s, a);
-			A.set(a);
-			CityStates.queue(function () { Events.startEvent(Events.Armies.storm(a.id, res)); });
-			return;
-		}
-		if (r.yield) {
-			s.over = true;
-			A.set(a);
-			CityStates.queue(function () { Events.startEvent(Events.Armies.yielded(a.id)); });
-			return;
-		}
-		if (r.broken) {
-			s.over = true;
+			s.over = { storm: A.storm(s, a) };
+		} else if (r.yield) {
+			s.over = { yield: true };
+		} else if (r.broken) {
 			s.stormed = s.invested;
+			s.over = { broken: true };
+		}
+		if (s.over) {
 			A.set(a);
-			CityStates.queue(function () { Events.startEvent(Events.Armies.broken(a.id)); });
+			A.tellEnd(a);
 			return;
 		}
-		// the camp's choices, every few ticks
-		if (s.ticks - s.asked >= A.CHOICE_EVERY) {
+		// the camp's choices, every few ticks (one at a time: they wait while the wanderer is out)
+		if (s.ticks - s.asked >= A.CHOICE_EVERY && !A._asking[a.id]) {
 			s.asked = s.ticks;
-			CityStates.queue(function () { if (A.byId(a.id) && A.byId(a.id).state === 'siege') Events.startEvent(Events.Armies.camp(a.id)); });
+			A._asking[a.id] = true;
+			CityStates.queue(function () {
+				A._asking[a.id] = false;
+				var now = A.byId(a.id);
+				if (now && now.state === 'siege' && !now.siege.over) Events.startEvent(Events.Armies.camp(a.id));
+			});
 		}
 		A.set(a);
+	},
+	_asking: {},
+
+	// the siege's end, told by its scene: the storm, they yield, or the army breaks under the walls
+	tellEnd: function (a) {
+		var o = a.siege.over, id = a.id;
+		CityStates.queue(function () {
+			if (!Armies.byId(id)) return;
+			Events.startEvent(o.storm ? Events.Armies.storm(id, o.storm) : o.yield ? Events.Armies.yielded(id) : Events.Armies.broken(id));
+		});
 	},
 
 	// press / wait (the camp's choice, or the panel's)
@@ -768,7 +797,7 @@ var Armies = {
 	fallBack: function (a, quiet) {
 		var A = Armies, lit = A.lit(), gen = World.hex.gen, best = null;
 		if (typeof a == 'string') a = A.byId(a);
-		if (!a) return;
+		if (!a || (a.siege && a.siege.over && !quiet)) return;
 		for (var r = 0; r <= 20 && !best; r++) {
 			(r ? Fire.ring(a.at[0], a.at[1], r) : [a.at]).forEach(function (p) {
 				if (!best && p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows && lit(p[0], p[1]) && WorldGen.isPassable(gen.terrain[p[0]][p[1]])) best = p;
@@ -888,17 +917,22 @@ var Armies = {
 	 */
 	flee: function (c) {
 		var at = Armies.fleeSite(World.hex.gen, c, CityStates.list());
-		$SM.set('game.armies.fled["' + c.id + '"]', { at: at, party: 'waiting', people: Armies.CRAFTSMEN, food: 0, water: 0 }, true);
-		if (at) {
-			World.hex.mask[at[0]][at[1]] = true;
-			if (World.state) World.state.mask[at[0]][at[1]] = true;
-			else World.saveHex(World.worldFlags());
+		// shortcut: a world with no free land in reach of them to hide on; the beat plays now
+		if (!at) {
+			CityStates.extras(c);
+			CityStates.beat(c);
+			return;
 		}
+		$SM.set('game.armies.fled["' + c.id + '"]', { at: at, party: 'waiting', people: Armies.CRAFTSMEN, food: 0, water: 0 }, true);
+		World.hex.mask[at[0]][at[1]] = true;
+		if (World.state) World.state.mask[at[0]][at[1]] = true;
+		else World.saveHex(World.worldFlags());
 		Notifications.notify(null, CityStates.fill(_('the craftsmen of {name} have fled'), c));
 	},
 
 	onStep: function (x, y) {
 		var A = Armies, fled = A.get('fled') || {};
+		delete A._marks;
 		// the caches are thinned by the scavengers a step the wanderer walks, like the pack
 		var caches = A.get('caches') || {};
 		for (var k in caches) {
@@ -1063,6 +1097,10 @@ var Armies = {
 
 	handleStateUpdates: function (e) {
 		if (!e.stateName) return;
+		if (e.stateName.indexOf('game.armies') === 0) {
+			delete Armies._marks;
+			Armies._after = $SM.get('game.armies.after');
+		}
 		if (e.stateName.indexOf('game.armies') === 0 || e.stateName.indexOf('game.cities') === 0 || e.category == 'stores') {
 			Armies.updatePanel();
 		}
