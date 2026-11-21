@@ -784,6 +784,7 @@ var Events = {
 				return;
 			}
 			Events.endFight();
+			if(typeof Network != 'undefined' && World.state && World.hex) Network.onFightWon();
 			// AudioEngine.playSound(AudioLibrary.WIN_FIGHT);
 			$('#enemy').animate({opacity: 0}, 300, 'linear', function() {
 				Engine.setTimeout(function() {

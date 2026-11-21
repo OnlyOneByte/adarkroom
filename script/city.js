@@ -35,7 +35,8 @@ var City = {
 	NOTICES: {
 		cold: _('the hearth in {0} has gone cold.'),
 		fuel: _('{0} is out of {1}.'),
-		idle: _('{0} has hands and no work.')
+		idle: _('{0} has hands and no work.'),
+		spent: _('the bog cuts are spent.')
 	},
 
 	/*
@@ -114,7 +115,8 @@ var City = {
 			name: _('charcoal pits'),
 			district: 'burning pits',
 			maximum: 2,
-			later: true, // charcoal is the flame era (F5)
+			needs: 'F5',
+			jobs: ['collier'],
 			cost: function () { return { 'wood': 200 }; }
 		},
 		'wall': {
@@ -183,7 +185,46 @@ var City = {
 		'renderer': {
 			name: _('renderer'), district: 'burning pits', needs: 'F4', delay: 10,
 			stores: { 'meat': -2, 'tallow': 1 }
+		},
+		// the flame era. collier: the stranger's way (City.WAYS has the builder's); peat cutter: the
+		// bog-cutters' way (deep: City.WAYS)
+		'collier': {
+			name: _('collier'), district: 'burning pits', needs: 'F5', delay: 30,
+			stores: { 'wood': -3, 'charcoal': 2 }
+		},
+		'peat cutter': {
+			name: _('peat cutter'), district: 'bog cuts', raw: true, needs: 'F6', delay: 10,
+			stores: { 'peat': 1 }
+		},
+		'resin tapper': {
+			name: _('resin tapper'), district: 'woods', raw: true, needs: 'F7', delay: 10,
+			stores: { 'resin': 1 }
+		},
+		'coal miner': {
+			name: _('coal miner'), district: 'mines', raw: true, needs: 'F8', delay: 10,
+			stores: { 'coal': 1 }
 		}
+	},
+
+	/*
+	 * provisional (flame-draft.md "Notes on varying rewards"): what a story choice changes in a job.
+	 * game.network.story.charcoalWay 'own': the builder's pits, 3 wood -> 1 charcoal / 10 s;
+	 * game.citystates.beats.F6way 'deep': twice the peat, and the bog cuts wear out (Network.wearBogs).
+	 */
+	WAYS: {
+		collier: { own: { delay: 10, stores: { 'wood': -3, 'charcoal': 1 } } },
+		'peat cutter': { deep: { delay: 10, stores: { 'peat': 2 } } }
+	},
+
+	// a job's pace and stores, after the story's choices
+	income: function (job) {
+		var w = City.WAYS[job], base = City._INCOME[job];
+		if (!w) return base;
+		var way = job === 'collier' ? $SM.get('game.network.story.charcoalWay') : $SM.get('game.citystates.beats.F6way');
+		if (!w[way]) return base;
+		var out = {};
+		for (var k in base) out[k] = k in w[way] ? w[way][k] : base[k];
+		return out;
 	},
 
 	init: function (options) {
@@ -488,8 +529,8 @@ var City = {
 		City.checkWorkers(cityId);
 		var view = { focus: c.focus, citizens: c.population.citizens || 0, jobs: {}, stores: {}, fuels: {}, builds: [] };
 		for (var j in c.workers) {
-			var income = City._INCOME[j];
-			if (!income) continue;
+			if (!City._INCOME[j]) continue;
+			var income = City.income(j);
 			var share = City.jobShare(cityId, j), per = {};
 			for (var s in income.stores) per[s] = income.stores[s] * share * 10 / income.delay;
 			view.jobs[j] = { slots: City.jobSlots(cityId, j), stores: per };
@@ -508,6 +549,7 @@ var City = {
 		['meat', 'fur', 'oak', 'bait'].forEach(function (k) { view.stores[k] = $SM.get(City.storePath(cityId, k), true); });
 		view.need = Network.hearthNeed(cityId);
 		view.cold = !(c.hearth && c.hearth.out > 0);
+		view.spent = City.districtHexes(cityId, 'bog cuts').length > 0 && City.jobSlots(cityId, 'peat cutter') === 0 && Network.has('F6');
 		var plan = Governor.plan(view);
 		for (var w in plan.workers) {
 			if ($SM.get(City.path(cityId, 'workers["' + w + '"]')) !== plan.workers[w]) {
@@ -593,7 +635,7 @@ var City = {
 			.attr('key', key)
 			.attr('id', 'city_workers_row_' + key.replace(/ /g, '-'))
 			.addClass('workerRow');
-		var income = City._INCOME[key];
+		var income = City._INCOME[key] ? City.income(key) : null;
 		$('<div>').addClass('row_key').text(income ? income.name : _(key)).appendTo(row);
 		var val = $('<div>').addClass('row_val').appendTo(row);
 		$('<span>').text(num).appendTo(val);
@@ -664,7 +706,7 @@ var City = {
 			for (var job in City._INCOME) {
 				var num = $SM.get(City.path(cityId, 'workers["' + job + '"]'));
 				if (typeof num != 'number') continue;
-				var income = City._INCOME[job];
+				var income = City.income(job);
 				var source = cityId + ':' + job;
 				var stores = {};
 				var cur = $SM.getIncome(source);

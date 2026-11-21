@@ -14,6 +14,7 @@
  *   view.need       fire the hearth wants a tick
  *   view.builds     [{ key, cost: { store: n } }] buildings it could still build (under their maximum)
  *   view.cold       true if the hearth made no fire last tick
+ *   view.spent      true if its bog cuts are all spent (dug deep)
  * Returns { workers: { job: n }, build: key or null, notices: [code] }.
  */
 var Governor = {
@@ -23,14 +24,16 @@ var Governor = {
 
 	// what each focus works and builds, in order; military is a stub until armies (Phase 5)
 	JOBS: {
-		fire: ['woodcutter', 'gatherer', 'drier', 'oak cutter', 'seasoner', 'hunter', 'renderer'],
+		fire: ['woodcutter', 'gatherer', 'drier', 'oak cutter', 'seasoner', 'hunter', 'renderer',
+			'collier', 'peat cutter', 'resin tapper', 'coal miner'],
 		farming: ['hunter', 'charcutier', 'trapper', 'woodcutter', 'gatherer'],
-		industry: ['hunter', 'tanner', 'charcutier', 'woodcutter', 'gatherer', 'labourer'],
+		industry: ['hunter', 'tanner', 'charcutier', 'coal miner', 'woodcutter', 'gatherer', 'labourer'],
 		trade: ['trapper', 'hunter', 'tanner', 'woodcutter', 'gatherer'],
 		military: []
 	},
 	BUILDS: {
-		fire: ['woodshed', 'tallow vats', 'house'],
+		// charcoal pits ahead of the houses, the tallow vats after them: charcoal is made from the wood the city has
+		fire: ['woodshed', 'charcoal pits', 'tallow vats', 'house'],
 		farming: ['house', 'smokehouse'],
 		industry: ['tannery', 'smokehouse', 'house'],
 		trade: ['house', 'tannery'],
@@ -106,6 +109,7 @@ var Governor = {
 			return true;
 		});
 		if (view.cold) notices.push('cold');
+		if (view.spent) notices.push('spent');
 		else if (fuelShort && stock < view.need) notices.push('fuel');
 		if (free > 0 && view.focus !== 'military') notices.push('idle');
 		return { workers: workers, build: build, notices: notices };
