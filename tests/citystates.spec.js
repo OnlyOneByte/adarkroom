@@ -278,8 +278,9 @@ test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joi
     $SM.set('game.citystates.cs["' + c.id + '"].met', true);
     $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true); // their stranger came already
     $SM.set('game.network.tiers.F5', true);
-    // a pack of leather left at their gate: 1/3 a piece at band 2, past 50
-    CityStates.give(c, { leather: 200 });
+    // a pack of leather left at their gate (value 5, wanted: n / S influence)
+    const S = CityStates.strength(World.baseDangerAt(c.at[0], c.at[1]));
+    CityStates.give(c, { leather: Math.ceil(60 * S) }); // worth 60: past 50, under the cap
     CityStates.playQueued();
     return c;
   });
@@ -298,5 +299,28 @@ test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joi
   expect(r).toMatchObject({ beat: c.id, way: 'their way', F6: true, B8: false, floor: 50, joined: false });
   expect(r.before).toBeGreaterThanOrEqual(50);
   expect(r.after).toBe(50); // faded to the 50 the gift passed, not to 0
+  expect(errors).toEqual([]);
+});
+
+test('each story city-state stands where the era that needs it reaches, on its own terrain; ground made for one is laid again on a reload', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const look = () => page.evaluate(() => {
+    const g = World.hex.gen, field = World.hex.danger, danger = (x, y) => Danger.at(field, g.cols, x, y, 'normal'), T = WorldGen.TERRAIN;
+    return CityStates.list().filter((c) => CityStates.story(c.t)).map((c) => {
+      const sp = CityStates.TEMPERAMENTS[c.t].spawn, named = sp.terrain.filter((k) => T[k]), fuel = CityStates.storyFuel(c.t);
+      return {
+        t: c.t, fuel, reach: CityStates.reach(g, danger, fuel)[c.at[0] + c.at[1] * g.cols] === 1,
+        own: !named.length || named.some((k) => g.terrain[c.at[0]][c.at[1]] === T[k]), band: c.band <= sp.band[1],
+        ground: c.ground ? c.ground.hexes.every((h) => g.terrain[h[0]][h[1]] === c.ground.terrain && World.hex.map[h[0]][h[1]] === c.ground.terrain) : null,
+      };
+    });
+  });
+  const r = await look();
+  expect(r.map((x) => x.fuel)).toEqual(['charcoal', 'charcoal', 'peat', 'coal', 'resin', 'coal', 'whale oil', 'rock oil']);
+  for (const x of r) expect(x, x.t).toMatchObject({ reach: true, own: true, band: true });
+  expect(r.some((x) => x.ground === true)).toBe(true); // seed 4242: no swamp in charcoal's reach, so the bog-cutters' is made
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
+  expect(await look()).toEqual(r);
   expect(errors).toEqual([]);
 });

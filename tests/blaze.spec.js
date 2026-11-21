@@ -390,7 +390,7 @@ test('a v2.8 save loads as v2.9: a city it resettled on the drowned harbour\'s s
   const page2 = await page.context().newPage();
   const after = await openGame(page2, { save: saved });
   // the hex map comes up after the room: the scan runs on its first refresh
-  await page2.waitForFunction(() => typeof Network != 'undefined' && World.hex && !Network.flag('harbourScan'));
+  await page2.waitForFunction(() => typeof Network != 'undefined' && World.hex && World.hex.fire && !Network.flag('harbourScan'));
   const r = await page2.evaluate(() => ({ version: $SM.get('version'), harbour: $SM.get('game.network.story["the drowned harbour"]'), scan: Network.flag('harbourScan') }));
   expect(r).toEqual({ version: 2.9, harbour: 'city2', scan: false });
   expect(errors).toEqual([]);

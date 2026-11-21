@@ -1003,6 +1003,15 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
       herders: lineToward(ctx, gen, field, CS, nearest('herders'), list),
       quests: questsOf(ctx, gen, danger, list),
       potters: lineToward(ctx, gen, field, CS, nearest('potters'), list),
+      // every story city-state where the era that needs it reaches (CityStates.reach of the fuel before its gift),
+      // on its own terrain, inside or under its band
+      story: list.filter((c) => CS.story(c.t)).map((c) => {
+        const sp = CS.TEMPERAMENTS[c.t].spawn, fuel = CS.storyFuel(c.t), T = G.TERRAIN;
+        const named = sp.terrain.filter((k) => T[k]);
+        return { t: c.t, fuel, ground: !!c.ground, d: G.distance(c.at, gen.capital),
+          reach: !fuel || CS.reach(gen, danger, fuel)[c.at[0] + c.at[1] * gen.cols] === 1,
+          terrain: !named.length || named.some((k) => gen.terrain[c.at[0]][c.at[1]] === T[k]), band: c.band <= sp.band[1] };
+      }),
     });
   }
   // the design's feel check and gift example (PHASE4 §2a, §2c), and every wanted good has a value (fixes C13)
@@ -1026,6 +1035,9 @@ export function cityStatesTable({ out, seeds, feel, gift, unvalued, CS }) {
   const fmt = (v, d = 1) => (v === null || v === undefined ? '-' : Number.isFinite(v) ? v.toFixed(d) : 'never');
   lines.push(`placed: ${out.map((o) => o.n).join(', ')} city-states; fallen cities resettled by them (median) ${med(out.map((o) => o.fallen))}; ` +
     `herders inside the ember reach (min) ${Math.min(...out.map((o) => o.herdersInReach))}; potters inside it ${out.filter((o) => o.pottersInReach).length}/${seeds} seeds`);
+  const story = out.flatMap((o) => o.story);
+  lines.push(`story city-states where their era reaches: ${story.filter((x) => x.reach).length}/${story.length}; on ground made for them ${story.filter((x) => x.ground).length}; ` +
+    'hexes out (median): ' + [...new Set(story.map((x) => x.t))].map((t) => `${t} ${median(story.filter((x) => x.t === t).map((x) => x.d))}`).join(', '));
   lines.push('');
   lines.push('| won by influence | seeds lined | hexes from the capital (median) | beacons (median) | glow G (median) | S (median) | influence / min (median) | rival pull / min past 50 (median) | minutes to 100 (median / max) |');
   lines.push('|---|---|---|---|---|---|---|---|---|');
@@ -1058,6 +1070,11 @@ export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
       else if (k !== 'meet' && k !== 'fetch' && !q.inWindow) fails.push(`seed ${o.seed}: the ${k} quest is ${q.d} hexes from them`);
     }
     if (o.glowFromHome) fails.push(`seed ${o.seed}: ${o.glowFromHome} city-states glow from the capital's hearth alone, want a beacon line to each`);
+    for (const st of o.story) {
+      if (!st.reach) fails.push(`seed ${o.seed}: the ${st.t} stand where a line of ${st.fuel} can't glow on them`);
+      if (!st.terrain) fails.push(`seed ${o.seed}: the ${st.t} are off their own terrain`);
+      if (!st.band) fails.push(`seed ${o.seed}: the ${st.t} stand past their band`);
+    }
     if (o.pottersInReach !== 1) fails.push(`seed ${o.seed}: the potters are not inside the ember reach`);
     if (!o.herders) fails.push(`seed ${o.seed}: no beacon line reaches the nearest herders`);
     else if (!Number.isFinite(o.herders.minutes)) fails.push(`seed ${o.seed}: the nearest herders can't be won by influence (rate ${o.herders.rate.toFixed(2)}, pull ${o.herders.pull.toFixed(2)})`);

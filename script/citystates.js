@@ -303,6 +303,56 @@ var CityStates = {
 	},
 
 	/*
+	 * A story city-state stands where the era that needs it can reach it (ruling, design/text/qa-playthrough.md):
+	 * its hex within the glow of ground a line of the fuel before its gift tier lights. The fuel by the gift's tier
+	 * number (F7 -> F6 peat, B9 -> F8 coal, H6 -> F5 charcoal), and the rulings that differ from it
+	 */
+	STORY_FUEL: { tar_keepers: 'resin' }, // ruled: resin, not the rule's coke (F9)
+	storyFuel: function (t) {
+		if (CityStates.STORY_FUEL[t]) return CityStates.STORY_FUEL[t];
+		var tier = (CityStates.TEMPERAMENTS[t].gives[0] || {}).tier, n = tier ? parseInt(tier.slice(1), 10) - 1 : 0;
+		var f = null;
+		for (var k in Fire.FUELS) if (Fire.FUELS[k].tier === 'F' + n) f = k;
+		return f;
+	},
+
+	// the hexes within the glow (GLOW_REACH) of ground a line of this fuel can cross from home (pure; Uint8Array):
+	// passable land up to the fuel's danger cap, its held ground (Fire.FUELS[].holds) up to `wet`, not across water
+	reach: function (gen, danger, fuel) {
+		var G = WorldGen, F = Fire.FUELS[fuel], cols = gen.cols, rows = gen.rows, bits = Fire.groundBits(gen);
+		var lit = new Uint8Array(cols * rows), out = new Uint8Array(cols * rows), q = [gen.capital];
+		lit[gen.capital[0] + gen.capital[1] * cols] = 1;
+		for (var i = 0; i < q.length; i++) {
+			for (var d = 0; d < 6; d++) {
+				var n = G.neighbour(q[i][0], q[i][1], d), x = n[0], y = n[1], k = x + y * cols;
+				if (x < 0 || y < 0 || x >= cols || y >= rows || lit[k]) continue;
+				var t = gen.terrain[x][y];
+				if (!G.isPassable(t) || G.isWater(t) || danger(x, y) > (bits[k] & F.holds ? F.wet : F.cap)) continue;
+				lit[k] = 1;
+				q.push(n);
+			}
+		}
+		// the glow: GLOW_REACH rings round every lit hex
+		q.forEach(function (p) {
+			Fire.around(p[0], p[1], CityStates.GLOW_REACH).forEach(function (h) {
+				if (h[0] >= 0 && h[1] >= 0 && h[0] < cols && h[1] < rows) out[h[0] + h[1] * cols] = 1;
+			});
+		});
+		return out;
+	},
+
+	// the ground of a story city-state made where none of its terrain is in reach: [[x, y, was]] set to
+	// `terrain` (kept in its record as `ground`, laid again on every load: the generator doesn't make it).
+	// map: a live copy of gen.map to change as well (World.hex.map)
+	layGround: function (gen, c, map) {
+		if (!c.ground) return;
+		c.ground.hexes.forEach(function (h) {
+			[gen.map, map].forEach(function (m) { if (m && m[h[0]][h[1]] === h[2]) m[h[0]][h[1]] = c.ground.terrain; });
+			gen.terrain[h[0]][h[1]] = c.ground.terrain;
+		});
+	},
+
+	/*
 	 * Placement (PHASE4 §0, §1; content §1 spawn): pure. gen = WorldGen.generate's output, danger(x, y)
 	 * the hex's danger at normal difficulty, taken(x, y) true where a city or beacon of ours already is.
 	 * Story city-states first (placement guaranteed), then the guarantees, then the fallen cities, then
@@ -348,7 +398,8 @@ var CityStates = {
 		var NEAR_OK = {
 			'river': TERRAIN_OK['lake/coast'], // there are no rivers: water beside the fields
 			'jungle edge': function (x, y) { return near(x, y, function (a, b) { return key(a, b) !== 'jungle'; }); },
-			'adjacent to a Π': function (x, y) { return near(x, y, function (a, b) { return isSite(a, b, 'complex'); }); },
+			// (not the garrison's: a power's stronghold, the archive is an old-world complex's)
+			'adjacent to a Π': function (x, y) { return near(x, y, function (a, b) { return isSite(a, b, 'complex') && gen.siteAt[idx(a, b)] !== gen.garrison; }); },
 			'within 6 hexes of a Π': function (x, y) {
 				return complexes.some(function (s) { return G.distance(s.anchor, [x, y]) <= 6; });
 			},
@@ -383,9 +434,14 @@ var CityStates = {
 		}
 		// the first hex that fits, trying looser windows until one does: the story ones must be placed.
 		// extra: a guarantee (inside the reach) that every window keeps
-		var find = function (spawn, extra) {
-			var inBand = function (p, w) { var b = bandOf(p[0], p[1]); return b >= spawn.band[0] - w && b <= spawn.band[1] + w; };
-			var tries = [
+		// inward: the band widens toward home only, and only on its own terrain (a story city-state's reach)
+		var find = function (spawn, extra, inward) {
+			var inBand = function (p, w) { var b = bandOf(p[0], p[1]); return b >= spawn.band[0] - w && b <= spawn.band[1] + (inward ? 0 : w); };
+			var tries = inward ? [
+				function (p) { return inBand(p, 0) && fits(spawn, p[0], p[1]); },
+				function (p) { return inBand(p, 1) && fits(spawn, p[0], p[1]); },
+				function (p) { return inBand(p, 9) && fits(spawn, p[0], p[1]); }
+			] : [
 				function (p) { return inBand(p, 0) && fits(spawn, p[0], p[1]); },
 				function (p) { return inBand(p, 1) && fits(spawn, p[0], p[1]); },
 				function (p) { return fits(spawn, p[0], p[1]); },
@@ -447,11 +503,52 @@ var CityStates = {
 			left[t]--;
 			return true;
 		};
-		// 1. the story ones, the potters inside the ember network's reach
+		// 1. the story ones, each where its era reaches (CityStates.reach of the fuel before its gift), the potters
+		// inside the ember network's reach too: its terrain and band first; the band may widen inward, never
+		// outward; with none of its terrain in reach, the hex nearest that terrain, and a patch of it made there
+		var placeStory = function (t) {
+			var sp = CS.TEMPERAMENTS[t].spawn, fuel = CS.storyFuel(t), g = sp.guarantee;
+			var ok = fuel ? CS.reach(gen, danger, fuel) : null;
+			var near = function (x, y) { return (!ok || ok[idx(x, y)] === 1) && (!g || inReach(x, y)); };
+			var p = find(sp, near, true);
+			if (p) return add(t, p, null);
+			// no hex of its terrain in reach: the reachable free hex nearest one, inside its band or under it
+			var terrain = sp.terrain.filter(function (k) { return T[k]; })[0];
+			var dist = new Int32Array(cols * rows).fill(-1), q = [];
+			for (var y0 = 0; y0 < rows; y0++) for (var x0 = 0; x0 < cols; x0++) if (fits(sp, x0, y0)) { dist[idx(x0, y0)] = 0; q.push([x0, y0]); }
+			for (var qi = 0; qi < q.length; qi++) {
+				for (var d = 0; d < 6; d++) {
+					var n = G.neighbour(q[qi][0], q[qi][1], d);
+					if (!inside(n[0], n[1]) || dist[idx(n[0], n[1])] >= 0) continue;
+					dist[idx(n[0], n[1])] = dist[idx(q[qi][0], q[qi][1])] + 1;
+					q.push(n);
+				}
+			}
+			var best = null, bd = Infinity;
+			all.forEach(function (h) {
+				var dh = dist[idx(h[0], h[1])];
+				if (!free(h[0], h[1]) || !near(h[0], h[1]) || bandOf(h[0], h[1]) > sp.band[1] || dh < 0 || dh >= bd) return;
+				best = h;
+				bd = dh;
+			});
+			if (!best) { // shortcut: a world with no reachable free land keeps the old placing
+				var p2 = find(sp);
+				return p2 ? add(t, p2, null) : null;
+			}
+			var cs = add(t, best, null);
+			if (terrain) { // (its own ground already, short of a "near" it wants: nothing to make)
+				var patch = [best].concat([0, 1, 2, 3, 4, 5].map(function (k) { return G.neighbour(best[0], best[1], k); }))
+					.filter(function (h) { return inside(h[0], h[1]) && land(h[0], h[1]) && gen.siteAt[idx(h[0], h[1])] < 0 && !taken(h[0], h[1]) && gen.terrain[h[0]][h[1]] !== T[terrain]; });
+				if (patch.length) {
+					cs.ground = { terrain: T[terrain], hexes: patch.map(function (h) { return [h[0], h[1], gen.terrain[h[0]][h[1]]]; }) };
+					CS.layGround(gen, cs);
+				}
+			}
+			return cs;
+		};
 		for (t in CS.TEMPERAMENTS) {
 			if (!CS.story(t)) continue;
-			var g = CS.TEMPERAMENTS[t].spawn.guarantee;
-			if (!(g && place1(t, inReach))) place1(t);
+			if (placeStory(t)) left[t]--;
 		}
 		// 2. the guarantees: herders inside the reach
 		for (t in CS.TEMPERAMENTS) {
@@ -680,6 +777,14 @@ var CityStates = {
 			$SM.set('game.citystates', { seed: gen.seed, gen: gen.gen, list: list, cs: cs, sighted: {}, beats: {}, ticks: 0, riders: {} }, true);
 			Engine.log('placed ' + list.length + ' city-states');
 		}
+		// a story city-state's own ground, made where the era that needs it reaches (CityStates.place)
+		var laid = false;
+		CityStates.list().forEach(function (c) {
+			if (!c.ground) return;
+			CityStates.layGround(gen, c, World.hex.map);
+			laid = true;
+		});
+		if (laid && typeof Network != 'undefined') { Network._ground = null; Network._kinds = null; }
 		CityStates.index();
 		// what is already seen from home counts as met
 		CityStates.meet(World.hex.mask, false);
