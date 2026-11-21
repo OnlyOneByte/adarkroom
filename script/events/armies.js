@@ -11,7 +11,7 @@ Events.Armies = {
 		var A = Armies, a = A.byId(id), c = CityStates.byId(a.to);
 		var text = a.siege.ticks ? [A.status(a)] : [_('the army digs in below the walls.'), _("the soldiers eat in silence. the meat won't last the week.")];
 		return {
-			title: c.name,
+			title: _('The Siege Camp'),
 			scenes: {
 				start: {
 					text: text,
@@ -69,11 +69,26 @@ Events.Armies = {
 		return { title: _('The Storm'), scenes: scenes };
 	},
 
+	// worn down under the walls: the army breaks before the walls do
+	broken: function (id) {
+		var A = Armies, a = A.byId(id), s = a.siege;
+		var left = Math.min(A.soldiers(a), A.routed(s.invested, s.garrison, s.garrisonMax));
+		return {
+			title: CityStates.byId(a.to).name,
+			scenes: {
+				start: {
+					text: [_('the army breaks under the walls. it runs for the light.'), _('{0} soldiers come away from the walls. the baggage stays where it fell.', left)],
+					buttons: { 'go': { text: _('go on'), onChoose: function () { A.rout(id); }, nextScene: 'end' } }
+				}
+			}
+		};
+	},
+
 	// their stores are gone: they yield
 	yielded: function (id) {
 		var A = Armies, a = A.byId(id), c = CityStates.byId(a.to), story = CityStates.story(c.t);
 		return {
-			title: c.name,
+			title: _('The Gate Opens'),
 			scenes: {
 				start: {
 					text: [_('a rag goes up on a pole over the gate.'), _('they have eaten the last of it.')],
