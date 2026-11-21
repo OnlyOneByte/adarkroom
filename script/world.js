@@ -38,6 +38,7 @@ var World = {
   HYPO_HEAL: 30,
   FIGHT_DELAY: 3, // At least three moves between fights
   warned: { food: false, water: false }, // stages of hunger and thirst brought this step
+  usedOutposts: {}, // waystations drunk from this trek (reset on embark); the map asks before the first trek on a load
   NORTH: [ 0, -1],
   SOUTH: [ 0,  1],
   WEST:  [-1,  0],
@@ -833,6 +834,8 @@ var World = {
   hypoHeal: () => World.HYPO_HEAL,
 
   checkFight: function() {
+    // a scene this step opened (a sighting, a gate, a find) is the step's event: no fight over it
+    if(Events.activeEvent()) return;
     World.fightMove = typeof World.fightMove == 'number' ? World.fightMove : 0;
     World.fightMove++;
     if(World.fightMove > World.FIGHT_DELAY) {

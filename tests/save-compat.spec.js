@@ -61,3 +61,13 @@ test('a generator-1 hex save loads as v2.9 without being re-projected: its map, 
   expect(r.hidden).toBe(true); // not until "smoke in the hills" marks it
   expect(errors).toEqual([]);
 });
+
+test('a hex save with a waystation on the map loads (the land view paints it before any trek)', async ({ page }) => {
+  const save = JSON.parse(JSON.stringify(hexSave));
+  const cap = save.game.cities.capital.hex;
+  save.game.world.hex.delta[(cap[0] + 2) + ',' + cap[1]] = 'P'; // a cleared landmark: World.TILE.OUTPOST
+  const errors = await openGame(page, { save });
+  const r = await page.evaluate((at) => ({ tile: World.hex.map[at[0]][at[1]], used: World.outpostUsed(at[0], at[1]) }), [cap[0] + 2, cap[1]]);
+  expect(r).toEqual({ tile: 'P', used: false });
+  expect(errors).toEqual([]);
+});

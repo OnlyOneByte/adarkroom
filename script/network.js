@@ -35,7 +35,6 @@ var Network = {
 	STRANGER_RETURN: 180, // fire ticks (30 min): left be twice or more, the stranger comes back after this, every time
 	CODA_WAIT: 30,       // fire ticks from the burning pits to the coda
 	SECOND_TIER: 64,     // people in a city: its second population tier (H7)
-	BAND2: 4,            // the danger where band 2 starts (Danger.BAND_SIZE * 2): the garrison's hills
 	ROAD_REACH: 12,      // a founded city's road looks this far for a road or a city to join
 	CART: 100,           // what one cart carries along a road (B6)
 	CART_STEP: 1,        // seconds a cart takes a road hex: a trek step's worth of real time (STEP_SECONDS in the sim)
@@ -1143,35 +1142,34 @@ var Network = {
 		}
 	},
 
-	// "smoke in the hills": a lit hex within two hexes of band 2 hills (seen on this refresh, not saved)
+	// "smoke in the hills": a lit hex within two hexes of the garrison's own site, the hills the generator moved
+	// it to (the charcoal frontier); seen on this refresh, not saved
 	seeSmoke: function (result) {
-		var gen = World.hex.gen, cols = gen.cols, rows = gen.rows, field = World.baseField(), T = WorldGen.TERRAIN;
+		var g = $SM.get('game.network.garrison') || Network.pickGarrison(), gen = World.hex.gen, cols = gen.cols, rows = gen.rows;
+		var site = g && World.siteAt(g[0], g[1]);
 		Network._smoke = false;
-		for (var k = 0; k < result.lit.length; k++) {
-			// danger changes by about a tenth a hex out there: nothing far under band 2 is two hexes from it
-			if (!result.lit[k] || field[k] < Network.BAND2 - 1) continue;
-			var x = k % cols, y = (k - x) / cols, d = Fire.offsets(y, 2, false); // no arrays made (perf)
-			for (var i = 0; i < d.length; i++) {
-				var px = x + d[i][0], py = y + d[i][1];
-				if (px >= 0 && py >= 0 && px < cols && py < rows && field[px + py * cols] >= Network.BAND2 && gen.terrain[px][py] === T.hills) {
-					Network._smoke = true;
-					return;
-				}
-			}
-		}
+		if (!site) return;
+		Network._smoke = site.hexes.some(function (h) {
+			return Fire.around(h[0], h[1], 2).some(function (p) {
+				return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows && !!result.lit[p[0] + p[1] * cols];
+			});
+		});
 	},
 
 	// the garrison of the deep mines: the complex the generator moved to the charcoal frontier (WorldGen._garrison),
 	// or the old-world complex nearest the capital in a world with none there; once asked
 	garrison: function () {
-		var g = $SM.get('game.network.garrison');
-		if (g) return g;
+		var g = $SM.get('game.network.garrison') || Network.pickGarrison();
+		if (g && !$SM.get('game.network.garrison')) $SM.set('game.network.garrison', g.slice());
+		return g;
+	},
+
+	pickGarrison: function () {
 		var gen = World.hex.gen, best = gen.garrison >= 0 ? gen.sites[gen.garrison].anchor : null;
 		if (!best) gen.sites.forEach(function (s) {
 			if (s.kind !== 'complex') return;
 			if (!best || Fire.distance(s.anchor, gen.capital) < Fire.distance(best, gen.capital)) best = s.anchor;
 		});
-		if (best) $SM.set('game.network.garrison', best.slice());
 		return best;
 	},
 
@@ -1322,10 +1320,35 @@ var Network = {
 		};
 		var near = function (a, b) { return Fire.distance(a.anchor, gen.capital) - Fire.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
 		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
-		var best = falls.filter(sea).sort(near)[0] || falls.filter(Network.coastal).sort(near)[0];
+		// its centre on ground a pitch line (F10, the tier before whale oil) can light, as the garrison is put where
+		// charcoal reaches (WorldGen.GARRISON_DANGER); a world with none there falls back to the nearest on the water
+		var lit = Network.lineReach('pitch'), inReach = function (s) { return !!lit[s.anchor[0] + s.anchor[1] * gen.cols]; };
+		var best = falls.filter(function (s) { return sea(s) && inReach(s); }).sort(near)[0] ||
+			falls.filter(function (s) { return Network.coastal(s) && inReach(s); }).sort(near)[0] ||
+			falls.filter(sea).sort(near)[0] || falls.filter(Network.coastal).sort(near)[0];
 		if (!best) return null;
 		$SM.set('game.network.harbour', best.anchor.slice(), true);
 		return best;
+	},
+
+	// the ground a line of this fuel can cross from home at normal difficulty (Uint8Array by hex): passable land
+	// up to its danger cap, its held ground (Fire.FUELS[].holds) up to `wet`. Not across water (that is B7 / B11's)
+	lineReach: function (fuel) {
+		var gen = World.hex.gen, cols = gen.cols, rows = gen.rows, F = Fire.FUELS[fuel], bits = Fire.groundBits(gen);
+		var out = new Uint8Array(cols * rows), q = [gen.capital];
+		out[gen.capital[0] + gen.capital[1] * cols] = 1;
+		for (var i = 0; i < q.length; i++) {
+			for (var d = 0; d < 6; d++) {
+				var n = WorldGen.neighbour(q[i][0], q[i][1], d), x = n[0], y = n[1], k = x + y * cols;
+				if (x < 0 || y < 0 || x >= cols || y >= rows || out[k]) continue;
+				var t = gen.terrain[x][y];
+				if (!WorldGen.isPassable(t) || WorldGen.isWater(t)) continue;
+				if (Danger.at(World.hex.danger, cols, x, y, 'normal') > (bits[k] & F.holds ? F.wet : F.cap)) continue;
+				out[k] = 1;
+				q.push(n);
+			}
+		}
+		return out;
 	},
 
 	isHarbour: function (x, y) {
