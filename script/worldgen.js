@@ -566,7 +566,14 @@ var WorldGen = {
 		}
 		spots.sort(function (a, b) { return a[2] - b[2] || a[3] - b[3] || a[0] - b[0] || a[1] - b[1]; });
 		// grown from the spot through hills, then open ground, the directions in the site's own order
-		var rand = G.rng(gen.seed ^ 0x6A11), dirs = [0, 1, 2, 3, 4, 5].sort(function () { return rand() - 0.5; });
+		// a Fisher-Yates shuffle: a sort with a random comparator isn't one, and Chrome's sort gives such a
+		// comparator different orders as it tiers up the code, so the same seed grew different sites
+		var rand = G.rng(gen.seed ^ 0x6A11), dirs = [0, 1, 2, 3, 4, 5];
+		for (var di = dirs.length - 1; di > 0; di--) {
+			var dj = Math.floor(rand() * (di + 1)), dt = dirs[di];
+			dirs[di] = dirs[dj];
+			dirs[dj] = dt;
+		}
 		var grow = function (at) {
 			var hexes = [at], has = {};
 			has[at[0] + at[1] * cols] = true;
