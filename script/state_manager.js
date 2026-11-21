@@ -352,6 +352,18 @@ var StateManager = {
 			$SM.set('version', 2.3);
 			version = 2.3;
 		}
+		if(version == 2.3) {
+			// v2.4 founds more cities: each city's governor remembers what it has told the player,
+			// and a focus from before the governors (no 'fire' then) is kept only if it is still one.
+			var cs = $SM.get('game.cities') || {};
+			for(var cid in cs) {
+				if(!cs[cid].notices) cs[cid].notices = {};
+				if(cs[cid].focus && City.FOCUSES.indexOf(cs[cid].focus) < 0) cs[cid].focus = null;
+			}
+			Engine.log('upgraded save to v2.4');
+			$SM.set('version', 2.4);
+			version = 2.4;
+		}
 	},
 
 	/******************************************************************

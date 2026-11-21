@@ -1,6 +1,11 @@
 /* everything in the town is placed absolutely; a height keeps the next panel from floating over it */
 div#cityPanel {
-	min-height: 700px;
+	min-height: 1000px;
+}
+
+/* the page grows to fit the town panel while it shows (Engine.travelTo) */
+body.tallTown div#content, body.tallTown div#outerSlider > div#main {
+	height: 1000px;
 }
 
 div#cityBuildBtns {
@@ -96,4 +101,28 @@ div#landInfo {
 div#landActions .button {
 	float: left;
 	margin: 0px 8px 8px 0px;
+}
+
+div#citySwitch, div#cityFocus {
+	margin-top: 10px;
+}
+
+div#citySwitch .button, div#cityFocus .button {
+	display: inline-block;
+	margin: 0px 8px 8px 0px;
+}
+
+div#cityStores {
+	margin-top: 8px;
+	border-top: 1px dotted #999;
+	padding-top: 4px;
+}
+
+div#landSettlers {
+	font-size: 14px;
+	margin-bottom: 6px;
+}
+
+div#landSettlers .button {
+	margin: 4px 0px 0px 0px;
 }

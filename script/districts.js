@@ -11,7 +11,7 @@
  * Type fields:
  *   name     display name
  *   glyph    what the district shows on the hex map
- *   fits(g)  g = { terrain: key, at, terrainAt(x, y), site: bool, city: { 'x,y': type } };
+ *   fits(g)  g = { terrain: key, at, terrainAt(x, y), site: bool, city: { 'x,y': type }, capital: bool };
  *            true if the type can go on that hex
  *   holds    City.Buildings keys this type holds (CITY.md)
  *   jobs     { job: slots(g) } raw jobs a hex of this type opens, from its ground
@@ -78,7 +78,11 @@ var District = {
 	var any = District.land;
 	var T = District.TYPES;
 	// provisional slot counts: raw jobs per held hex
-	T['hearth quarter'] = { name: _('hearth quarter'), glyph: 'A', fits: any, holds: ['woodshed'], jobs: {} };
+	T['hearth quarter'] = {
+		name: _('hearth quarter'), glyph: 'A', fits: any, holds: ['woodshed'],
+		// a founded city's first wood, picked up around its fire (the capital has the village's gatherers)
+		jobs: { 'gatherer': function (g) { return g.capital ? 0 : 8; } }
+	};
 	T['huts'] = {
 		name: _('huts'), glyph: 'n', holds: ['house'], jobs: {},
 		fits: function (g) { return g.terrain === 'field' || g.terrain === 'barrens' || District.forestEdge(g); }

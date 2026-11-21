@@ -293,23 +293,23 @@ test('story: the wanderer sent off asks again; the cairn left alone can be studi
   expect(errors).toEqual([]);
 });
 
-test('a v1.3 save with a world loads through every step to v2.3, with a fire network and no errors', async ({ page }) => {
+test('a v1.3 save with a world loads through every step to v2.4, with a fire network and no errors', async ({ page }) => {
   const save = load('v1.3-world');
   await page.clock.install(); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.3);
+  expect(s.version).toBe(2.4);
   expect(s.game.network.tiers.F1).toBe(true);
   for (const id in s.game.cities || {}) expect(s.game.cities[id].happiness).toBeUndefined();
   expect(s.stores).toEqual(save.stores);
   expect(errors).toEqual([]);
 });
 
-test('a v2.0 town save loads to v2.3: happiness gone, the town keeps its people and buildings', async ({ page }) => {
+test('a v2.0 town save loads to v2.4: happiness gone, the town keeps its people and buildings', async ({ page }) => {
   const save = load('v2.0-town');
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.3);
+  expect(s.version).toBe(2.4);
   for (const id in save.game.cities) {
     expect(s.game.cities[id].happiness).toBeUndefined();
     expect(s.game.cities[id].population).toEqual(save.game.cities[id].population);
@@ -410,7 +410,7 @@ test.fixme('BUG 3: hearths joined only through a dark beacon do not pool their f
 
 // BUG 4: Network.tick gives every city the whole network's count of lit beacons as its upkeep, so
 // with a second city each hearth pays for every beacon (latent until Phase 3b founds cities).
-test.fixme('BUG 4: a second city does not pay the upkeep of the capital\'s beacons', async ({ page }) => {
+test('BUG 4 (fixed in 3b): a second city does not pay the upkeep of the capital\'s beacons', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     $SM.setM('stores', { wood: 100000, tallow: 1000 });
