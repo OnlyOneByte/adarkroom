@@ -6,6 +6,9 @@ const PORT = Number(process.env.PW_PORT) || 8181; // PW_PORT: when another check
 export default defineConfig({
   testDir: 'tests',
   testMatch: '*.spec.js',
+  // @slow tests (the fresh-save playthrough, ~10 min) stay out of the default run; PW_SLOW=1 (npm run test:slow) runs them
+  grep: process.env.PW_SLOW ? /@slow/ : undefined,
+  grepInvert: process.env.PW_SLOW ? undefined : /@slow/,
   timeout: 60000,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['list'], ['github']] : 'list',
