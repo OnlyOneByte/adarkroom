@@ -410,10 +410,12 @@ var Armies = {
 		var pName = CS.partyName, pBack = CS.partyBack;
 		// (the map asks per hex drawn: one lookup kept by Armies.marks)
 		CS.glyphAt = function (x, y) {
-			var m = Armies.marks();
-			m = m && m[x + ',' + y];
-			if (m) return m === 'army' ? [Armies.GLYPH, true] : m === 'cache' ? [World.PACK_GLYPH, true] : [World.hex.gen.terrain[x][y], true];
-			return glyph.apply(CS, arguments);
+			var m = Armies._marks === undefined ? Armies.marks() : Armies._marks;
+			if (m) {
+				var k = m[x + ',' + y];
+				if (k) return k === 'army' ? [Armies.GLYPH, true] : k === 'cache' ? [World.PACK_GLYPH, true] : [World.hex.gen.terrain[x][y], true];
+			}
+			return glyph.call(CS, x, y);
 		};
 		CS.label = function (x, y) {
 			var m = Armies.marks();

@@ -48,6 +48,7 @@ async function target(page, t, { line = false } = {}) {
 // with one of these titles comes
 async function untilScene(page, titles, stance = 'press the walls') {
   for (let i = 0; i < 120; i++) {
+    await page.waitForFunction(() => !$('#event').is(':animated')); // (a scene still fading out is not one to answer)
     const ev = await page.evaluate(() => Events.activeEvent() && Events.activeEvent().title);
     if (titles.includes(ev)) return ev;
     if (ev) {
