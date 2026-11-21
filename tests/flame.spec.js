@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, freshToTown } from './helpers.js';
+import { openGame, flameTown, EMBER } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
-const EMBER = ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'];
 
 const choose = async (page, text) => {
   const b = page.locator('#event .button', { hasText: text });
@@ -14,74 +13,18 @@ const choose = async (page, text) => {
 // the event closes (it fades out before Events.activeEvent clears)
 const closed = (page) => page.waitForFunction(() => !Events.activeEvent());
 
-// A fresh game with the town open, the tiers named (every ember tier by default), tallow in stock,
-// no scene unless a test asks, and helpers to make a second city and walk to a hex.
-async function flameTown(page, { tiers = EMBER } = {}) {
-  const { errors } = await freshToTown(page);
-  await page.evaluate((tiers) => {
-    clearTimeout(Events._eventTimeout);
-    clearTimeout(Network._tickTimeout);
-    Network._nextAsk = Date.now() + 1e9;
-    // no first sightings of city-states mid-test (tests/citystates.spec.js has its own)
-    for (const k in CityStates.TEMPERAMENTS) $SM.set('game.citystates.sighted["' + k + '"]', true, true);
-    const t = {};
-    tiers.forEach((id) => { t[id] = true; });
-    $SM.set('game.network.tiers', t);
-    $SM.setM('game.network.story', { stoneHearth: true, brazier: true, firstBrazier: true, trekHome: true, cairnTold: true, cairnDone: true });
-    $SM.setM('stores', { tallow: 1000, 'cured meat': 2000 });
-    $SM.set('game.population', 80);
-    window.burnTick = () => Network.tick();
-    burnTick();
-    const g = World.hex.gen, cap = g.capital;
-    window.isLit = (p) => !!World.hex.fire.lit[p[0] + p[1] * g.cols];
-    window.blankSite = (min = 3) => {
-      for (const p of Fire.around(cap[0], cap[1], 6)) {
-        if (Fire.distance(p, cap) < min || World.siteAt(p[0], p[1])) continue;
-        World.hex.mask[p[0]][p[1]] = World.hex.mask[p[0]][p[1]] || isLit(p);
-        const f = Network.foundingSite(p[0], p[1]);
-        if (f && WorldGen.isPassable(World.hex.map[p[0]][p[1]]) && World.hex.map[p[0]][p[1]] !== WorldGen.TERRAIN.ocean) return p;
-      }
-      return null;
-    };
-    // a second city on a lit hex near the capital, made directly
-    window.secondCity = (citizens = 8) => {
-      const at = blankSite(), d = {};
-      d[at.join(',')] = 'hearth quarter';
-      City.createCity('city2', 'second town', { hex: at, districts: d, stores: { wood: 500 }, citizens, parent: 'capital' });
-      Network.refresh();
-      return at;
-    };
-    window.embark = () => {
-      Path.outfit = { 'cured meat': 20 };
-      Path.embark();
-      Math.random = () => 0.99; // no fights
-    };
-    window.stepOnto = (p) => {
-      for (let d = 0; d < 6; d++) {
-        const n = WorldGen.neighbour(p[0], p[1], d);
-        if (!World.canEnter(World.state.map[n[0]][n[1]])) continue;
-        World.curPos = n.slice();
-        World.move([p[0] - n[0], p[1] - n[1]]);
-        return true;
-      }
-      return false;
-    };
-  }, tiers);
-  return errors;
-}
-
-test('the flame era is wired: tiers 5-8 of every ladder have a beat and numbers; the blaze is not yet', async ({ page }) => {
+test('the flame era is wired: tiers 5-8 of every ladder have a beat and numbers (the blaze era: tests/blaze.spec.js)', async ({ page }) => {
   const errors = await openGame(page);
   const r = await page.evaluate(() => ({
-    tiers: Fire.TIERS.filter((t) => t.n >= 5).map((t) => ({ id: t.id, era: t.era, when: t.when })),
+    tiers: Fire.TIERS.filter((t) => t.n >= 5 && t.n <= 8).map((t) => ({ id: t.id, era: t.era, when: t.when })),
     fuels: Object.keys(Fire.FUELS).map((k) => Fire.FUELS[k].tier),
     beacons: Object.keys(Fire.BEACONS), hearths: Object.keys(Fire.HEARTHS),
     unknown: Fire.unlock('F9'),
   }));
-  for (const t of r.tiers) expect(!!t.when).toBe(t.era === 'flame');
-  expect(r.fuels).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']);
-  expect(r.beacons).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']);
-  expect(r.hearths).toEqual(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8']);
+  for (const t of r.tiers) expect(!!t.when && t.era === 'flame').toBe(true);
+  expect(r.fuels.slice(0, 8)).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']);
+  expect(r.beacons.slice(0, 8)).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']);
+  expect(r.hearths.slice(0, 8)).toEqual(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8']);
   expect(r.unknown).toBe(false); // only the beats Network.BEATS knows
   expect(errors).toEqual([]);
 });
@@ -498,7 +441,7 @@ test('coal: mines on a coal seam, and once the garrison is broken on the hills b
   expect(errors).toEqual([]);
 });
 
-test('a v2.3 save loads as v2.8 with the flame era in: no flame tier, no carts, no errors, the fire tick runs', async ({ page }) => {
+test('a v2.3 save loads as v2.9 with the flame era in: no flame tier, no carts, no errors, the fire tick runs', async ({ page }) => {
   const errors = await openGame(page, { save: load('v2.3-fire') });
   const r = await page.evaluate(() => {
     clearTimeout(Network._tickTimeout);
@@ -506,7 +449,7 @@ test('a v2.3 save loads as v2.8 with the flame era in: no flame tier, no carts, 
     return { flame: Object.keys(Network.tiers()).filter((id) => Fire.tier(id).era === 'flame'), lit: World.hex.fire.lit.reduce((a, b) => a + b, 0),
       version: $SM.get('version'), carts: $SM.get('game.network.carts') };
   });
-  expect(r.version).toBe(2.8);
+  expect(r.version).toBe(2.9);
   expect(r.carts).toEqual([]);
   expect(r.flame).toEqual([]);
   expect(r.lit).toBeGreaterThan(0);

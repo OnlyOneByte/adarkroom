@@ -728,7 +728,7 @@ var CityStates = {
 		if (e && e.fell && e.fell[0] === x && e.fell[1] === y) return CityStates.nb(_('an envoy, waiting.'));
 		var q = CityStates.questLabel(x, y);
 		if (q) return q;
-		if (CityStates.wellAt(x, y)) return CityStates.nb(_('a black stain on the ice.'));
+		if (CityStates.wellAt(x, y)) return CityStates.nb(Network.flag('wellFound') ? Events.Blaze.TEXT.stain.hover : _('a black stain on the ice.'));
 		var c = CityStates.landAt(x, y);
 		if (!c) return null;
 		if (c.at[0] !== x || c.at[1] !== y) return CityStates.nb(CityStates.fill(_("{name}'s land."), c));

@@ -94,7 +94,7 @@ async function gateSave(page) {
 test('the garrison of the deep mines broken by force from a save at its gate: adits blown, the walls pressed, the storm the wanderer leads, the captain; F8 opens coal', async ({ page, browser }) => {
   test.setTimeout(240000);
   const save = await gateSave(page);
-  expect(save.version).toBe(2.8);
+  expect(save.version).toBe(2.9);
 
   // the save, loaded fresh
   const p2 = await browser.newPage();
@@ -321,7 +321,7 @@ test('the garrison is unseen until "smoke in the hills" marks it, even on land t
   expect(errors).toEqual([]);
 });
 
-test('a v2.7 save loads as v2.8: the powers start empty, its hex map kept (not re-projected), the garrison picked where it now stands', async ({ page }) => {
+test('a v2.7 save loads as v2.9: the powers start empty, its hex map kept (not re-projected), the garrison picked where it now stands', async ({ page }) => {
   const save = await gateSave(page);
   // as a v2.7 save: generator 1, the garrison's old anchor stored, no powers
   save.version = 2.7;
@@ -336,7 +336,7 @@ test('a v2.7 save loads as v2.8: the powers start empty, its hex map kept (not r
     garrison: $SM.get('game.network.garrison'), at: World.hex.gen.sites[World.hex.gen.garrison].anchor,
     seen: World.hex.gen.sites[World.hex.gen.garrison].hexes.every((h) => World.hex.mask[h[0]][h[1]]),
   }));
-  expect(r.version).toBe(2.8);
+  expect(r.version).toBe(2.9);
   expect(r.gen).toBe(2);
   expect(r.delta).toEqual(delta);
   expect(r.powers).toEqual({});

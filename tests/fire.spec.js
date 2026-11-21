@@ -64,7 +64,7 @@ test('the town hearth lights home; a beacon line carries fire out, losing some p
   expect(errors).toEqual([]);
 });
 
-test('the ladders: 48 tiers, 16 a ladder in 4 eras, 32 story beats; the ember and flame eras are wired', async ({ page }) => {
+test('the ladders: 48 tiers, 16 a ladder in 4 eras, 32 story beats; the ember, flame and blaze eras are wired', async ({ page }) => {
   const errors = await openGame(page);
   const t = await page.evaluate(() => Fire.TIERS.map((x) => ({ id: x.id, ladder: x.ladder, era: x.era, n: x.n, story: x.story, when: x.when, name: x.name })));
   expect(t).toHaveLength(48);
@@ -72,8 +72,8 @@ test('the ladders: 48 tiers, 16 a ladder in 4 eras, 32 story beats; the ember an
     const l = t.filter((x) => x.ladder === ladder);
     expect(l.map((x) => x.n)).toEqual([...Array(16).keys()].map((i) => i + 1));
     expect(l.map((x) => x.era)).toEqual(['ember', 'flame', 'blaze', 'old fire'].flatMap((e) => [e, e, e, e]));
-    expect(l.filter((x) => x.era === 'ember' || x.era === 'flame').every((x) => x.when)).toBe(true);
-    expect(l.filter((x) => x.era === 'blaze' || x.era === 'old fire').every((x) => x.when === null)).toBe(true);
+    expect(l.filter((x) => x.era !== 'old fire').every((x) => x.when)).toBe(true);
+    expect(l.filter((x) => x.era === 'old fire').every((x) => x.when === null)).toBe(true);
   }
   expect(t.filter((x) => x.story)).toHaveLength(32);
   expect(t.find((x) => x.id === 'F16').name).toBe('the old fire');
@@ -454,7 +454,7 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.8);
+  expect(s.version).toBe(2.9);
   expect(s.game.cities.capital.happiness).toBeUndefined();
   const cap = save.game.cities.capital;
   expect(s.game.cities.capital).toMatchObject({ name: cap.name, focus: cap.focus, population: cap.population, workers: cap.workers });
@@ -469,13 +469,13 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   expect(errors).toEqual([]);
 });
 
-test('a v2.1 save (no difficulty) still loads, through every step to v2.8', async ({ page }) => {
+test('a v2.1 save (no difficulty) still loads, through every step to v2.9', async ({ page }) => {
   const save = load('v2.2-hex');
   save.version = 2.1;
   delete save.game.difficulty;
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.8);
+  expect(s.version).toBe(2.9);
   expect(s.game.difficulty).toBe('normal');
   expect(s.game.cities.capital.happiness).toBeUndefined();
   expect(errors).toEqual([]);

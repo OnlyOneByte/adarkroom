@@ -453,6 +453,15 @@ var StateManager = {
 			$SM.set('version', 2.8);
 			version = 2.8;
 		}
+		if(version == 2.8) {
+			// v2.9 is the blaze era (script/network.js, script/events/blaze.js): tiers 9-12 unlock from the story
+			// the save already has (the city-states' F9 / B9 / F10 beats). A save that resettled fallen cities
+			// may already hold the drowned harbour's: Network looks for it once the hex map is up
+			if($SM.get('game.network.story.resettled', true) > 1) $SM.set('game.network.story.harbourScan', true, true);
+			Engine.log('upgraded save to v2.9');
+			$SM.set('version', 2.9);
+			version = 2.9;
+		}
 	},
 
 	/******************************************************************
