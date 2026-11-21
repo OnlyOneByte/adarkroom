@@ -173,21 +173,28 @@ var Network = {
 		return out;
 	},
 
+	// every district hex, { 'x,y': [index in Network.cities(), type] }, built once and kept until the
+	// cities change (an update to game.cities, or a refresh): the painter asks for every hex (perf)
+	districts: function () {
+		if (Network._districts) return Network._districts;
+		var index = {};
+		Network.cities().forEach(function (c, i) {
+			for (var k in c.city.districts) {
+				if (!index[k]) index[k] = [i, c.city.districts[k]];
+			}
+		});
+		return (Network._districts = index);
+	},
+
 	districtAt: function (x, y) {
-		var cs = Network.cities(), k = Network.key(x, y);
-		for (var i = 0; i < cs.length; i++) {
-			if (cs[i].city.districts[k]) return cs[i].city.districts[k];
-		}
-		return null;
+		var d = Network.districts()[Network.key(x, y)];
+		return d ? d[1] : null;
 	},
 
 	// the index of the city a hex belongs to, -1 if none (for outlining cities on the map)
 	cityIndexAt: function (x, y) {
-		var cs = Network.cities(), k = Network.key(x, y);
-		for (var i = 0; i < cs.length; i++) {
-			if (cs[i].city.districts[k]) return i;
-		}
-		return -1;
+		var d = Network.districts()[Network.key(x, y)];
+		return d ? d[0] : -1;
 	},
 
 	isCairn: function (x, y) {
@@ -224,6 +231,7 @@ var Network = {
 	// Recomputes the network from the saved state into World.hex.fire, reveals what it lights.
 	refresh: function () {
 		if (!World.hex) return;
+		Network._districts = null;
 		Network.ensureCapital();
 		var gen = World.hex.gen, cs = Network.cities();
 		var hid = Network.hearthTier(), H = Fire.HEARTHS[hid];
@@ -833,6 +841,7 @@ var Network = {
 	},
 
 	handleStateUpdates: function (e) {
+		if (e.category == 'all' || (e.stateName && e.stateName.indexOf('game.cities') === 0)) Network._districts = null;
 		if (e.category == 'stores' || (e.stateName && (e.stateName.indexOf('game.cities') === 0 ||
 			e.stateName.indexOf('game.workers') === 0 || e.stateName.indexOf('game.builder') === 0 ||
 			e.stateName.indexOf('game.temperature') === 0 || e.stateName.indexOf('game.world') === 0 ||
