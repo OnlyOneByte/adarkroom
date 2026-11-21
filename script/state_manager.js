@@ -341,6 +341,17 @@ var StateManager = {
 			$SM.set('version', 2.2);
 			version = 2.2;
 		}
+		if(version == 2.2) {
+			// v2.3 has no happiness: only the fire matters (DESIGN.md "Cities & economy").
+			// The fire network (game.network) and each city's place on the map start on load.
+			var cities = $SM.get('game.cities') || {};
+			for(var id in cities) {
+				delete cities[id].happiness;
+			}
+			Engine.log('upgraded save to v2.3');
+			$SM.set('version', 2.3);
+			version = 2.3;
+		}
 	},
 
 	/******************************************************************
