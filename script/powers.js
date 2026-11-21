@@ -466,7 +466,7 @@ var Powers = {
 				click: function () { Powers.marchOn(City.activeCity, P.id); }
 			}).appendTo(box);
 			Button.setDisabled(b, !!why);
-			if (why) $('<div>').addClass('csLine').text(why).appendTo(box);
+			if (why) $('<div>').addClass('clear').add($('<div>').addClass('csLine').text(why)).appendTo(box);
 		});
 	}
 });

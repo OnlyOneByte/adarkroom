@@ -132,6 +132,22 @@ test('the garrison of the deep mines broken by force from a save at its gate: ad
   expect(fed.after).toBe(fed.before); // an adit open: their stores don't run down
   expect(fed.supplied).toBe(true);
 
+  // the camp's rows in the town panel: scrolled to the bottom, the menu fixed at the bottom of the window
+  // sits under the last of them (City.fitHeight counts the army box)
+  await p2.waitForTimeout(100); // (the panel refits once a frame)
+  const fit = await p2.evaluate(() => {
+    window.scrollTo(0, document.body.scrollHeight);
+    const rows = $('#cityArmies').find('*').filter(':visible').toArray();
+    return {
+      last: Math.max(...rows.map((e) => e.getBoundingClientRect().bottom)),
+      menu: $('.menu')[0].getBoundingClientRect().top,
+      camped: $('#armyStatus').text(), out: $('#cityArmies').text().includes('the army is already out'),
+    };
+  });
+  expect(fit.camped).toContain('camped below the walls');
+  expect(fit.out).toBe(true);
+  expect(fit.last).toBeLessThanOrEqual(fit.menu);
+
   // one adit blown by the wanderer, a blasting charge in the pack
   await toPath(p2);
   await p2.evaluate((a) => { embark({ 'blasting charge': 1 }); stepOnto(a); }, g.adits[0]);
