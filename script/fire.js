@@ -242,8 +242,19 @@ var Fire = {
 		return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
 	},
 
-	// the hexes on the straight line from a to b, both ends included
+	// the hexes on the straight line from a to b, both ends included. Kept once worked out (perf: the
+	// network asks for every link's line on every recompute); callers only read it
+	_lines: {}, _nLines: 0,
 	line: function (a, b) {
+		var key = a[0] + ',' + a[1] + ',' + b[0] + ',' + b[1], hit = Fire._lines[key];
+		if (hit) return hit;
+		if (++Fire._nLines > 50000) {
+			Fire._lines = {};
+			Fire._nLines = 1;
+		}
+		return (Fire._lines[key] = Fire._line(a, b));
+	},
+	_line: function (a, b) {
 		var n = Fire.distance(a, b), A = Fire.cube(a[0], a[1]), B = Fire.cube(b[0], b[1]), out = [];
 		for (var i = 0; i <= n; i++) {
 			var t = n === 0 ? 0 : i / n, c = [];
@@ -410,32 +421,70 @@ var Fire = {
 		var reachOf = [], relayAt = [];
 		// hearths' fire out along the beacons, each of them sending s0, keeping each beacon's strongest:
 		// { best, links }. One hearth's is its own walk; several burning alike walk as one, the best of each
+		// the links as flat arrays (adjacency from[off[a]..off[a+1]) -> to[]), and per fuel the share each
+		// link keeps for it: 0 when its fuel can't light the far node or the line can't carry it, NaN until
+		// asked (perf: a walk is the costly part, and every hearth walks)
+		// pairOf: each link's pair of nodes, either way round, as a number; fromOf: each link's near node
+		var off = new Int32Array(NN + 1), to = [], fromOf = [], pairOf = [], pairIds = {}, NP = 0;
+		for (var ai = 0; ai < NN; ai++) {
+			off[ai] = to.length;
+			for (var aj = 0; aj < adj[ai].length; aj++) {
+				var bj = adj[ai][aj], pk = ai < bj ? ai * NN + bj : bj * NN + ai;
+				if (pairIds[pk] === undefined) pairIds[pk] = NP++;
+				to.push(bj);
+				fromOf.push(ai);
+				pairOf.push(pairIds[pk]);
+			}
+		}
+		off[NN] = to.length;
+		var edgeKeep = [], bestOf = new Float64Array(NN), pairLast = new Int32Array(NP), pairS = new Float64Array(NP);
 		var spread = function (starts, s0, h, fi) {
-			var rc = reachOf[fi] || (reachOf[fi] = new Int8Array(NN)), best = {}, links = {}, queue = [];
+			var ek = edgeKeep[fi], rc = reachOf[fi] || (reachOf[fi] = new Int8Array(NN)), best = bestOf, touched = [], pairs = [], queue = [];
+			if (!ek) {
+				ek = edgeKeep[fi] = new Float64Array(to.length);
+				ek.fill(NaN);
+			}
 			starts.forEach(function (hi) { queue.push(hi, s0); });
 			for (var qi = 0; qi < queue.length; qi += 2) {
-				var a = queue[qi], sa = queue[qi + 1], ad = adj[a], top = sa * most;
+				var a = queue[qi], sa = queue[qi + 1], top = sa * most;
 				if (top < Fire.LIT_MIN) continue; // not even the best hop would do
-				for (var j = 0; j < ad.length; j++) {
-					var b = ad[j];
+				for (var e = off[a], end = off[a + 1]; e < end; e++) {
+					var b = to[e];
 					if (b < H || best[b] >= top) continue; // a hearth doesn't relay another's line
-					if (!rc[b]) rc[b] = reaches(nodes[b].at[0] + nodes[b].at[1] * cols, h) ? 1 : -1;
-					if (rc[b] < 0) continue; // past the fuel's reach: dark
-					var c = between(a, b), ok = c.ok || (c.ok = []);
-					if (ok[fi] === undefined) ok[fi] = carries(a, b, h);
-					if (!ok[fi]) continue;
-					if (c.k === undefined) c.k = keep(a, b);
-					var s = sa * c.k;
+					var k = ek[e];
+					if (k !== k) {
+						// past the fuel's reach the beacon is dark; the line must carry it
+						if (!rc[b]) rc[b] = reaches(nodes[b].at[0] + nodes[b].at[1] * cols, h) ? 1 : -1;
+						k = ek[e] = rc[b] > 0 && carries(a, b, h) ? keep(a, b) : 0;
+					}
+					if (!k) continue;
+					var s = sa * k;
 					if (s < Fire.LIT_MIN || best[b] >= s) continue;
+					if (!best[b]) touched.push(b);
 					best[b] = s;
-					links[a < b ? a * NN + b : b * NN + a] = [a, b, s];
+					// the pair's link, the last way round it carried fire
+					var p = pairOf[e];
+					if (!pairLast[p]) pairs.push(p);
+					pairLast[p] = e + 1;
+					pairS[p] = s;
 					if (relayAt[b] === undefined) {
 						relayAt[b] = B.hills && net.hills(nodes[b].at[0], nodes[b].at[1]) ? Fire.RELAY_MIN * B.keep : Fire.RELAY_MIN;
 					}
 					if (s >= relayAt[b]) queue.push(b, s);
 				}
 			}
-			return { best: best, links: links };
+			// { best: { node: fire }, links: [link index], linkS: [its fire] }
+			var out = {}, le = [], ls = [];
+			touched.forEach(function (b) {
+				out[b] = best[b];
+				best[b] = 0;
+			});
+			pairs.forEach(function (p) {
+				le.push(pairLast[p] - 1);
+				ls.push(pairS[p]);
+				pairLast[p] = 0;
+			});
+			return { best: out, links: le, linkS: ls };
 		};
 
 		// pools: sharing hearths whose fire reaches each other add up. Fire reaches a hearth from
@@ -479,7 +528,7 @@ var Fire = {
 
 		// each hearth lights its own ground; its walk's beacons and links are gathered per fuel, the
 		// strongest of each, and painted once (perf: a pooled network's hearths all walk the same lines)
-		var nodeMax = [], linkMax = [];
+		var nodeMax = [], linkMax = [], linkUsed = [];
 		net.hearths.forEach(function (h, hi) {
 			var s0 = walks[hi].s0, w = walks[hi].w, fi = fis[hi];
 			if (s0 > nodes[hi].s) nodes[hi].s = s0;
@@ -490,14 +539,16 @@ var Fire = {
 				if (s < Fire.RELAY_MIN) break;
 			}
 			if (!w) return;
-			var nm = nodeMax[fi] || (nodeMax[fi] = {}), lm = linkMax[fi] || (linkMax[fi] = {});
+			var nm = nodeMax[fi] || (nodeMax[fi] = {}), lm = linkMax[fi] || (linkMax[fi] = new Float64Array(to.length));
+			var used = linkUsed[fi] || (linkUsed[fi] = []);
 			for (var b in w.best) {
 				if (w.best[b] > nodes[b].s) nodes[b].s = w.best[b];
 				if (!(nm[b] >= w.best[b])) nm[b] = w.best[b];
 			}
-			for (var k in w.links) {
-				var l = w.links[k], key = l[0] * NN + l[1];
-				if (!lm[key] || lm[key][2] < l[2]) lm[key] = l;
+			for (var li = 0; li < w.links.length; li++) {
+				var e = w.links[li];
+				if (!lm[e]) used.push(e);
+				if (lm[e] < w.linkS[li]) lm[e] = w.linkS[li];
 			}
 		});
 		// the corridors: a beacon's hexes, and a link's line with a hex either side
@@ -507,13 +558,13 @@ var Fire = {
 				var at = nodes[b].at, sb = nodeMax[fi][b];
 				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, sb, h); });
 			}
-			for (var key in linkMax[fi]) {
-				var l = linkMax[fi][key], u = Math.min(l[0], l[1]) * NN + Math.max(l[0], l[1]);
+			(linkUsed[fi] || []).forEach(function (e) {
+				var l = [fromOf[e], to[e], linkMax[fi][e]], u = pairOf[e];
 				if (!all[u] || all[u][2] < l[2]) all[u] = l;
 				Fire.line(nodes[l[0]].at, nodes[l[1]].at).forEach(function (c) {
 					Fire.around(c[0], c[1], Fire.CORRIDOR).forEach(function (p) { cover(p, l[2], h); });
 				});
-			}
+			});
 		});
 		all = Object.keys(all).map(function (u) { return all[u]; });
 		for (i = 0; i < n; i++) lit[i] = fire[i] >= Fire.LIT_MIN ? 1 : 0;
