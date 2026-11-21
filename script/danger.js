@@ -83,7 +83,8 @@ var Danger = {
 		var spike = new Float32Array(n), src = new Float32Array(n), dist = new Int16Array(n).fill(-1), queue = [];
 		gen.sites.forEach(function (s) {
 			var v = Danger.SPIKE[s.kind];
-			if (!v) return;
+			// the garrison of the deep mines is old-world, but low-tech (POWERS §3: danger 2-4): no spike
+			if (!v || s.garrison) return;
 			s.hexes.forEach(function (h) {
 				var k = h[0] + h[1] * cols;
 				spike[k] = src[k] = v;

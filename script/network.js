@@ -558,7 +558,8 @@ var Network = {
 		var gen = World.hex.gen;
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return null;
 		var site = World.siteAt(x, y), at = [x, y];
-		if (site && site.kind !== 'fallenCity') return null;
+		// a broken power's stronghold is a fallen-city prize too (POWERS §1 aftermath, script/powers.js)
+		if (site && site.kind !== 'fallenCity' && !(typeof Powers != 'undefined' && Powers.brokenAt(site.anchor))) return null;
 		if (site) at = site.anchor.slice(); // a fallen city is resettled from its old centre
 		if (!World.hex.fire.lit[at[0] + at[1] * gen.cols] || !gen.reachable[at[0] + at[1] * gen.cols]) return null;
 		if (!District.land(Network.ground(null, at[0], at[1])) || Network.beaconAt(at[0], at[1])) return null;
@@ -1111,12 +1112,13 @@ var Network = {
 		}
 	},
 
-	// the garrison of the deep mines (provisional): the old-world complex nearest the capital, once asked
+	// the garrison of the deep mines: the complex the generator moved to the charcoal frontier (WorldGen._garrison),
+	// or the old-world complex nearest the capital in a world with none there; once asked
 	garrison: function () {
 		var g = $SM.get('game.network.garrison');
 		if (g) return g;
-		var gen = World.hex.gen, best = null;
-		gen.sites.forEach(function (s) {
+		var gen = World.hex.gen, best = gen.garrison >= 0 ? gen.sites[gen.garrison].anchor : null;
+		if (!best) gen.sites.forEach(function (s) {
 			if (s.kind !== 'complex') return;
 			if (!best || Fire.distance(s.anchor, gen.capital) < Fire.distance(best, gen.capital)) best = s.anchor;
 		});

@@ -15,8 +15,9 @@
  */
 var WorldGen = {
 	// generator version; a save records it, so a change to the output must bump it
-	// shortcut: only version 1 exists; keep old generators around once there is a version 2
-	VERSION: 1,
+	// shortcut: no old generator is kept; 1 -> 2 only moved one site, so the v2.8 save migration marks a
+	// version 1 world as 2 (its deltas and mask still fit), upgrade this once a change moves more
+	VERSION: 2,     // 2: the garrison's complex on the band 1-2 hills (WorldGen._garrison)
 
 	// world size, capital position and feature counts: DESIGN.md "Hex map parameters"
 	COLS: 160,
@@ -122,6 +123,7 @@ var WorldGen = {
 	 *   siteAt, formationAt  Int16Array(cols*rows) index into the lists above, -1 none
 	 *   coreOffset     [dx, dy] from square to hex coordinates
 	 *   deposits[]     { kind: 'iron'|'coal'|'sulphur', at:[x,y], cleared } the prologue's mines
+ *   garrison       the index in sites[] of the garrison of the deep mines' complex (-1: none)
 	 *   pockets[]      [x,y] centres of the safer pockets (Danger)
 	 */
 	generate: function (seed, squareMap, cleared) {
@@ -499,13 +501,99 @@ var WorldGen = {
 		// a crater can land on a pass; it is open ground then, not a pass
 		passes = passes.filter(function (p) { return terrain[p[0]][p[1]] === T.hills; });
 
-		return {
+		var out = {
 			gen: G.VERSION, seed: seed, cols: cols, rows: rows,
 			capital: cap.slice(), warHeart: heart, coreOffset: [ox, oy],
 			map: map, terrain: terrain, sites: sites, formations: formations, passes: passes,
 			reachable: reachable, siteAt: siteAt, formationAt: formationAt,
-			deposits: deposits, pockets: pockets
+			deposits: deposits, pockets: pockets, garrison: -1
 		};
+		// 8. The garrison of the deep mines (POWERS §2, the first power): the complex nearest home moves to the
+		// old wasteland's edge, where a charcoal line can reach it, on its own rng (nothing else moves)
+		out.garrison = G._garrison(out);
+		return out;
+	},
+
+	GARRISON_SIZE: 4,      // provisional: its gate and three adits (POWERS §2)
+	// provisional: the danger its gate stands at (POWERS §3: 2-4); up to charcoal's cap (F5, Fire.FUELS), so
+	// a beacon next to it can be lit before coal (flame-draft "Into the Shafts"): the charcoal frontier, ~20
+	// hexes out, inside the old wasteland's square
+	GARRISON_DANGER: [3, 3.25],
+
+	// moves the complex nearest the capital to the charcoal frontier: open ground at GARRISON_DANGER that a
+	// line can reach from home through ground no more dangerous, nearest home first, hills first; its hexes
+	// become hills (the pithead), and it has no danger spike of its own (site.garrison, Danger.field).
+	// Returns its index, or -1
+	_garrison: function (gen) {
+		var G = WorldGen, T = G.TERRAIN, cols = gen.cols, rows = gen.rows, cap = gen.capital;
+		var i = -1;
+		gen.sites.forEach(function (s, j) {
+			if (s.kind === 'complex' && (i < 0 || G.distance(s.anchor, cap) < G.distance(gen.sites[i].anchor, cap))) i = j;
+		});
+		if (i < 0) return -1;
+		var old = gen.sites[i];
+		old.hexes.forEach(function (h) { gen.siteAt[h[0] + h[1] * cols] = -1; });
+		var field = Danger.field(gen), lo = G.GARRISON_DANGER[0], hi = G.GARRISON_DANGER[1];
+		var pass = {}, deposit = {};
+		gen.passes.forEach(function (p) { pass[p[0] + p[1] * cols] = true; });
+		gen.deposits.forEach(function (d) { deposit[d.at[0] + d.at[1] * cols] = true; });
+		var land = function (x, y) {
+			var k = x + y * cols;
+			return x >= 0 && y >= 0 && x < cols && y < rows && gen.reachable[k] && gen.siteAt[k] < 0 && gen.formationAt[k] < 0 && !pass[k] && !deposit[k] &&
+				G.isPassable(gen.terrain[x][y]) && !G.isWater(gen.terrain[x][y]) && gen.terrain[x][y] === gen.map[x][y] &&
+				G.distance([x, y], gen.warHeart) > 3;
+		};
+		var ok = function (x, y) { return land(x, y) && gen.terrain[x][y] === T.hills; };
+		// the ground a line can cross on the way: from home, through passable hexes up to that danger
+		var near = new Uint8Array(cols * rows), queue = [cap];
+		near[cap[0] + cap[1] * cols] = 1;
+		for (var q = 0; q < queue.length; q++) {
+			for (var dir = 0; dir < 6; dir++) {
+				var n = G.neighbour(queue[q][0], queue[q][1], dir), nk = n[0] + n[1] * cols;
+				if (n[0] < 0 || n[1] < 0 || n[0] >= cols || n[1] >= rows || near[nk] || field[nk] > hi || !G.isPassable(gen.terrain[n[0]][n[1]])) continue;
+				near[nk] = 1;
+				queue.push(n);
+			}
+		}
+		// the ground at that danger a line can reach, nearest home first, hills first; a world with none
+		// there: out of reach, then the nearest danger to it (by quarters)
+		var spots = [];
+		for (var y = 0; y < rows; y++) {
+			for (var x = 0; x < cols; x++) {
+				var d = field[x + y * cols];
+				if (land(x, y)) spots.push([x, y, Math.ceil(Math.max(0, lo - d, d - hi) * 4) * 4 + (near[x + y * cols] ? 0 : 2) + (ok(x, y) ? 0 : 1), G.distance([x, y], cap)]);
+			}
+		}
+		spots.sort(function (a, b) { return a[2] - b[2] || a[3] - b[3] || a[0] - b[0] || a[1] - b[1]; });
+		// grown from the spot through hills, then open ground, the directions in the site's own order
+		var rand = G.rng(gen.seed ^ 0x6A11), dirs = [0, 1, 2, 3, 4, 5].sort(function () { return rand() - 0.5; });
+		var grow = function (at) {
+			var hexes = [at], has = {};
+			has[at[0] + at[1] * cols] = true;
+			[ok, land].forEach(function (fits) {
+				for (var j = 0; j < hexes.length && hexes.length < G.GARRISON_SIZE; j++) {
+					dirs.forEach(function (d) {
+						var nb = G.neighbour(hexes[j][0], hexes[j][1], d);
+						if (hexes.length >= G.GARRISON_SIZE || has[nb[0] + nb[1] * cols] || !fits(nb[0], nb[1])) return;
+						has[nb[0] + nb[1] * cols] = true;
+						hexes.push(nb);
+					});
+				}
+			});
+			return hexes;
+		};
+		for (var s = 0; s < spots.length && s < 50; s++) {
+			var at = [spots[s][0], spots[s][1]], hexes = grow(at);
+			if (hexes.length < 3) continue;
+			hexes.forEach(function (h) {
+				gen.siteAt[h[0] + h[1] * cols] = i;
+				gen.terrain[h[0]][h[1]] = gen.map[h[0]][h[1]] = T.hills;
+			});
+			gen.sites[i] = { kind: 'complex', anchor: at, hexes: hexes, garrison: true };
+			return i;
+		}
+		old.hexes.forEach(function (h) { gen.siteAt[h[0] + h[1] * cols] = i; });
+		return -1;
 	},
 
 	// A range too thick for a one-hex pass: from open ground at its edge, straight through the
