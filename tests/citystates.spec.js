@@ -1,72 +1,9 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, freshToTown } from './helpers.js';
+import { openGame, townWithCityStates, choose } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
-
-// A fresh game with the town open (seed 4242), every ember tier, and the ticks run by hand.
-async function townWithCityStates(page) {
-  const { errors } = await freshToTown(page);
-  await page.evaluate(() => {
-    clearTimeout(Events._eventTimeout);
-    clearTimeout(Network._tickTimeout);
-    clearTimeout(CityStates._tickTimeout);
-    Network._nextAsk = Date.now() + 1e9; // no ember story scenes
-    const t = {};
-    ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].forEach((id) => { t[id] = true; });
-    $SM.set('game.network.tiers', t);
-    $SM.setM('game.network.story', { stoneHearth: true, brazier: true, firstBrazier: true, trekHome: true, cairnTold: true, cairnDone: true });
-    $SM.setM('stores', { tallow: 100000, 'cured meat': 5000, leather: 1000, bait: 1000 });
-    $SM.set('game.population', 80);
-    // one fire tick: the hearths, then the city-states
-    window.tick = (n = 1) => { for (let i = 0; i < n; i++) { Network.tick(); clearTimeout(Network._tickTimeout); CityStates.update(); } };
-    const g = World.hex.gen, cap = g.capital;
-    window.cap = cap;
-    window.nearest = (t) => CityStates.list().filter((c) => c.t === t)
-      .sort((a, b) => WorldGen.distance(a.at, cap) - WorldGen.distance(b.at, cap))[0];
-    // beacons from the capital to a hex next to the city-state, each within a hop of the last, as a player
-    // raises them after walking the way (the hexes on the way are seen)
-    window.lineTo = (c) => {
-      const goal = District.neighbours(c.at).filter((p) => Network.canBeacon(p[0], p[1]) || true)
-        .sort((a, b) => WorldGen.distance(a, cap) - WorldGen.distance(b, cap))[0];
-      let at = cap;
-      for (let i = 0; i < 40 && !(at[0] === goal[0] && at[1] === goal[1]); i++) {
-        Fire.around(at[0], at[1], Fire.HOP).forEach((p) => { if (World.hex.mask[p[0]]) World.hex.mask[p[0]][p[1]] = true; });
-        const next = Fire.around(at[0], at[1], Fire.HOP).filter((p) => Network.canBeacon(p[0], p[1]))
-          .sort((a, b) => WorldGen.distance(a, goal) - WorldGen.distance(b, goal))[0];
-        if (!next || !Network.raiseBeacon(next[0], next[1])) return false;
-        at = next;
-      }
-      return at[0] === goal[0] && at[1] === goal[1];
-    };
-    window.embark = () => {
-      Path.outfit = { 'cured meat': 50 };
-      Path.embark();
-      Math.random = () => 0.99; // no fights
-    };
-    // a step onto a hex from a neighbour the wanderer can stand on
-    window.stepOnto = (p) => {
-      for (let d = 0; d < 6; d++) {
-        const n = WorldGen.neighbour(p[0], p[1], d);
-        if (!World.canEnter(World.state.map[n[0]][n[1]])) continue;
-        World.curPos = n.slice();
-        World.move([p[0] - n[0], p[1] - n[1]]);
-        return true;
-      }
-      return false;
-    };
-  });
-  return errors;
-}
-
-// clicks an event button by its text, waiting for the event panel
-async function choose(page, text) {
-  const b = page.locator('#event .button', { hasText: text }).first();
-  await b.waitFor();
-  await b.click();
-  await page.waitForTimeout(50);
-}
 
 test('the hex map opens with 64 city-states: 8 story ones, the guarantees, the Ω glyph, the same after a reload', async ({ page }) => {
   const errors = await townWithCityStates(page);

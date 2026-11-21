@@ -1647,7 +1647,12 @@ var World = {
     var pack = World.state.pack;
     if(!pack) return;
     pack.left *= 1 - Danger.scavengeRate(World.dangerAt(pack.at[0], pack.at[1]));
-    if(!World.packLeft(pack) && !World.settlersLeft(pack)) delete World.state.pack;
+    // a city-state's lost party waiting by the pack is thinned the same way (script/citystates.js)
+    var party = typeof CityStates != 'undefined' && pack.party;
+    if(!World.packLeft(pack) && !World.settlersLeft(pack) && !(party && CityStates.partyLeft(pack))) {
+      delete World.state.pack;
+      if(party) CityStates.partyBack(pack);
+    }
   },
 
   // the settlers still holding out by a pack as the scavengers come: { people, stores }, or null
@@ -1664,6 +1669,7 @@ var World = {
   recoverPack: function() {
     var pack = World.state.pack, left = World.packLeft(pack), rest = null, settlers = World.settlersLeft(pack);
     delete World.state.pack;
+    if(pack.party && typeof CityStates != 'undefined') CityStates.partyBack(pack);
     if(settlers) {
       // the settlers who held out fall in again, with what is left of their supplies
       $SM.set('game.network.settlers', $.extend({}, pack.settlers, settlers, { out: true }));
@@ -1690,6 +1696,8 @@ var World = {
   packLabel: function(pack) {
     var left = World.packLeft(pack), list = [], settlers = World.settlersLeft(pack);
     if(settlers) list.push(_('settlers') + '&nbsp;' + settlers.people);
+    var party = pack.party && typeof CityStates != 'undefined' && CityStates.partyLeft(pack);
+    if(party) list.push(CityStates.partyName(pack).replace(/ /g, '&nbsp;') + '&nbsp;' + party);
     for(var k in left) list.push(_(k) + '&nbsp;' + left[k]);
     return _('the&nbsp;pack:') + '&nbsp;' + list.join(',&nbsp;');
   },
