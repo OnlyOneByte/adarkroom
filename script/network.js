@@ -1093,19 +1093,18 @@ var Network = {
 
 	// "smoke in the hills": a lit hex within two hexes of band 2 hills (seen on this refresh, not saved)
 	seeSmoke: function (result) {
-		var gen = World.hex.gen, cols = gen.cols, field = World.baseField(), T = WorldGen.TERRAIN;
+		var gen = World.hex.gen, cols = gen.cols, rows = gen.rows, field = World.baseField(), T = WorldGen.TERRAIN;
 		Network._smoke = false;
 		for (var k = 0; k < result.lit.length; k++) {
 			// danger changes by about a tenth a hex out there: nothing far under band 2 is two hexes from it
 			if (!result.lit[k] || field[k] < Network.BAND2 - 1) continue;
-			var x = k % cols, y = (k - x) / cols;
-			var near = Fire.around(x, y, 2).some(function (p) {
-				return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < gen.rows &&
-					gen.terrain[p[0]][p[1]] === T.hills && field[p[0] + p[1] * cols] >= Network.BAND2;
-			});
-			if (near) {
-				Network._smoke = true;
-				return;
+			var x = k % cols, y = (k - x) / cols, d = Fire.offsets(y, 2, false); // no arrays made (perf)
+			for (var i = 0; i < d.length; i++) {
+				var px = x + d[i][0], py = y + d[i][1];
+				if (px >= 0 && py >= 0 && px < cols && py < rows && field[px + py * cols] >= Network.BAND2 && gen.terrain[px][py] === T.hills) {
+					Network._smoke = true;
+					return;
+				}
 			}
 		}
 	},
