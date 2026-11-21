@@ -89,6 +89,7 @@ var Fire = {
 	 * need = fire wanted (its output plus the upkeep of the beacons it fed last tick);
 	 * have(fuel) = units in stock; stored = fire held over (H4 and up);
 	 * room = fire it may hold over, the tier's store by default (a small city's hearth holds less).
+	 * Units burn in fractions, like every other store, so no fire is wasted.
 	 * Returns { burn: { fuel: units used }, fuel: the fuel whose reach its lines get (the
 	 * strongest burned), out: fire made, stored }.
 	 */
@@ -99,7 +100,7 @@ var Fire = {
 			.sort(function (a, b) { return Fire.tier(Fire.FUELS[b].tier).n - Fire.tier(Fire.FUELS[a].tier).n; })
 			.forEach(function (k) {
 				if (made >= want) return;
-				var f = Fire.FUELS[k], per = f.fire * f.burn, n = Math.min(have(k), Math.ceil((want - made) / per));
+				var f = Fire.FUELS[k], per = f.fire * f.burn, n = Math.min(have(k), (want - made) / per);
 				burn[k] = n;
 				made += n * per;
 				if (!fuel) fuel = k;

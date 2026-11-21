@@ -495,6 +495,15 @@ test('BUG 8: the wanderer\'s cairn is never placed under a beacon', async ({ pag
   expect(errors).toEqual([]);
 });
 
+// QA Q9 (decided): stores are fractional, so a hearth burns fractions of a unit
+test('QA Q9: fuel burns in fractions, so a hearth without a store wastes none', async ({ page }) => {
+  await openGame(page);
+  const r = await page.evaluate(() => Fire.burnAll('H3', { F1: true, F2: true }, (k) => (k === 'dry wood' ? 100 : 0), 17, 0));
+  expect(r.burn['dry wood']).toBeCloseTo(17 / 1.5, 6); // 11.33 dry wood, not 12
+  expect(r.out).toBe(16);
+  expect(r.stored).toBe(0);
+});
+
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {
   const errors = await town(page);
   const before = await page.evaluate(() => {
