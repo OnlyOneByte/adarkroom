@@ -802,7 +802,7 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
   return { out, seeds, feel, gift, unvalued, CS };
 }
 
-export function cityStatesTable({ out, seeds, feel, gift, unvalued }) {
+export function cityStatesTable({ out, seeds, feel, gift, unvalued, CS }) {
   const lines = [];
   const med = (a) => (a.length ? median(a) : null);
   const fmt = (v, d = 1) => (v === null || v === undefined ? '-' : Number.isFinite(v) ? v.toFixed(d) : 'never');
@@ -817,7 +817,7 @@ export function cityStatesTable({ out, seeds, feel, gift, unvalued }) {
     lines.push(`| nearest ${k} | ${r.length}/${seeds} | ${med(r.map((x) => x.distance)) ?? '-'} | ${med(r.map((x) => x.beacons)) ?? '-'} | ${fmt(med(r.map((x) => x.G)))} | ${med(r.map((x) => x.S)) ?? '-'} | ${fmt(med(r.map((x) => x.rate)), 2)} | ${fmt(med(r.map((x) => x.pull)), 2)} | ${fmt(med(m))} / ${fmt(m.length ? Math.max(...m) : null)} |`);
   }
   lines.push('');
-  lines.push(`feel check (herders, S=2, touched by a G=4 line): ${feel.toFixed(2)} / min, ~${(100 / feel).toFixed(0)} min; 50 leather to them: +${gift.toFixed(1)}; goods with no gift value: ${unvalued.length ? unvalued.join(', ') : 'none'}`);
+  lines.push(`the design's example (herders, S=2, touched by a G=4 line) at RATE ${CS.RATE}: ${feel.toFixed(2)} / min, ~${(100 / feel).toFixed(0)} min; 50 leather to them: +${gift.toFixed(1)}; goods with no gift value: ${unvalued.length ? unvalued.join(', ') : 'none'}`);
   return lines.join('\n');
 }
 
@@ -834,7 +834,9 @@ export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
     if (!o.herders) fails.push(`seed ${o.seed}: no beacon line reaches the nearest herders`);
     else if (!Number.isFinite(o.herders.minutes)) fails.push(`seed ${o.seed}: the nearest herders can't be won by influence (rate ${o.herders.rate.toFixed(2)}, pull ${o.herders.pull.toFixed(2)})`);
   }
-  if (Math.abs(feel - 6) > 1e-9) fails.push(`feel check ${feel} / min, want 6`);
+  // the approved feel check: ~17 minutes for the easy first win (RATE is tuned to it)
+  const m = median(out.filter((o) => o.herders).map((o) => o.herders.minutes));
+  if (!(m >= 12 && m <= 25)) fails.push(`nearest herders won by an ember line in ${m.toFixed(1)} minutes (median), want ~17 (12-25)`);
   if (Math.abs(gift - 25) > 1e-9) fails.push(`50 leather to herders worth ${gift}, want 25`);
   if (unvalued.length) fails.push(`no gift value for ${unvalued.join(', ')}`);
   return fails;

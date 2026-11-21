@@ -29,7 +29,10 @@ var CityStates = {
 	/*
 	 * The rules (PHASE4.md §2), provisional
 	 */
-	RATE: 1.0,             // influence per minute per point of glow, × T / S
+	// influence per minute per point of glow, × T / S. Tuned with the simulator so the nearest herders on an
+	// ember-era line take about the approved feel check's ~17 minutes (at 1.0 they took ~4: an ember line
+	// touching them glows ~16, not the feel check's 4 × 2)
+	RATE: 0.25,
 	GLOW_REACH: 3,         // the glow is read from lit hexes this far from a city-state
 	TOUCH: 2,              // a beacon next to them: the glow counts double (fixes C3: gap 0 unhalved, then ×2)
 	DECAY: 0.5,            // per minute out of the glow, floored at the last threshold passed
@@ -58,8 +61,12 @@ var CityStates = {
 	// pending user (G5): what an envoy costs: a citizen and this, from any city; the water goes from the trek
 	ENVOY_COST: { 'cured meat': 10 },
 	ENVOY_WATER: 10,
-	// provisional: people a city-state joins with ("many" for herders); not given in PHASE4
+	// pending user (Q3): people a city-state joins with ("many" for herders); not given in PHASE4
 	JOIN_PEOPLE: { many: 16, some: 8 },
+	// pending user (Q2): a joined city's first stores, what settlers carry to a founded one, so its hearth burns
+	joinStores: function () {
+		return $.extend({}, City.SETTLERS.stores);
+	},
 
 	// pending user (G2): S = 1 + the danger band of their hex (0-4); far is harder
 	strength: function (danger) {
@@ -1041,7 +1048,7 @@ var CityStates = {
 			if (p) d[Network.key(p[0], p[1])] = type;
 		});
 		City.createCity(next.id, c.name, {
-			hex: c.at, districts: d, stores: {}, citizens: CS.JOIN_PEOPLE[give.people === 'many' ? 'many' : 'some'], parent: null
+			hex: c.at, districts: d, stores: CS.joinStores(), citizens: CS.JOIN_PEOPLE[give.people === 'many' ? 'many' : 'some'], parent: null
 		});
 		var focus = CS.focusOf(c.t);
 		if (focus) $SM.set(City.path(next.id, 'focus'), focus, true);

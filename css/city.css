@@ -1,12 +1,5 @@
-/* everything in the town is placed absolutely; a height keeps the next panel from floating over it */
-div#cityPanel {
-	min-height: 1300px;
-}
-
-/* the page grows to fit the town panel while it shows (Engine.travelTo) */
-body.tallTown div#content, body.tallTown div#outerSlider > div#main {
-	height: 1300px;
-}
+/* everything in the town is placed absolutely; City.fitHeight sizes the panel, and the page while the
+   town shows, to what is in it */
 
 div#cityBuildBtns {
 	position: absolute;

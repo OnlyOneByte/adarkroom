@@ -693,6 +693,7 @@
       // is the capital's, hidden while the town panel shows another city
       var town = typeof City != 'undefined' && module == City;
       $('body').toggleClass('tallTown', town);
+      if(!town) $('div#content, div#outerSlider > div#main').css('height', '');
       $('#storesContainer').css('visibility', town && City.activeCity != City.CAPITAL ? 'hidden' : '');
       module.onArrival(diff);
       Notifications.printQueue(module);
