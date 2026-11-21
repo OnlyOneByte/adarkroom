@@ -549,6 +549,7 @@ var City = {
 		['meat', 'fur', 'oak', 'bait'].forEach(function (k) { view.stores[k] = $SM.get(City.storePath(cityId, k), true); });
 		view.need = Network.hearthNeed(cityId);
 		view.cold = !(c.hearth && c.hearth.out > 0);
+		view.room = City.getMaxCitizens(cityId);
 		view.spent = City.districtHexes(cityId, 'bog cuts').length > 0 && City.jobSlots(cityId, 'peat cutter') === 0 && Network.has('F6');
 		var plan = Governor.plan(view);
 		for (var w in plan.workers) {
