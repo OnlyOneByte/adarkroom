@@ -249,9 +249,9 @@ test('a storm lost: 50-80% gone, the baggage dropped as a cache the scavengers t
   // under the walls (the city-state's own title) or in the storm, the army breaks
   expect(ev).toBeTruthy();
   const lines = await page.locator('#event #description').innerText();
-  const m = lines.match(/(\d+) soldiers come away from the walls/);
+  const m = lines.match(/soldiers? comes? away from the walls/);
   if (!m) await choose(page, 'go on'); // the storm's rounds first
-  const left = Number((await page.locator('#event #description').innerText()).match(/(\d+) soldiers come away from the walls/)[1]);
+  const left = Number((await page.locator('#event #description').innerText()).match(/(\d+) soldiers? comes? away from the walls/)[1]);
   await choose(page, 'go on');
   // 3 went in: 50-80% lost is 2 (66%) at the most a whole soldier allows
   expect(left).toBeLessThanOrEqual(1);

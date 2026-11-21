@@ -188,7 +188,7 @@ export function benchNode({ cities = 64, beacons = 500, seed = 7 } = {}) {
   const field = run(`(function () {
     var list = CityStates.list(), gen = World.hex.gen, cap = gen.capital, lit = Armies.lit(), armies = [], far = null;
     list.slice().sort(function (a, b) { return WorldGen.distance(b.at, cap) - WorldGen.distance(a.at, cap); }).slice(0, 16).forEach(function (c, i) {
-      var camp = Armies.campFor(gen, c, cap, lit), path = camp && Armies.route(gen, cap, camp, lit);
+      var camp = Armies.campFor(gen, c, cap, function (x, y) { return lit(x, y) ? 1 : 0; }), path = camp && Armies.route(gen, cap, camp, lit);
       if (!path) return;
       far = far || camp;
       var a = { id: 'b' + i, from: 'capital', to: c.id, squads: { 'iron sword': 30 }, ammo: {}, gear: {}, food: 1e9, water: 1e9,

@@ -99,6 +99,11 @@ var Armies = {
 		return Armies.SQUADS.filter(function (s) { return s.weapon === weapon; })[0];
 	},
 
+	// "1 soldier", "{n} soldiers"
+	men: function (n) {
+		return n === 1 ? _('1 soldier') : _('{0} soldiers', n);
+	},
+
 	soldiers: function (army) {
 		var n = 0;
 		for (var k in army.squads) n += army.squads[k];
@@ -253,12 +258,13 @@ var Armies = {
 		return path;
 	},
 
-	// the hex the army camps on (pure): next to their hearth, on lit land if it can be, nearest home
-	campFor: function (gen, c, from, lit) {
+	// the hex the army camps on (pure): next to their hearth, the best by score(x, y) (lit land first), then
+	// nearest home
+	campFor: function (gen, c, from, score) {
 		return [0, 1, 2, 3, 4, 5].map(function (d) { return WorldGen.neighbour(c.at[0], c.at[1], d); }).filter(function (p) {
 			return p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows && WorldGen.isPassable(gen.terrain[p[0]][p[1]]);
 		}).sort(function (a, b) {
-			return (lit(b[0], b[1]) - lit(a[0], a[1])) || WorldGen.distance(a, from) - WorldGen.distance(b, from);
+			return (score(b[0], b[1]) - score(a[0], a[1])) || WorldGen.distance(a, from) - WorldGen.distance(b, from);
 		})[0] || null;
 	},
 
@@ -522,7 +528,7 @@ var Armies = {
 		var a = Armies.armyAt(x, y), nb = CityStates.nb;
 		if (a) {
 			var city = $SM.get('game.cities["' + a.from + '"]');
-			return nb(_('the army of {0}.', city ? city.name : '')) + ' ' + nb(_('{0} soldiers.', Armies.soldiers(a)));
+			return nb(_('the army of {0}.', city ? city.name : '')) + ' ' + nb(Armies.men(Armies.soldiers(a)) + '.');
 		}
 		var k = Armies.cacheAt(x, y);
 		if (k) {
@@ -622,7 +628,9 @@ var Armies = {
 			Notifications.notify(City, why);
 			return false;
 		}
-		var from = $SM.get(City.path(cityId, 'hex')), camp = A.campFor(World.hex.gen, c, from, A.lit());
+		// lit land, off the beacons' own hexes (where the map shows the beacon, not the army)
+		var lit = A.lit(), from = $SM.get(City.path(cityId, 'hex'));
+		var camp = A.campFor(World.hex.gen, c, from, function (x, y) { return lit(x, y) ? (Network.beaconAt(x, y) ? 1 : 2) : 0; });
 		var path = camp && A.route(World.hex.gen, from, camp, A.lit());
 		if (!path) {
 			Notifications.notify(City, _('there is no way there on foot.'));
@@ -1032,15 +1040,15 @@ var Armies = {
 		var c = a.to && CityStates.byId(a.to), n = Armies.soldiers(a);
 		if (a.state === 'siege' && c) {
 			var s = a.siege;
-			return CityStates.fill(_('the army is camped below the walls of {name}. {n} soldiers. walls {w}. their stores {s}.'), c,
-				{ n: n, w: Math.ceil(s.walls), s: s.stores });
+			return CityStates.fill(_('the army is camped below the walls of {name}. {n}. walls {w}. their stores {s}.'), c,
+				{ n: Armies.men(n), w: Math.ceil(s.walls), s: s.stores });
 		}
 		if (a.state === 'march') {
-			if (a.home) return _('the army is marching home. {0} soldiers.', n);
-			if (c) return CityStates.fill(_('the army is on the march to {name}. {n} soldiers. {h} hexes to go.'), c, { n: n, h: a.path.length });
-			return _('the army falls back to the light. {0} soldiers.', n);
+			if (a.home) return _('the army is marching home. {0}.', Armies.men(n));
+			if (c) return CityStates.fill(_('the army is on the march to {name}. {n}. {h} hexes to go.'), c, { n: Armies.men(n), h: a.path.length });
+			return _('the army falls back to the light. {0}.', Armies.men(n));
 		}
-		return _('the army is camped. {0} soldiers.', n);
+		return _('the army is camped. {0}.', Armies.men(n));
 	},
 
 	updatePanel: function () {
@@ -1052,7 +1060,10 @@ var Armies = {
 			return;
 		}
 		if (!box.length) {
-			box = $('<div>').attr({ id: 'cityArmies', 'data-legend': _('the army') }).appendTo($('#cityLand').length ? '#cityLand' : City.panel);
+			box = $('<div>').attr({ id: 'cityArmies', 'data-legend': _('the army') });
+			// under the land, above the city-states it marches on
+			if ($('#cityStates').length) box.insertBefore('#cityStates');
+			else box.appendTo($('#cityLand').length ? '#cityLand' : City.panel);
 		}
 		var key = JSON.stringify([cityId, military, A.trained(cityId), A.room(cityId), a && [A.status(a), a.state, a.siege && a.siege.stance]]);
 		if (box.attr('data-key') === key) return;
