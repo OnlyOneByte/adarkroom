@@ -10,6 +10,7 @@
  *   node tools/bench.js --profile    the Node run under --cpu-prof (or, with --browser, the page's
  *                                    measurements under the DevTools profiler); prints the top functions
  *   options: --cities N --beacons N --seed N --json
+ *            --flame   the flame era's tiers in too (roads, the bread oven and forge hearth, the marsh lantern)
  * Exits 1 when a measurement is over its budget.
  *
  * Headless, the jQuery DOM calls go to a no-op stand-in, so the Node numbers are the game logic
@@ -99,7 +100,7 @@ var Button = { Button: function () { return __dom; }, setDisabled: function () {
 var Space = {}, AudioEngine = { playSound: function () {} }, AudioLibrary = {};
 var Events = { activeEvent: function () { return null; }, startEvent: function () {}, Story: {} };
 `;
-const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network'];
+const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'events/flame'];
 
 // Loads the game's scripts as globals of this process, as the page does. (Not a vm context: every
 // global lookup there goes through the context's interceptor, some 250x slower, which would swamp
@@ -145,10 +146,10 @@ function time(fn, reps) {
   return { median: t[Math.floor(t.length / 2)], p95: t[Math.floor(t.length * 0.95)], max: t[t.length - 1] };
 }
 
-export function benchNode({ cities = 64, beacons = 500, seed = 7 } = {}) {
+export function benchNode({ cities = 64, beacons = 500, seed = 7, era = 'ember' } = {}) {
   const t0 = performance.now();
   const ctx = loadGame({ seed });
-  ctx.__opts = { cities, beacons, seed };
+  ctx.__opts = { cities, beacons, seed, era };
   const state = vm.runInThisContext(`(${synth.toString()})(__opts)`);
   const setup = performance.now() - t0;
   const run = (src) => vm.runInThisContext(src);
@@ -179,12 +180,12 @@ export function benchNode({ cities = 64, beacons = 500, seed = 7 } = {}) {
   const net = run(`(function () {
     var gen = World.hex.gen, H = Fire.HEARTHS[Network.hearthTier()];
     return {
-      cols: gen.cols, rows: gen.rows, field: World.baseField(),
+      cols: gen.cols, rows: gen.rows, field: World.baseField(), kind: Network.kinds ? Network.kinds() : null,
       hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
       open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
       hearths: Network.cities().map(function (c) {
         var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
-        return { at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0 };
+        return { at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0, holds: f ? f.holds || 0 : 0, wet: f ? f.wet : 0 };
       }),
       beacons: Object.keys($SM.get('game.network.beacons')).map(function (k) { return k.split(',').map(Number); }),
       beacon: Fire.BEACONS[Network.beaconTier()]
@@ -292,7 +293,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const i = argv.indexOf('--' + name);
     return i >= 0 ? Number(argv[i + 1]) : dflt;
   };
-  const opts = { cities: arg('cities', 64), beacons: arg('beacons', 500), seed: arg('seed', 7) };
+  const opts = { cities: arg('cities', 64), beacons: arg('beacons', 500), seed: arg('seed', 7), era: argv.includes('--flame') ? 'flame' : 'ember' };
   const profile = argv.includes('--profile') ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bench-prof-')), 'bench.cpuprofile') : null;
   const report = () => {
     const h = hotspots(profile);
