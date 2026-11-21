@@ -600,7 +600,10 @@
         $SM.set('config.lightsOff', false, true);
       }
       // the hex map is a canvas: repaint it in the new colours, once the sheet has loaded too
-      var repaint = function() { if (World.hex && World.state) World.drawHexMap(); };
+      var repaint = function() {
+        if (World.hex && World.state) World.drawHexMap();
+        if (World.hex) Network.draw(); // the town's view of the land
+      };
       $('link[title="darkenLights"]').off('load').on('load', repaint);
       repaint();
     },

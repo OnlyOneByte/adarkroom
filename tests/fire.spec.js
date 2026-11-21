@@ -519,3 +519,39 @@ test('drawing a lit network stays inside the frame budget, on the trek map and i
   expect(ms).toBeLessThan(process.env.CI ? 33 : 16);
   expect(errors).toEqual([]);
 });
+
+test('lights on, the lit land stays clear and the dark past it is washed grey; lights off, the lit land glows', async ({ page }) => {
+  const errors = await townWithFire(page);
+  const alphaAt = () => page.evaluate(() => {
+    const g = World.hex.gen, cap = g.capital, fire = World.hex.fire;
+    // a seen hex lit and one seen but dark, both in the land view
+    let lit = null, dark = null;
+    for (let r = 1; r < 8 && !(lit && dark); r++) {
+      for (const p of Fire.ring(cap[0], cap[1], r)) {
+        World.hex.mask[p[0]][p[1]] = true;
+        const k = p[0] + p[1] * g.cols;
+        if (!lit && fire.lit[k] && !Network.beaconAt(p[0], p[1])) lit = p;
+        if (!dark && !fire.lit[k]) dark = p;
+      }
+    }
+    Network.draw();
+    const c = $('#landMap canvas')[0], dpr = c.width / Network.VIEW[0], ctx = c.getContext('2d');
+    const at = (p) => {
+      const m = World.hexCentre(p[0], p[1]);
+      const x = Math.round((m[0] - Network.cam[0] + Network.VIEW[0] / 2) * dpr);
+      const y = Math.round((m[1] - 6 - Network.cam[1] + Network.VIEW[1] / 2) * dpr); // above the glyph
+      return ctx.getImageData(x, y, 1, 1).data[3];
+    };
+    return { lit: at(lit), dark: at(dark) };
+  });
+  await page.evaluate(() => { $SM.set('stores.tallow', 1000); burnTick(); lineEast(2); });
+  const on = await alphaAt();
+  expect(on.lit).toBe(0);
+  expect(on.dark).toBeGreaterThan(0);
+  await page.evaluate(() => Engine.turnLightsOff());
+  await page.waitForTimeout(300);
+  const off = await alphaAt();
+  expect(off.lit).toBeGreaterThan(0);
+  expect(off.dark).toBe(0);
+  expect(errors).toEqual([]);
+});

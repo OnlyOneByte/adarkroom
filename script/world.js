@@ -1428,6 +1428,25 @@ var World = {
     ctx.setTransform(dpr, 0, 0, dpr, -o0[0] * dpr, -o0[1] * dpr);
     ctx.clearRect(o0[0], o0[1], o.view[0], o.view[1]);
 
+    var net = World.hex.fire, lightsOn = !$SM.get('config.lightsOff');
+    // lights on, the dark creeps in: a grey wash over the view, cut back out of the lit land and
+    // the fog (one fill and one cut, so a whole seen viewport costs no more than a few lit hexes)
+    if(net && lightsOn) {
+      ctx.globalAlpha = 0.07;
+      ctx.fillStyle = dim;
+      ctx.fillRect(o0[0], o0[1], o.view[0], o.view[1]);
+      ctx.globalAlpha = 1;
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      for(y = r0; y <= r1; y++) {
+        for(x = c0; x <= c1; x++) {
+          if(!mask[x][y] || net.lit[x + y * gen.cols]) hexPath(World.hexCentre(x, y), 1.06);
+        }
+      }
+      ctx.fill();
+      ctx.restore();
+    }
     // outlines of every seen hex, in one stroke
     ctx.beginPath();
     for(y = r0; y <= r1; y++) {
@@ -1440,10 +1459,8 @@ var World = {
     ctx.lineWidth = 0.5;
     ctx.stroke();
     ctx.globalAlpha = 1;
-
-    // the light: every lit hex in view, faintly filled
-    var net = World.hex.fire;
-    if(net) {
+    // lights off, the light: every lit hex in view faintly filled
+    if(net && !lightsOn) {
       ctx.beginPath();
       for(y = r0; y <= r1; y++) {
         for(x = c0; x <= c1; x++) {
