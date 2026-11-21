@@ -350,7 +350,7 @@ var Network = {
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return false;
 		if (!WorldGen.isPassable(World.hex.map[x][y]) || World.hex.map[x][y] === WorldGen.TERRAIN.ocean) return false;
 		if (WorldGen.isWater(gen.terrain[x][y])) return false; // crossing water is for later beacons (B7, B11)
-		if (Network.beaconAt(x, y) || Network.districtAt(x, y)) return false;
+		if (Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y)) return false;
 		var nodes = Network.cities().map(function (c) { return c.city.hex; })
 			.concat(Object.keys($SM.get('game.network.beacons') || {}).map(function (k) { return k.split(',').map(Number); }));
 		return nodes.some(function (n) { return Fire.distance(n, [x, y]) <= Fire.HOP; });
@@ -410,7 +410,7 @@ var Network = {
 		if (!World.hex || !c || !c.hex) return [];
 		var gen = World.hex.gen;
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return [];
-		if (Network.districtAt(x, y) || Network.beaconAt(x, y)) return [];
+		if (Network.districtAt(x, y) || Network.beaconAt(x, y) || Network.isCairn(x, y)) return [];
 		if (Fire.distance(c.hex, [x, y]) > District.MAX_RING) return [];
 		// a city grows outward: next to one of its own districts
 		if (!District.neighbours([x, y]).some(function (p) { return c.districts[Network.key(p[0], p[1])]; })) return [];
@@ -797,13 +797,14 @@ var Network = {
 		Network.refresh();
 	},
 
-	// the cairn the wanderer tells of: open ground 7-9 hexes from the capital, hills first
+	// the cairn the wanderer tells of: open ground 7-9 hexes from the capital, hills first, a hex of its own
 	placeCairn: function () {
 		var gen = World.hex.gen, cap = gen.capital, best = null, score = -1;
 		for (var y = Math.max(0, cap[1] - 9); y <= Math.min(gen.rows - 1, cap[1] + 9); y++) {
 			for (var x = Math.max(0, cap[0] - 10); x <= Math.min(gen.cols - 1, cap[0] + 10); x++) {
 				var d = Fire.distance(cap, [x, y]);
-				if (d < 7 || d > 9 || !gen.reachable[x + y * gen.cols] || World.siteAt(x, y)) continue;
+				if (d < 7 || d > 9 || !gen.reachable[x + y * gen.cols] || World.siteAt(x, y) ||
+					Network.beaconAt(x, y) || Network.districtAt(x, y)) continue;
 				var t = World.hex.map[x][y];
 				if (!WorldGen.isTerrain(t) || !WorldGen.isPassable(t) || t === WorldGen.TERRAIN.ocean) continue;
 				var s = (t === WorldGen.TERRAIN.hills ? 2 : 0) + (World.hex.mask[x][y] ? 0 : 1);

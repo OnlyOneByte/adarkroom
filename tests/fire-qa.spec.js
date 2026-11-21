@@ -470,7 +470,7 @@ test('BUG 7: the capital\'s hex is still labelled the capital', async ({ page })
 
 // BUG 8: Network.placeCairn doesn't skip beacon hexes; a cairn put under a beacon is hidden (the
 // beacon's point of light replaces its glyph) and its hover says "a watch fire".
-test.fixme('BUG 8: the wanderer\'s cairn is never placed under a beacon', async ({ page }) => {
+test('BUG 8: the wanderer\'s cairn is never placed under a beacon', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     // every hex placeCairn could pick gets a beacon, but one (a plain, seen one, its lowest pick)
@@ -485,10 +485,12 @@ test.fixme('BUG 8: the wanderer\'s cairn is never placed under a beacon', async 
     spots.forEach((p) => { if (p !== free) $SM.set('game.network.beacons["' + p.join(',') + '"]', true); });
     Network.placeCairn();
     const c = $SM.get('game.network.cairn');
-    return { free, c, onBeacon: Network.beaconAt(c[0], c[1]), n: spots.length };
+    $SM.set('game.network.story.cairnDone', false); // the cairn still to be found
+    return { free, c, onBeacon: Network.beaconAt(c[0], c[1]), n: spots.length, raise: Network.canBeacon(c[0], c[1]) };
   });
   expect(r.n).toBeGreaterThan(1);
   expect(r.onBeacon).toBe(false);
+  expect(r.raise).toBe(false); // and no beacon goes on it later
   expect(r.c).toEqual(r.free);
   expect(errors).toEqual([]);
 });
