@@ -215,6 +215,15 @@ var City = {
 		$('<div>').attr({ 'id': 'citySwitch', 'data-legend': _('cities:') }).hide().appendTo(this.panel);
 		$('<div>').attr({ 'id': 'cityFocus', 'data-legend': _('focus:') }).hide().appendTo(this.panel);
 		$('<div>').attr({ 'id': 'cityBuildBtns', 'data-legend': _('build:') }).appendTo(this.panel);
+		// the panel's parts are placed absolutely: its height follows them as they grow (the land, the
+		// cities, the city-states), once a frame at most
+		if (typeof MutationObserver != 'undefined') {
+			new MutationObserver(function () {
+				if (City._fitting) return;
+				City._fitting = true;
+				requestAnimationFrame(function () { City._fitting = false; City.fitHeight(); });
+			}).observe(this.panel[0], { childList: true, subtree: true });
+		}
 
 		//subscribe to stateUpdates
 		$.Dispatch('stateUpdate').subscribe(City.handleStateUpdates);
@@ -695,6 +704,23 @@ var City = {
 		$('#location_city').text(title);
 	},
 
+	// The town panel as tall as what is in it, and the page with it while the town shows, with room
+	// left under it for the menu fixed at the bottom of the window.
+	FIT_MARGIN: 60,
+	fitHeight: function () {
+		if (!City.panel) return;
+		var h = 0;
+		City.panel.children().each(function () {
+			var e = $(this);
+			if (e.is(':visible')) h = Math.max(h, e.position().top + e.outerHeight(true));
+		});
+		City.panel.css('min-height', h + 'px');
+		var tall = $('body').hasClass('tallTown');
+		// the panel sits under the header inside the content
+		var top = City.panel.offset().top - $('div#content').offset().top;
+		$('div#content, div#outerSlider > div#main').css('height', tall ? Math.max(700, top + h + City.FIT_MARGIN) + 'px' : '');
+	},
+
 	/*
 	 * More than one city: the town panel shows one at a time. The capital keeps the village's
 	 * own stockpile (the stores on the right); any other city lists its own stores in the panel.
@@ -775,6 +801,7 @@ var City = {
 	},
 
 	onArrival: function (transition_diff) {
+		City.fitHeight();
 		City.setTitle();
 		City.updateTown();
 		City.updateBuildButtons();
