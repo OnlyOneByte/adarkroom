@@ -1355,10 +1355,10 @@ var World = {
     if(pack && pack.at[0] === x && pack.at[1] === y) return World.packLabel(pack);
     if(!st.mask[x][y]) return null;
     var c = st.map[x][y];
-    var cs = typeof CityStates != 'undefined' && CityStates.label(x, y);
-    if(cs) return cs;
     var fire = typeof Network != 'undefined' ? Network.hexNote(x, y) : '';
     if(fire) return fire;
+    var cs = typeof CityStates != 'undefined' && CityStates.label(x, y);
+    if(cs) return cs;
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
     if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
     var site = World.siteAt(x, y);

@@ -13,7 +13,7 @@
  * "pending user (G<n>)".
  *
  * Saved state, game.citystates:
- *   seed     the world seed they were placed for
+ *   seed, gen  the world seed and generator version they were placed for
  *   list     [{ id, t, name, at, land: [[x, y]], site, band }] placed once when the hex map opens
  *   cs       { <id>: { inf, floor, told: { 25: true, ... }, met, envoy, gift: { tick, mult }, city,
  *              pulled, faded, lit } } what each one thinks of us
@@ -49,7 +49,9 @@ var CityStates = {
 	REAVER_EVERY: 60,      // ticks (10 minutes)
 	REAVER_CHANCE: 1 / 20,
 	LIGHT_HOLD: 60,        // ticks (10 minutes) the ash-faithful's hill must stay lit
-	MIN_CAPITAL: 4,        // provisional: no city-state within the capital's reach for districts (3 rings) and one more
+	// provisional: no city-state where the capital's own hearth already glows on it (its 3 lit rings and
+	// the 3-hex glow reach): the peaceful route is a beacon line (DESIGN "Influence comes from the light")
+	MIN_CAPITAL: 7,
 	SPACING: 3,            // provisional: no two city-states this close
 	FALLEN: 16,            // fallen cities already resettled by city-states (PHASE4 §0)
 	REACH: { danger: 2.5, hexes: 15 },  // the ember-era network's reach, for the generator's guarantees
@@ -647,7 +649,8 @@ var CityStates = {
 	onHexMap: function () {
 		if (!World.hex) return;
 		var gen = World.hex.gen, saved = CityStates.get();
-		if (!saved || saved.seed !== gen.seed) {
+		// placed for this world by this generator; another one's places don't fit its land
+		if (!saved || saved.seed !== gen.seed || saved.gen !== gen.gen) {
 			var field = World.hex.danger, taken = {};
 			// what is ours already: cities' districts, beacons, our towns on the map
 			Network.cities().forEach(function (c) { for (var k in c.city.districts) taken[k] = true; });
@@ -657,7 +660,7 @@ var CityStates = {
 			});
 			var cs = {};
 			list.forEach(function (c) { cs[c.id] = { inf: 0, floor: 0, told: {} }; });
-			$SM.set('game.citystates', { seed: gen.seed, list: list, cs: cs, sighted: {}, beats: {}, ticks: 0, riders: {} }, true);
+			$SM.set('game.citystates', { seed: gen.seed, gen: gen.gen, list: list, cs: cs, sighted: {}, beats: {}, ticks: 0, riders: {} }, true);
 			Engine.log('placed ' + list.length + ' city-states');
 		}
 		CityStates.index();
@@ -710,7 +713,7 @@ var CityStates = {
 		var lines = [c.name + '.', CityStates.TEMPERAMENTS[c.t].name + '.', CityStates.status(c)];
 		if (!CityStates.forceOnly(c.t)) lines.push(_('influence {0}.', Math.floor(st.inf || 0)));
 		if (st.pulled) lines.push(_('someone else is talking to them.'));
-		return lines.map(CityStates.nb).join('<br>');
+		return lines.map(CityStates.nb).join(' ');
 	},
 
 	nb: function (s) {
@@ -737,7 +740,7 @@ var CityStates = {
 	},
 
 	goods: function (g) {
-		var names = Object.keys(g).map(function (k) { return g[k] + ' ' + _(k); });
+		var names = Object.keys(g).filter(function (k) { return g[k] > 0; }).map(function (k) { return g[k] + ' ' + _(k); });
 		return names.join(', ');
 	},
 
@@ -1093,7 +1096,8 @@ var CityStates = {
 		if (CityStates.forceOnly(c.t)) return _('they will not bend.');
 		if (!st.met) return _("they don't know you.");
 		if (st.envoy) return _('an envoy is already there');
-		if (CityStates.envoy()) return _('an envoy is already on the road');
+		var e = CityStates.envoy();
+		if (e) return e.to === c.id && !e.out && !e.fell ? _('an envoy is ready to go') : _('an envoy is already on the road');
 		if (City.people(cityId) < 1) return _('not enough people');
 		for (var k in CityStates.ENVOY_COST) {
 			if ($SM.get(City.storePath(cityId, k), true) < CityStates.ENVOY_COST[k]) return _('not enough ' + k);
