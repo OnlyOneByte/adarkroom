@@ -14,6 +14,11 @@
  * Then the cities (simulateCities, below): how soon the 2nd and 3rd city are founded, and
  * whether a focused city's governor keeps its hearth lit for two hours.
  *
+ * Then the city-states (simulateCityStates, below): the placement's counts and guarantees, and how long
+ * the nearest herders take to win by influence alone once a beacon line touches them.
+ *
+ * Then the armies (tools/sim-armies.js): a city-state taken by force, waited out, and a storm lost.
+ *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
  * ember tier of each ladder; it reports the land lit and how far out, and how many lines a
@@ -28,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { simulateArmies, armiesTable, checkArmies } from './sim-armies.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,7 +47,7 @@ const KITS = [
 ];
 const TREKS_PER_KIT = 10;
 
-function loadGame(rand) {
+export function loadGame(rand) {
   const store = {};
   const ctx = {
     _: (s, ...a) => s.replace(/\{(\d)\}/g, (m, i) => a[i]),
@@ -58,7 +64,7 @@ function loadGame(rand) {
   vm.createContext(ctx);
   // the context's own Math, so the encounter tables' Math.random is the sim's seeded one
   vm.runInContext('Math.random = __rand;', Object.assign(ctx, { __rand: () => rand.next() }));
-  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js']) {
+  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext('World.setupLandmarks();', ctx);
@@ -66,7 +72,7 @@ function loadGame(rand) {
 }
 
 // a reseedable stream shared by the bot and the game's tables
-function seeded() {
+export function seeded() {
   let a = 1;
   return {
     seed(s) { a = s >>> 0; },
@@ -710,6 +716,181 @@ export function checkCities({ founding, governors, seeds }) {
   return fails;
 }
 
+/*
+ * City-states (Phase 4, design/drafts/PHASE4.md): on every seed the generator's 64 are placed, then a bot
+ * at the ember top (F4 B4 H4, tallow) raises a beacon line from the capital until a lit beacon stands next
+ * to the nearest herders, and the influence they gain a minute is worked out with the game's own glow and
+ * rate (script/citystates.js). Minutes to win = 100 over that rate, the rival pull of any sphere in reach
+ * taken off past 50. The potters get the same line, for the story city-state the generator guarantees.
+ */
+function lineToward(ctx, gen, field, cs, target, list) {
+  const { Fire: F, WorldGen: G, Danger: D } = ctx;
+  const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+  const H = F.HEARTHS.H4;
+  const net = { cols: gen.cols, rows: gen.rows, danger, hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
+    hearths: [{ at: gen.capital, out: H.out, share: true, cap: F.FUELS.tallow.cap }], beacons: [], beacon: F.BEACONS.B4 };
+  const anchors = new Set(list.map((c) => c.at.join(',')));
+  const open = (p) => p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows && gen.reachable[p[0] + p[1] * gen.cols] &&
+    G.isPassable(gen.map[p[0]][p[1]]) && gen.map[p[0]][p[1]] !== G.TERRAIN.ocean && !anchors.has(p.join(',')) &&
+    !(p[0] === gen.capital[0] && p[1] === gen.capital[1]);
+  const goals = [0, 1, 2, 3, 4, 5].map((d) => G.neighbour(target.at[0], target.at[1], d)).filter(open);
+  if (!goals.length) return null;
+  const goal = goals.sort((a, b) => G.distance(a, gen.capital) - G.distance(b, gen.capital))[0];
+  let at = gen.capital, r = F.compute(net);
+  for (let i = 0; i < 40 && !(at[0] === goal[0] && at[1] === goal[1]); i++) {
+    const next = F.around(at[0], at[1], F.HOP).filter((p) => open(p) && !net.beacons.some((b) => b[0] === p[0] && b[1] === p[1]))
+      .sort((a, b) => G.distance(a, goal) - G.distance(b, goal))[0];
+    if (!next || G.distance(next, goal) >= G.distance(at, goal)) return null;
+    net.beacons.push(next);
+    r = F.compute(net);
+    if (r.nodes[r.nodes.length - 1].s < F.LIT_MIN) return null; // past the fuel's reach
+    at = next;
+  }
+  if (!(at[0] === goal[0] && at[1] === goal[1])) return null;
+  const isBeacon = (x, y) => net.beacons.some((b) => b[0] === x && b[1] === y);
+  const G0 = cs.glow(r.fire, gen.cols, gen.rows, target.at, isBeacon);
+  const S = cs.strength(danger(target.at[0], target.at[1]));
+  const T = cs.rateT(target.t, {});
+  const rate = cs.perMinute(G0, T, S);
+  // the rival spheres in reach pull past 50 (only where no beacon touches does it count in full)
+  let pull = 0;
+  for (const s of gen.sites) {
+    if (s.kind !== 'complex') continue;
+    const band = D.band(danger(s.anchor[0], s.anchor[1]));
+    if (G.distance(s.anchor, target.at) <= cs.RIVAL_REACH(band)) pull += cs.RIVAL_PULL(band) * 0.5;
+  }
+  const minutes = rate > pull ? 50 / rate + 50 / (rate - pull) : Infinity;
+  return { beacons: net.beacons.length, G: G0, S, rate, pull, minutes, distance: G.distance(target.at, gen.capital) };
+}
+
+// The quests (find, clear, meet, fetch) on one world: where each is, how far, whether the wanderer can walk
+// there, and where the drifters wander in 500 trek steps (a hex every 50).
+function questsOf(ctx, gen, danger, list) {
+  const { CityStates: CS, WorldGen: G, Danger: D } = ctx;
+  const out = {};
+  for (const c of list) {
+    const q = CS.questType(c.t);
+    if (!q) continue;
+    if (q.type === 'meet') {
+      let at = c.at.slice(), moves = 0, open = true;
+      const me = { ...c, at, land: [at] };
+      const others = list.filter((o) => o !== c);
+      for (let step = 1; step <= 500; step++) {
+        if (step % CS.QUEST.DRIFT_STEPS) continue;
+        const to = CS.driftTo(gen, me, others.concat([me]), (step * 0.618) % 1);
+        if (!to) continue;
+        moves++;
+        me.at = to;
+        me.land = [to];
+        open = open && !!gen.reachable[to[0] + to[1] * gen.cols];
+      }
+      out[q.type] = { ok: moves > 0 && open, moves, d: G.distance(me.at, c.at) };
+      continue;
+    }
+    const s = CS.questSite(gen, danger, c, list);
+    if (!s) { out[q.type] = { ok: false }; continue; }
+    const d = G.distance(s.at, c.at);
+    const win = { find: CS.QUEST.FIND, clear: CS.QUEST.CLEAR, fetch: CS.QUEST.FETCH }[q.type];
+    const r = { ok: !!gen.reachable[s.at[0] + s.at[1] * gen.cols], d, inWindow: d >= win[0] && d <= win[1] };
+    if (q.type === 'fetch') r.bandUp = D.band(danger(s.at[0], s.at[1])) >= c.band + 1;
+    out[q.type] = r;
+  }
+  return out;
+}
+
+export function simulateCityStates({ seeds, firstSeed = 1 }) {
+  const rand = seeded();
+  const { ctx } = loadGame(rand);
+  const { World: W, WorldGen: G, Danger: D, CityStates: CS } = ctx;
+  const out = [];
+  for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
+    const gen = G.generate(seed, W.generateMap(G.rng(seed)));
+    const field = D.field(gen);
+    const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+    const list = CS.place(gen, danger);
+    const by = {};
+    list.forEach((c) => { by[c.t] = (by[c.t] || 0) + 1; });
+    const reach = (c) => danger(c.at[0], c.at[1]) <= CS.REACH.danger && G.distance(c.at, gen.capital) <= CS.REACH.hexes;
+    const nearest = (t) => list.filter((c) => c.t === t).sort((a, b) => G.distance(a.at, gen.capital) - G.distance(b.at, gen.capital))[0];
+    // the capital's own hearth (H4, tallow), no beacons: no city-state should glow from it alone
+    const { Fire: F } = ctx, H = F.HEARTHS.H4;
+    const home = F.compute({ cols: gen.cols, rows: gen.rows, danger, hills: () => false,
+      hearths: [{ at: gen.capital, out: H.out, share: true, cap: F.FUELS.tallow.cap }], beacons: [], beacon: F.BEACONS.B4 });
+    out.push({
+      seed, n: list.length, by, fallen: list.filter((c) => c.site >= 0).length,
+      glowFromHome: list.filter((c) => CS.glow(home.fire, gen.cols, gen.rows, c.at, null) > 0).length,
+      herdersInReach: list.filter((c) => c.t === 'herders' && reach(c)).length,
+      pottersInReach: list.filter((c) => c.t === 'potters' && reach(c)).length,
+      herders: lineToward(ctx, gen, field, CS, nearest('herders'), list),
+      quests: questsOf(ctx, gen, danger, list),
+      potters: lineToward(ctx, gen, field, CS, nearest('potters'), list),
+    });
+  }
+  // the design's feel check and gift example (PHASE4 §2a, §2c), and every wanted good has a value (fixes C13)
+  const feel = CS.perMinute(4 * CS.TOUCH, 1.5, 2);
+  const gift = CS.giftWorth('herders', {}, { leather: 50 }, 2);
+  const unvalued = [];
+  for (const t in CS.TEMPERAMENTS) {
+    const tt = CS.TEMPERAMENTS[t];
+    const all = Array.isArray(tt.wants) ? tt.wants : Object.values(tt.wants).flat();
+    const price = tt.price_pool.flatMap((p) => Object.keys(p.base || p.fixed || {}));
+    for (const g of all.concat(price)) {
+      for (const k of g === 'weapons' ? CS.WEAPONS : [g]) if (!(CS.VALUES[k] > 0) && !unvalued.includes(k)) unvalued.push(k);
+    }
+  }
+  return { out, seeds, feel, gift, unvalued, CS };
+}
+
+export function cityStatesTable({ out, seeds, feel, gift, unvalued, CS }) {
+  const lines = [];
+  const med = (a) => (a.length ? median(a) : null);
+  const fmt = (v, d = 1) => (v === null || v === undefined ? '-' : Number.isFinite(v) ? v.toFixed(d) : 'never');
+  lines.push(`placed: ${out.map((o) => o.n).join(', ')} city-states; fallen cities resettled by them (median) ${med(out.map((o) => o.fallen))}; ` +
+    `herders inside the ember reach (min) ${Math.min(...out.map((o) => o.herdersInReach))}; potters inside it ${out.filter((o) => o.pottersInReach).length}/${seeds} seeds`);
+  lines.push('');
+  lines.push('| won by influence | seeds lined | hexes from the capital (median) | beacons (median) | glow G (median) | S (median) | influence / min (median) | rival pull / min past 50 (median) | minutes to 100 (median / max) |');
+  lines.push('|---|---|---|---|---|---|---|---|---|');
+  for (const k of ['herders', 'potters']) {
+    const r = out.map((o) => o[k]).filter(Boolean);
+    const m = r.map((x) => x.minutes);
+    lines.push(`| nearest ${k} | ${r.length}/${seeds} | ${med(r.map((x) => x.distance)) ?? '-'} | ${med(r.map((x) => x.beacons)) ?? '-'} | ${fmt(med(r.map((x) => x.G)))} | ${med(r.map((x) => x.S)) ?? '-'} | ${fmt(med(r.map((x) => x.rate)), 2)} | ${fmt(med(r.map((x) => x.pull)), 2)} | ${fmt(med(m))} / ${fmt(m.length ? Math.max(...m) : null)} |`);
+  }
+  lines.push('');
+  const qs = (k, f) => out.filter((o) => o.quests[k] && f(o.quests[k])).length;
+  lines.push(`quests, of ${seeds} seeds: find placed ${qs('find', (q) => q.ok && q.inWindow)} (4-8 hexes); clear ${qs('clear', (q) => q.ok && q.inWindow)} (2-4); ` +
+    `fetch ${qs('fetch', (q) => q.ok)}, inside 6-20 hexes ${qs('fetch', (q) => q.inWindow)}, a band above them ${qs('fetch', (q) => q.bandUp)}; ` +
+    `the drifters moved in 500 steps ${qs('meet', (q) => q.ok)} (median ${median(out.map((o) => o.quests.meet.moves))} hexes)`);
+  lines.push('');
+  lines.push(`the design's example (herders, S=2, touched by a G=4 line) at RATE ${CS.RATE}: ${feel.toFixed(2)} / min, ~${(100 / feel).toFixed(0)} min; 50 leather to them: +${gift.toFixed(1)}; goods with no gift value: ${unvalued.length ? unvalued.join(', ') : 'none'}`);
+  return lines.join('\n');
+}
+
+// The guards CI holds the city-states to: 64 placed with every story one and the guarantees, every wanted
+// good valued, the design's feel check and gift example, and the nearest herders won by influence on every seed.
+export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
+  const fails = [];
+  for (const o of out) {
+    if (o.n !== 64) fails.push(`seed ${o.seed}: ${o.n} city-states placed, want 64`);
+    for (const t in CS.TEMPERAMENTS) if (CS.TEMPERAMENTS[t].kind === 'story' && o.by[t] !== 1) fails.push(`seed ${o.seed}: ${o.by[t] || 0} ${t}`);
+    if (o.herdersInReach < 2) fails.push(`seed ${o.seed}: ${o.herdersInReach} herders inside the ember reach, want 2`);
+    for (const k of ['find', 'clear', 'meet', 'fetch']) {
+      const q = o.quests[k];
+      if (!q || !q.ok) fails.push(`seed ${o.seed}: the ${k} quest has no place the wanderer can reach`);
+      else if (k !== 'meet' && k !== 'fetch' && !q.inWindow) fails.push(`seed ${o.seed}: the ${k} quest is ${q.d} hexes from them`);
+    }
+    if (o.glowFromHome) fails.push(`seed ${o.seed}: ${o.glowFromHome} city-states glow from the capital's hearth alone, want a beacon line to each`);
+    if (o.pottersInReach !== 1) fails.push(`seed ${o.seed}: the potters are not inside the ember reach`);
+    if (!o.herders) fails.push(`seed ${o.seed}: no beacon line reaches the nearest herders`);
+    else if (!Number.isFinite(o.herders.minutes)) fails.push(`seed ${o.seed}: the nearest herders can't be won by influence (rate ${o.herders.rate.toFixed(2)}, pull ${o.herders.pull.toFixed(2)})`);
+  }
+  // the approved feel check: ~17 minutes for the easy first win (RATE is tuned to it)
+  const m = median(out.filter((o) => o.herders).map((o) => o.herders.minutes));
+  if (!(m >= 12 && m <= 25)) fails.push(`nearest herders won by an ember line in ${m.toFixed(1)} minutes (median), want ~17 (12-25)`);
+  if (Math.abs(gift - 25) > 1e-9) fails.push(`50 leather to herders worth ${gift}, want 25`);
+  if (unvalued.length) fails.push(`no gift value for ${unvalued.join(', ')}`);
+  return fails;
+}
+
 const median = (a) => {
   if (!a.length) return null;
   const s = a.slice().sort((x, y) => x - y);
@@ -777,9 +958,15 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const cities = simulateCities({ seeds });
   console.log(`\nCities, ${seeds} seeds, normal difficulty, ember tiers at the top (F4 B4 H4)\n`);
   console.log(citiesTable(cities));
+  const states = simulateCityStates({ seeds });
+  console.log(`\nCity-states, ${seeds} seeds, normal difficulty, a beacon line at the ember top (F4 B4 H4)\n`);
+  console.log(cityStatesTable(states));
+  const armies = simulateArmies({ seeds });
+  console.log(`\nArmies and sieges, ${seeds} seeds, normal difficulty, a beacon line at the ember top (F4 B4 H4)\n`);
+  console.log(armiesTable(armies));
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire), checkCities(cities));
+    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);

@@ -453,7 +453,7 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.4);
+  expect(s.version).toBe(2.6);
   expect(s.game.cities.capital.happiness).toBeUndefined();
   const cap = save.game.cities.capital;
   expect(s.game.cities.capital).toMatchObject({ name: cap.name, focus: cap.focus, population: cap.population, workers: cap.workers });
@@ -468,13 +468,13 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   expect(errors).toEqual([]);
 });
 
-test('a v2.1 save (no difficulty) still loads, through every step to v2.4', async ({ page }) => {
+test('a v2.1 save (no difficulty) still loads, through every step to v2.6', async ({ page }) => {
   const save = load('v2.2-hex');
   save.version = 2.1;
   delete save.game.difficulty;
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.4);
+  expect(s.version).toBe(2.6);
   expect(s.game.difficulty).toBe('normal');
   expect(s.game.cities.capital.happiness).toBeUndefined();
   expect(errors).toEqual([]);

@@ -419,6 +419,19 @@ var StateManager = {
 			$SM.set('version', 2.4);
 			version = 2.4;
 		}
+		if(version == 2.4) {
+			// v2.5 has city-states (game.citystates): a world already on hexes gets them when it loads,
+			// placed around the cities and beacons it has
+			Engine.log('upgraded save to v2.5');
+			$SM.set('version', 2.5);
+			version = 2.5;
+		}
+		if(version == 2.5) {
+			// v2.6 has armies and sieges (game.armies): it starts empty on load
+			Engine.log('upgraded save to v2.6');
+			$SM.set('version', 2.6);
+			version = 2.6;
+		}
 	},
 
 	/******************************************************************
