@@ -3,7 +3,7 @@
 // bugs found (test.fixme, each naming its bug; design/text/qa-phase3a.md has the table).
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState, freshToTown } from './helpers.js';
+import { openGame, getState, freshToTown, freezeClock } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 const EMBER = ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'];
@@ -49,6 +49,7 @@ const pure = (page, o) => page.evaluate((o) => {
   const r = Fire.compute({
     cols: 80, rows: 20, danger: o.danger ? new Function('x', 'y', o.danger) : () => 0,
     hills: o.hills ? () => true : () => false, beacon: Fire.BEACONS[o.B || 'B4'],
+    open: o.open ? new Function('x', 'y', o.open) : undefined,
     hearths: o.hearths, beacons: o.beacons,
   });
   return { nodes: r.nodes.map((n) => Math.round(n.s * 100) / 100), lit: r.lit.reduce((a, b) => a + b, 0) };
@@ -107,6 +108,7 @@ test('beacon placement: within 3 hexes of a node, seen ground, never on ocean, m
     const cap = World.hex.gen.capital;
     const p = (dx) => [cap[0] + dx, cap[1]];
     for (let dx = 1; dx <= 7; dx++) setGround(p(dx), 'field');
+    Network.tick(); // the hearth lit: a node to build from
     const out = { d3: Network.canBeacon(...p(3)), d4: Network.canBeacon(...p(4)) };
     World.hex.mask[cap[0] + 2][cap[1]] = false;
     out.unseen = Network.canBeacon(...p(2));
@@ -202,6 +204,7 @@ test('a dropped pack on lit land is scavenged at the lit danger (slower)', async
 test('districts: never on water or mountains, never on a beacon, only touching the city, a second hearth quarter never offered', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
+    Network.tick(); // the hearth lit: districts go only where its fire reaches
     const cap = World.hex.gen.capital, n = (d) => WorldGen.neighbour(cap[0], cap[1], d);
     const out = {};
     setGround(n(0), 'lake'); out.lake = Network.districtsFor('capital', ...n(0));
@@ -225,6 +228,7 @@ test('tannery row needs hunting grounds beside it, burning pits need barrens or 
   const r = await page.evaluate(() => {
     const cap = World.hex.gen.capital, n = (d) => WorldGen.neighbour(cap[0], cap[1], d);
     for (let d = 0; d < 6; d++) setGround(n(d), 'field');
+    Network.tick();
     const out = { before: Network.districtsFor('capital', ...n(1)) };
     Network.placeDistrict('capital', ...n(0), 'hunting grounds');
     out.after = Network.districtsFor('capital', ...n(1)); // n(1) touches n(0)
@@ -251,7 +255,7 @@ test('story: put off, the stone hearth asks again later; reloaded mid-chain, it 
   // saved and reloaded before the last button: H3 is kept, the next scene is the bigger world
   await page.evaluate(() => Engine.saveGame());
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   const r = await page.evaluate(() => {
     clearTimeout(Events._eventTimeout);
     Network._nextAsk = 0;
@@ -295,7 +299,7 @@ test('story: the wanderer sent off asks again; the cairn left alone can be studi
 
 test('a v1.3 save with a world loads through every step to v2.6, with a fire network and no errors', async ({ page }) => {
   const save = load('v1.3-world');
-  await page.clock.install(); // no income ticks before the stores are read
+  await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
   expect(s.version).toBe(2.6);
@@ -356,7 +360,7 @@ test('perf: 300 beacons compute, tick and draw inside the frame budget', async (
 
 // BUG 1: Fire.pickFuel takes the strongest fuel with any stock and burns only that, so a trickle
 // of dry wood (one drier) or tallow (one renderer) starves a hearth sitting on a big woodpile.
-test.fixme('BUG 1: a trickle of a strong fuel does not starve a hearth with plenty of wood', async ({ page }) => {
+test('BUG 1: a trickle of a strong fuel does not starve a hearth with plenty of wood', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     $SM.setM('stores', { wood: 10000, 'dry wood': 0, tallow: 0, 'seasoned oak': 0 });
@@ -378,7 +382,7 @@ test.fixme('BUG 1: a trickle of a strong fuel does not starve a hearth with plen
 
 // BUG 2: running on its stored fire (fuel just ran out) the hearth records fuel: null, so its reach
 // cap drops to 0 and the whole network goes dark while the hearth still makes full fire.
-test.fixme('BUG 2: a hearth burning its store keeps its lines lit through a short fuel gap', async ({ page }) => {
+test('BUG 2: a hearth burning its store keeps its lines lit through a short fuel gap', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     $SM.setM('stores', { wood: 0, tallow: 1000, 'dry wood': 0, 'seasoned oak': 0 });
@@ -400,7 +404,7 @@ test.fixme('BUG 2: a hearth burning its store keeps its lines lit through a shor
 
 // BUG 3: Fire.compute pools sharing hearths by distance alone, so two hearths joined only through
 // a dark beacon (past the fuel's reach, or too weak to be lit) still add their fire together.
-test.fixme('BUG 3: hearths joined only through a dark beacon do not pool their fire', async ({ page }) => {
+test('BUG 3: hearths joined only through a dark beacon do not pool their fire', async ({ page }) => {
   await openGame(page);
   const r = await pure(page, { hearths: [{ at: [5, 10], out: 16, share: true, cap: 1 }, { at: [11, 10], out: 16, share: true, cap: 1 }],
     beacons: [[8, 10]], danger: 'return x === 8 ? 5 : 0' });
@@ -432,7 +436,7 @@ test('BUG 4 (fixed in 3b): a second city does not pay the upkeep of the capital\
 
 // BUG 5: a watch fire (B4) on hills keeps all its fire, so a chain of hill beacons never loses
 // strength and carries without end; CITY.md gives B4 "+1 hop on hills".
-test.fixme('BUG 5: watch fires on hills add one hop, not endless reach', async ({ page }) => {
+test('BUG 5: watch fires on hills add one hop, not endless reach', async ({ page }) => {
   await openGame(page);
   const beacons = [];
   for (let i = 1; i <= 12; i++) beacons.push([5 + 3 * i, 10]);
@@ -440,12 +444,12 @@ test.fixme('BUG 5: watch fires on hills add one hop, not endless reach', async (
   const litOf = (r) => r.nodes.slice(1).filter((s) => s >= 1).length;
   const flat = litOf(await pure(page, o)), hills = litOf(await pure(page, { ...o, hills: true }));
   expect(flat).toBe(4);
-  expect(hills).toBe(flat + 1); // today all 12 are lit, at full strength
+  expect(hills).toBe(flat + 1); // before the fix all 12 were lit, at full strength
 });
 
 // BUG 6: Network.canBeacon only refuses ocean and mountains; a lake hex is passable, so an ember
 // beacon stands on open water (crossing water is B7 ford light / B11 lighthouse).
-test.fixme('BUG 6: no ember beacon on a lake', async ({ page }) => {
+test('BUG 6: no ember beacon on a lake', async ({ page }) => {
   const errors = await town(page);
   const ok = await page.evaluate(() => {
     const cap = World.hex.gen.capital, p = [cap[0] + 2, cap[1]];
@@ -458,7 +462,7 @@ test.fixme('BUG 6: no ember beacon on a lake', async ({ page }) => {
 
 // BUG 7: Network.hexNote names the capital's hex by its district, so the hover on home reads
 // "hearth quarter" instead of "the capital", on the trek map and in the land view.
-test.fixme('BUG 7: the capital\'s hex is still labelled the capital', async ({ page }) => {
+test('BUG 7: the capital\'s hex is still labelled the capital', async ({ page }) => {
   const errors = await town(page);
   const label = await page.evaluate(() => {
     const cap = World.hex.gen.capital;
@@ -470,7 +474,7 @@ test.fixme('BUG 7: the capital\'s hex is still labelled the capital', async ({ p
 
 // BUG 8: Network.placeCairn doesn't skip beacon hexes; a cairn put under a beacon is hidden (the
 // beacon's point of light replaces its glyph) and its hover says "a watch fire".
-test.fixme('BUG 8: the wanderer\'s cairn is never placed under a beacon', async ({ page }) => {
+test('BUG 8: the wanderer\'s cairn is never placed under a beacon', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     // every hex placeCairn could pick gets a beacon, but one (a plain, seen one, its lowest pick)
@@ -485,11 +489,155 @@ test.fixme('BUG 8: the wanderer\'s cairn is never placed under a beacon', async 
     spots.forEach((p) => { if (p !== free) $SM.set('game.network.beacons["' + p.join(',') + '"]', true); });
     Network.placeCairn();
     const c = $SM.get('game.network.cairn');
-    return { free, c, onBeacon: Network.beaconAt(c[0], c[1]), n: spots.length };
+    $SM.set('game.network.story.cairnDone', false); // the cairn still to be found
+    return { free, c, onBeacon: Network.beaconAt(c[0], c[1]), n: spots.length, raise: Network.canBeacon(c[0], c[1]) };
   });
   expect(r.n).toBeGreaterThan(1);
   expect(r.onBeacon).toBe(false);
+  expect(r.raise).toBe(false); // and no beacon goes on it later
   expect(r.c).toEqual(r.free);
+  expect(errors).toEqual([]);
+});
+
+// QA Q9 (decided): stores are fractional, so a hearth burns fractions of a unit
+test('QA Q9: fuel burns in fractions, so a hearth without a store wastes none', async ({ page }) => {
+  await openGame(page);
+  const r = await page.evaluate(() => Fire.burnAll('H3', { F1: true, F2: true }, (k) => (k === 'dry wood' ? 100 : 0), 17, 0));
+  expect(r.burn['dry wood']).toBeCloseTo(17 / 1.5, 6); // 11.33 dry wood, not 12
+  expect(r.out).toBe(16);
+  expect(r.stored).toBe(0);
+});
+
+// QA Q5 (provisional, pending user): a line works at the lowest, so the weakest fuel burned sets the reach
+test('QA Q5: with two fuels burned in a tick, the lines reach only as far as the weaker one', async ({ page }) => {
+  await openGame(page);
+  const r = await page.evaluate(() => {
+    const t = { F1: true, F2: true, F3: true, F4: true };
+    const burn = (tallow) => Fire.burnAll('H4', t, (k) => ({ wood: 1000, tallow })[k] || 0, 24, 32);
+    return { both: burn(2), tallow: burn(100) };
+  });
+  expect(r.both.burn).toEqual({ tallow: 2, wood: 16 });
+  expect(r.both.fuel).toBe('wood');
+  expect(r.tallow.burn).toEqual({ tallow: 6 });
+  expect(r.tallow.fuel).toBe('tallow');
+});
+
+// QA Q1 (provisional, pending user): a line can't jump ground it couldn't light, or cross water or mountains
+test('QA Q1: a line needs every hex between its two nodes under the fuel\'s cap and open dry ground', async ({ page }) => {
+  await openGame(page);
+  const o = { hearths: [{ at: [5, 10], out: 24, share: true, cap: 1 }], beacons: [[8, 10], [11, 10]] };
+  const clear = await pure(page, o);
+  const danger = await pure(page, { ...o, danger: 'return x === 10 ? 5 : 0' }); // between the two beacons
+  const water = await pure(page, { ...o, open: 'return x !== 7' }); // between the hearth and the first
+  expect(clear.nodes).toEqual([24, 16.8, 11.76]);
+  expect(danger.nodes).toEqual([24, 16.8, 0]);
+  expect(water.nodes).toEqual([24, 0, 0]);
+});
+
+// QA Q2 (decided): a dark beacon is no anchor, so dark chains can't run on into the land; a hearth always is
+test('QA Q2: a new beacon goes within 3 of a hearth (even a cold one) or a lit beacon, not of a dark beacon', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    const cap = World.hex.gen.capital, p = (dx) => [cap[0] + dx, cap[1]];
+    for (let dx = 1; dx <= 9; dx++) setGround(p(dx), 'field');
+    $SM.setM('stores', { wood: 100000, 'dry wood': 0, 'seasoned oak': 0, tallow: 0 });
+    const cold = Network.canBeacon(...p(2)); // the hearth not lit yet: still an anchor
+    Network.tick();
+    const lit = Network.canBeacon(...p(2));
+    $SM.set('game.network.beacons["' + p(3).join(',') + '"]', true);
+    setGround(p(3), 'field');
+    World.hex.danger[p(3)[0] + p(3)[1] * World.hex.gen.cols] = 5; // past wood's reach: dark
+    World.hex.base = null; // the danger is worked out again for the changed world
+    Network.refresh();
+    return { cold, lit, dark: isLit(p(3)), past: Network.canBeacon(...p(6)) };
+  });
+  expect(r).toEqual({ cold: true, lit: true, dark: false, past: false });
+  expect(errors).toEqual([]);
+});
+
+// QA Q3 (provisional, pending user): beacons may stand on landmarks and sites, which stay in sight; districts may not
+test('QA Q3: a beacon on a landmark leaves its glyph and name in sight; no district goes on a landmark or a site', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    $SM.setM('stores', { tallow: 1000 });
+    Network.tick();
+    const g = World.hex.gen, cap = g.capital;
+    const mark = Fire.around(cap[0], cap[1], 3).find((p) => World.LANDMARKS[World.hex.map[p[0]][p[1]].charAt(0)] && World.hex.map[p[0]][p[1]] !== 'A');
+    World.hex.mask[mark[0]][mark[1]] = true;
+    const canBeacon = Network.canBeacon(mark[0], mark[1]);
+    $SM.set('game.network.beacons["' + mark.join(',') + '"]', true);
+    Network.refresh();
+    const label = World.hexLabel(mark[0], mark[1], { map: World.hex.map, mask: World.hex.mask });
+    $SM.remove('game.network.beacons["' + mark.join(',') + '"]');
+    // a district beside the capital on a landmark, and on a site
+    const n = WorldGen.neighbour(cap[0], cap[1], 0);
+    setGround(n, 'field');
+    const open = Network.districtsFor('capital', n[0], n[1]).length;
+    World.hex.map[n[0]][n[1]] = World.TILE.CAVE;
+    const onLandmark = Network.districtsFor('capital', n[0], n[1]);
+    World.hex.map[n[0]][n[1]] = WorldGen.TERRAIN.field;
+    const site = g.siteAt[n[0] + n[1] * g.cols];
+    g.siteAt[n[0] + n[1] * g.cols] = 0;
+    const onSite = Network.districtsFor('capital', n[0], n[1]);
+    g.siteAt[n[0] + n[1] * g.cols] = site;
+    return { canBeacon, label, name: World.LANDMARKS[World.hex.map[mark[0]][mark[1]].charAt(0)].label, open, onLandmark, onSite };
+  });
+  expect(r.canBeacon).toBe(true);
+  expect(r.label).toBe(r.name + ',&nbsp;a&nbsp;watch&nbsp;fire');
+  expect(r.open).toBeGreaterThan(0);
+  expect(r.onLandmark).toEqual([]);
+  expect(r.onSite).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+// QA Q4 (provisional, pending user): districts, like founding, only on lit land
+test('QA Q4: a district goes only on a hex the fire reaches', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    const cap = World.hex.gen.capital, n = WorldGen.neighbour(cap[0], cap[1], 0);
+    setGround(n, 'field');
+    $SM.setM('stores', { wood: 100000 });
+    const cold = Network.districtsFor('capital', n[0], n[1]); // no tick yet: the hearth is cold
+    Network.tick();
+    return { cold, lit: isLit(n), warm: Network.districtsFor('capital', n[0], n[1]) };
+  });
+  expect(r.cold).toEqual([]);
+  expect(r.lit).toBe(true);
+  expect(r.warm).toContain('huts');
+  expect(errors).toEqual([]);
+});
+
+// QA Q8 (provisional, pending user): the cairn studied is lost on a death, like the axe-head
+test('QA Q8: the cairn studied is known only once the trek comes home alive; a death loses it', async ({ page }) => {
+  const errors = await town(page, { tiers: ['F1', 'B1', 'B2', 'H1', 'H2', 'H3'] });
+  await page.evaluate(() => {
+    $SM.setM('game.network.story', { cairnTold: true, cairnDone: false });
+    Network.placeCairn();
+  });
+  const c = await page.evaluate(() => $SM.get('game.network.cairn'));
+  const trek = async () => {
+    await page.evaluate(() => { Engine.travelTo(Path); });
+    await page.waitForFunction(() => !$('#outerSlider').is(':animated'));
+    await page.evaluate((c) => {
+      packMeat();
+      Path.embark();
+      Math.random = () => 0.99;
+      Network.onStep(c[0], c[1]);
+    }, c);
+    await page.locator('#event .button', { hasText: 'study the stacking' }).click();
+    await page.locator('#event .button', { hasText: 'go on' }).click();
+    await expect(page.locator('#event')).toHaveCount(0);
+  };
+  await trek();
+  const out = await page.evaluate(() => Network.flag('cairnStudied'));
+  await page.evaluate(() => World.die());
+  await page.waitForFunction(() => Engine.activeModule === Room && !Engine.keyLock);
+  const dead = await page.evaluate(() => Network.flag('cairnStudied'));
+  await trek();
+  await page.evaluate(() => World.goHome());
+  await expect(page.locator('#event')).toContainText('it carries further.', { timeout: 5000 });
+  expect([out, dead]).toEqual([false, false]);
+  expect(await page.evaluate(() => [Network.flag('cairnStudied'), $SM.get('game.world.cairnStudied')])).toEqual([true, undefined]);
   expect(errors).toEqual([]);
 });
 
@@ -504,7 +652,7 @@ test('a saved network comes back on reload: beacons, the lit land, the hearth', 
     return { lit: lit(), beacons: Object.keys($SM.get('game.network.beacons')).sort() };
   });
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex && World.hex.fire);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex && World.hex.fire);
   const after = await page.evaluate(() => ({
     lit: World.hex.fire.lit.reduce((a, b) => a + b, 0), beacons: Object.keys($SM.get('game.network.beacons')).sort(),
   }));
@@ -527,7 +675,7 @@ test('lights off and on again with the land view open repaints it without errors
 // BUG 9: Network.tick writes each city's hearth with two $SM.set calls (and a third for its fuel),
 // each a full stateUpdate round, so with the 50 cities DESIGN.md "Scale" plans one fire tick takes
 // 200-300 ms, a visible hitch every 10 s (latent until Phase 3b founds cities).
-test.fixme('BUG 9: one fire tick with 50 cities stays inside 50 ms', async ({ page }) => {
+test('BUG 9: one fire tick with 50 cities stays inside 50 ms', async ({ page }) => {
   const errors = await town(page);
   const ms = await page.evaluate(() => {
     $SM.setM('stores', { wood: 1e6 });

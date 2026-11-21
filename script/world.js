@@ -344,7 +344,20 @@ var World = {
 
   // the danger before any light: what a fuel's reach is measured against
   baseDangerAt: function(x, y) {
-    return Danger.at(World.hex.danger, World.hex.gen.cols, x, y, World.difficulty());
+    return World.baseField()[x + y * World.hex.gen.cols];
+  },
+
+  // that danger for every hex, worked out once for the world and its difficulty and kept (perf:
+  // fights, the fire network and the painter read it per hex). Danger.at's values, unrounded.
+  baseField: function() {
+    var hex = World.hex, d = World.difficulty();
+    if(!hex.base || hex.baseFor !== d) {
+      var cols = hex.gen.cols, base = new Float64Array(hex.danger.length);
+      for(var i = 0; i < base.length; i++) base[i] = Danger.at(hex.danger, cols, i % cols, (i - i % cols) / cols, d);
+      hex.base = base;
+      hex.baseFor = d;
+    }
+    return hex.base;
   },
 
   // the distance the prologue's encounters are picked by; on the hex map, danger stands in for it
@@ -1356,13 +1369,15 @@ var World = {
     if(!st.mask[x][y]) return null;
     var c = st.map[x][y];
     var fire = typeof Network != 'undefined' ? Network.hexNote(x, y) : '';
-    if(fire) return fire;
+    // a beacon on a landmark or a site: the landmark's name, then the beacon's
+    var under = !!fire && Network.beaconAt(x, y) && World.markedAt(x, y, st.map);
+    if(fire && !under) return fire;
     var cs = typeof CityStates != 'undefined' && CityStates.label(x, y);
-    if(cs) return cs;
+    if(cs) return under ? cs + ',&nbsp;' + fire : cs;
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
-    if(World.LANDMARKS[c.charAt(0)]) return World.LANDMARKS[c.charAt(0)].label;
     var site = World.siteAt(x, y);
-    if(site) return WorldGen.SITES[site.kind].label;
+    var mark = World.LANDMARKS[c.charAt(0)] ? World.LANDMARKS[c.charAt(0)].label : (site ? WorldGen.SITES[site.kind].label : null);
+    if(mark) return under ? mark + ',&nbsp;' + fire : mark;
     if(World.hex.passes[x + ',' + y]) return WorldGen.PASS_LABEL;
     var f = World.formationAt(x, y);
     if(f) return WorldGen.FORMATIONS[f.kind];
@@ -1370,6 +1385,15 @@ var World = {
       if(WorldGen.TERRAIN[k] === c) return World.TERRAIN_NAMES[k];
     }
     return null;
+  },
+
+  // a landmark or a site is on this hex: its glyph shows over a beacon raised there, and no
+  // district goes on it. A resettled fallen city's other hexes are plain ground again.
+  markedAt: function(x, y, map) {
+    map = map || World.hex.map;
+    if(World.LANDMARKS[map[x][y].charAt(0)]) return true;
+    var site = World.siteAt(x, y);
+    return !!site && map[site.anchor[0]][site.anchor[1]].charAt(0) !== World.TILE.VILLAGE;
   },
 
   // what a hex shows: [glyph, bold]; map: the tiles to read, the trek's by default
@@ -1543,16 +1567,24 @@ var World = {
         var a = World.hexCentre(net.nodes[l[0]].at[0], net.nodes[l[0]].at[1]);
         var b = World.hexCentre(net.nodes[l[1]].at[0], net.nodes[l[1]].at[1]);
         if(!inView(a, 4 * w) && !inView(b, 4 * w)) return;
+        // a line stops at the edge of a landmark's hex, so it doesn't cross the glyph
+        var d = Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1])) || 1;
+        var edge = function(p, q, at) {
+          if(!World.markedAt(at[0], at[1], o.map)) return p;
+          return [p[0] + (q[0] - p[0]) * (w / 2) / d, p[1] + (q[1] - p[1]) * (w / 2) / d];
+        };
+        var a1 = edge(a, b, net.nodes[l[0]].at), b1 = edge(b, a, net.nodes[l[1]].at);
         ctx.globalAlpha = Math.min(0.9, 0.3 + l[2] / 20);
         ctx.beginPath();
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+        ctx.moveTo(a1[0], a1[1]);
+        ctx.lineTo(b1[0], b1[1]);
         ctx.stroke();
       });
       ctx.globalAlpha = 1;
-      // the beacons: a point of light each; a dark one is only a ring
+      // the beacons: a point of light each; a dark one is only a ring. On a landmark or a site
+      // the landmark's glyph shows instead (the hover names the beacon too), and its lines stop at the hex's edge
       net.nodes.forEach(function(n) {
-        if(n.hearth) return;
+        if(n.hearth || World.markedAt(n.at[0], n.at[1], o.map)) return;
         var c = World.hexCentre(n.at[0], n.at[1]);
         points[n.at[0] + ',' + n.at[1]] = true;
         if(!inView(c, w)) return;

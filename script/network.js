@@ -173,21 +173,28 @@ var Network = {
 		return out;
 	},
 
+	// every district hex, { 'x,y': [index in Network.cities(), type] }, built once and kept until the
+	// cities change (an update to game.cities, or a refresh): the painter asks for every hex (perf)
+	districts: function () {
+		if (Network._districts) return Network._districts;
+		var index = {};
+		Network.cities().forEach(function (c, i) {
+			for (var k in c.city.districts) {
+				if (!index[k]) index[k] = [i, c.city.districts[k]];
+			}
+		});
+		return (Network._districts = index);
+	},
+
 	districtAt: function (x, y) {
-		var cs = Network.cities(), k = Network.key(x, y);
-		for (var i = 0; i < cs.length; i++) {
-			if (cs[i].city.districts[k]) return cs[i].city.districts[k];
-		}
-		return null;
+		var d = Network.districts()[Network.key(x, y)];
+		return d ? d[1] : null;
 	},
 
 	// the index of the city a hex belongs to, -1 if none (for outlining cities on the map)
 	cityIndexAt: function (x, y) {
-		var cs = Network.cities(), k = Network.key(x, y);
-		for (var i = 0; i < cs.length; i++) {
-			if (cs[i].city.districts[k]) return i;
-		}
-		return -1;
+		var d = Network.districts()[Network.key(x, y)];
+		return d ? d[0] : -1;
 	},
 
 	isCairn: function (x, y) {
@@ -224,6 +231,7 @@ var Network = {
 	// Recomputes the network from the saved state into World.hex.fire, reveals what it lights.
 	refresh: function () {
 		if (!World.hex) return;
+		Network._districts = null;
 		Network.ensureCapital();
 		var gen = World.hex.gen, cs = Network.cities();
 		var hid = Network.hearthTier(), H = Fire.HEARTHS[hid];
@@ -233,8 +241,9 @@ var Network = {
 		var bt = Network.beaconTier();
 		var result = Fire.compute({
 			cols: gen.cols, rows: gen.rows,
-			danger: World.baseDangerAt,
+			field: World.baseField(),
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
+			open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
 			hearths: cs.map(function (c) {
 				var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
 				return { at: c.city.hex, out: h.out || 0, share: Network.shares(c.id), cap: f ? f.cap : 0 };
@@ -305,21 +314,24 @@ var Network = {
 	// then the focused cities govern themselves.
 	tick: function () {
 		if ($SM.get('features.location.city')) {
-			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers();
+			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers(), home = false;
+			// every write quiet; one update (and one save) for the whole tick below (perf: ticks grow with cities)
 			Network.cities().forEach(function (c) {
 				var h = c.city.hearth || {};
-				var fuel = Fire.pickFuel(tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); });
 				var need = Network.hearthNeed(c.id);
-				var stock = fuel ? $SM.get(City.storePath(c.id, fuel), true) : 0;
-				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0, H.store * Network.hearthScale(c.id));
-				// quiet writes for the founded cities, one update for them all below (perf: ticks grow with cities)
-				var quiet = c.id != City.CAPITAL;
-				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn, quiet);
+				var r = Fire.burnAll(hid, tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); },
+					need, h.stored || 0, H.store * Network.hearthScale(c.id));
+				for (var k in r.burn) {
+					if (!r.burn[k]) continue;
+					$SM.add(City.storePath(c.id, k), -r.burn[k], true);
+					if (c.id == City.CAPITAL) home = true;
+				}
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
 				if (Network.shares(c.id)) out = r.out;
+				// burning only its store, it keeps the last fuel's reach
 				$SM.set(City.path(c.id, 'hearth'), {
-					fuel: out > 0 ? fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
+					fuel: out > 0 ? (r.fuel || h.fuel || null) : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
 				}, true);
 			});
 			Network.refresh();
@@ -332,6 +344,7 @@ var Network = {
 				});
 			}
 			Network.cities().forEach(function (c) { if (c.city.focus) City.govern(c.id); });
+			if (home) $SM.fireUpdate('stores'); // the capital's stores are the top-level ones
 			$SM.fireUpdate('game.cities', true); // the town panel and every city's income, once
 			Network.checkStory();
 		}
@@ -341,16 +354,19 @@ var Network = {
 	/*
 	 * Placing things on the land
 	 */
-	// a beacon goes on seen, open ground, up to Fire.HOP hexes from a hearth or another beacon
+	// a beacon goes on seen, open dry ground, up to Fire.HOP hexes from a hearth or a lit beacon
 	canBeacon: function (x, y) {
 		if (!World.hex || !Network.beaconTier()) return false;
 		var gen = World.hex.gen;
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return false;
 		if (!WorldGen.isPassable(World.hex.map[x][y]) || World.hex.map[x][y] === WorldGen.TERRAIN.ocean) return false;
-		if (Network.beaconAt(x, y) || Network.districtAt(x, y)) return false;
-		var nodes = Network.cities().map(function (c) { return c.city.hex; })
-			.concat(Object.keys($SM.get('game.network.beacons') || {}).map(function (k) { return k.split(',').map(Number); }));
-		return nodes.some(function (n) { return Fire.distance(n, [x, y]) <= Fire.HOP; });
+		if (WorldGen.isWater(gen.terrain[x][y])) return false; // crossing water is for later beacons (B7, B11)
+		if (Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y)) return false;
+		// a hearth, lit or cold (a cold one must not lock the player out), or a lit beacon:
+		// a dark beacon is no anchor to build out from
+		return !!World.hex.fire && World.hex.fire.nodes.some(function (n) {
+			return (n.hearth || n.s >= Fire.LIT_MIN) && Fire.distance(n.at, [x, y]) <= Fire.HOP;
+		});
 	},
 
 	raiseBeacon: function (x, y) {
@@ -407,7 +423,9 @@ var Network = {
 		if (!World.hex || !c || !c.hex) return [];
 		var gen = World.hex.gen;
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return [];
-		if (Network.districtAt(x, y) || Network.beaconAt(x, y)) return [];
+		if (Network.districtAt(x, y) || Network.beaconAt(x, y) || Network.isCairn(x, y)) return [];
+		if (World.markedAt(x, y)) return []; // not on a landmark or a site (old-world works will be, later)
+		if (!World.hex.fire || !World.hex.fire.lit[x + y * gen.cols]) return []; // only where the fire reaches
 		if (Fire.distance(c.hex, [x, y]) > District.MAX_RING) return [];
 		// a city grows outward: next to one of its own districts
 		if (!District.neighbours([x, y]).some(function (p) { return c.districts[Network.key(p[0], p[1])]; })) return [];
@@ -590,9 +608,9 @@ var Network = {
 		var s = Network.settlers();
 		if (s && s.to[0] === x && s.to[1] === y) return _('where&nbsp;the&nbsp;settlers&nbsp;are&nbsp;bound');
 		var d = Network.districtAt(x, y);
-		// a founded city's centre is the city itself
+		// a city's centre is the city itself (home: World.hexLabel names the capital)
 		var ci = Network.cityIndexAt(x, y), city = ci >= 0 ? Network.cities()[ci] : null;
-		if (d === District.HEARTH && city.id != City.CAPITAL) d = city.city.name;
+		if (d === District.HEARTH) d = city.id != City.CAPITAL ? city.city.name : null;
 		else if (d) d = District.TYPES[d].name;
 		if (d) return d.replace(/ /g, '&nbsp;');
 		if (Network.isCairn(x, y)) return _('an&nbsp;old&nbsp;cairn');
@@ -781,26 +799,32 @@ var Network = {
 			World.state.axeHead = true;
 			Notifications.notify(World, _('half buried in the leaf litter, an old axe-head. still keen.'));
 		}
-		if (Network.isCairn(x, y) && Network.flag('cairnTold') && !Network.flag('cairnStudied')) {
+		if (Network.isCairn(x, y) && Network.flag('cairnTold') && !Network.flag('cairnStudied') && !World.state.cairnStudied) {
 			Events.startEvent(Events.Story.cairn);
 		}
 	},
 
 	onHome: function () {
 		if (Network.has('B1')) Network.setFlag('trekHome');
+		// the cairn studied on this trek (committed with the trek's other finds) is known at home now
+		if ($SM.get('game.world.cairnStudied')) {
+			$SM.remove('game.world.cairnStudied', true);
+			Network.setFlag('cairnStudied');
+		}
 		if (Network.flag('cairnStudied') && !Network.flag('cairnDone')) {
 			Engine.setTimeout(function () { Events.startEvent(Events.Story.cairnFire); }, 1500);
 		}
 		Network.refresh();
 	},
 
-	// the cairn the wanderer tells of: open ground 7-9 hexes from the capital, hills first
+	// the cairn the wanderer tells of: open ground 7-9 hexes from the capital, hills first, a hex of its own
 	placeCairn: function () {
 		var gen = World.hex.gen, cap = gen.capital, best = null, score = -1;
 		for (var y = Math.max(0, cap[1] - 9); y <= Math.min(gen.rows - 1, cap[1] + 9); y++) {
 			for (var x = Math.max(0, cap[0] - 10); x <= Math.min(gen.cols - 1, cap[0] + 10); x++) {
 				var d = Fire.distance(cap, [x, y]);
-				if (d < 7 || d > 9 || !gen.reachable[x + y * gen.cols] || World.siteAt(x, y)) continue;
+				if (d < 7 || d > 9 || !gen.reachable[x + y * gen.cols] || World.siteAt(x, y) ||
+					Network.beaconAt(x, y) || Network.districtAt(x, y)) continue;
 				var t = World.hex.map[x][y];
 				if (!WorldGen.isTerrain(t) || !WorldGen.isPassable(t) || t === WorldGen.TERRAIN.ocean) continue;
 				var s = (t === WorldGen.TERRAIN.hills ? 2 : 0) + (World.hex.mask[x][y] ? 0 : 1);
@@ -818,6 +842,7 @@ var Network = {
 	},
 
 	handleStateUpdates: function (e) {
+		if (e.category == 'all' || (e.stateName && e.stateName.indexOf('game.cities') === 0)) Network._districts = null;
 		if (e.category == 'stores' || (e.stateName && (e.stateName.indexOf('game.cities') === 0 ||
 			e.stateName.indexOf('game.workers') === 0 || e.stateName.indexOf('game.builder') === 0 ||
 			e.stateName.indexOf('game.temperature') === 0 || e.stateName.indexOf('game.world') === 0 ||

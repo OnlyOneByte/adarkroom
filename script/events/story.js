@@ -149,7 +149,8 @@ Events.Story = {
 				}
 			},
 			'studied': {
-				onLoad: function () { Network.setFlag('cairnStudied'); },
+				// the trek's to carry home, like the axe-head: lost with it on a death (Network.onHome)
+				onLoad: function () { World.state.cairnStudied = true; },
 				text: [
 					_('the shape of it stays in mind.')
 				],

@@ -50,6 +50,7 @@ await page.evaluate(() => {
   $SM.set('game.network.tiers', t);
   $SM.setM('game.network.story', { stoneHearth: true, brazier: true, firstBrazier: true });
   $SM.set('stores.tallow', 500);
+  Network.tick(); // the hearth lit: beacons go by a lit node, districts on lit land
   const cap = World.hex.gen.capital;
   for (let x = cap[0] + 2; x <= cap[0] + 3; x++) {
     World.hex.mask[x][cap[1]] = true;
