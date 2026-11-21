@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState, freshToTown } from './helpers.js';
+import { openGame, getState, freshToTown, freezeClock } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 
@@ -30,9 +30,9 @@ async function townWithFire(page, { tiers = ['F1', 'F2', 'F3', 'F4', 'B1', 'B2',
         }
         if (!at) break;
         $SM.set('game.network.beacons["' + at[0] + ',' + at[1] + '"]', true);
+        Network.refresh(); // the next one builds out from this one, once it is lit
         out.push(at);
       }
-      Network.refresh();
       return out;
     };
     window.litCount = () => World.hex.fire.lit.reduce((a, b) => a + b, 0);
@@ -107,6 +107,8 @@ test('with a stone hearth the lines carry the hops of the CITY.md table; a town 
 test('a line burning wood goes dark past danger 1; tallow reaches danger 2.5', async ({ page }) => {
   const errors = await townWithFire(page);
   const r = await page.evaluate(() => {
+    $SM.set('stores.tallow', 1000);
+    burnTick(); // built out while tallow lights the way: a new beacon goes by a lit one
     const line = lineEast(6);
     const cols = World.hex.gen.cols;
     const maxLitDanger = () => {
@@ -120,7 +122,7 @@ test('a line burning wood goes dark past danger 1; tallow reaches danger 2.5', a
     $SM.set('stores.tallow', 1000);
     burnTick();
     const tallow = { fuel: $SM.get('game.cities.capital.hearth.fuel'), lit: litCount(), max: maxLitDanger() };
-    return { wood, tallow, beyond: World.baseDangerAt(line[5][0], line[5][1]) };
+    return { wood, tallow, n: line.length };
   });
   expect(r.wood.fuel).toBe('wood');
   expect(r.wood.max).toBeLessThanOrEqual(1);
@@ -211,6 +213,7 @@ test('the hearth burns its fuel every fire tick, and a beacon costs upkeep', asy
 test('districts go next to the city, on the ground their type fits, up to three rings out', async ({ page }) => {
   const errors = await townWithFire(page);
   const r = await page.evaluate(() => {
+    burnTick(); // the hearth lit: districts go only where its fire reaches
     const cap = World.hex.gen.capital, g = World.hex.gen;
     const ringOf = (p) => Fire.distance(cap, p);
     const kinds = {};
@@ -244,6 +247,7 @@ async function laidOut(page) {
     const e1 = WorldGen.neighbour(cap[0], cap[1], 0), e2 = WorldGen.neighbour(e1[0], e1[1], 0);
     const w1 = WorldGen.neighbour(cap[0], cap[1], 3), se = WorldGen.neighbour(cap[0], cap[1], 1);
     set(e1, 'forest'); set(e2, 'forest'); set(w1, 'field'); set(se, 'field');
+    Network.tick(); // the hearth lit: districts go only where its fire reaches
     return { cap, e1, e2, w1, se };
   });
 }
@@ -339,6 +343,7 @@ test('the world is bigger: the stone hearth, the braziers and the first one lit,
   await page.locator('#location_city').click();
   await expect(page.locator('#cityLand')).toBeVisible();
   const spot = await page.evaluate(() => {
+    Network.tick(); // the hearth has been burning since the town opened
     const cap = World.hex.gen.capital;
     for (const p of Fire.ring(cap[0], cap[1], 2)) if (Network.canBeacon(p[0], p[1])) return p;
     return null;
@@ -412,6 +417,7 @@ test('milestones: the woodshed, the axe-head, the tannery and smokehouse, the fi
     World.hex.gen.terrain[e1[0]][e1[1]] = WorldGen.TERRAIN.field;
     World.hex.map[e1[0]][e1[1]] = WorldGen.TERRAIN.field;
     World.hex.mask[e1[0]][e1[1]] = true;
+    burnTick(); // lit ground for the district
     Network.placeDistrict('capital', e1[0], e1[1], 'huts');
     out.H4 = Network.has('H4');
     $SM.setM('game.workers', { tanner: 1, charcutier: 1 });
@@ -444,7 +450,7 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   const save = load('v2.2-hex');
   expect(save.version).toBe(2.2);
   expect(save.game.cities.capital.happiness).toBe(50);
-  await page.clock.install();
+  await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
   expect(s.version).toBe(2.6);

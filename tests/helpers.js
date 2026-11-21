@@ -44,11 +44,21 @@ export async function openGame(page, { save } = {}) {
   }
 
   await page.goto('/index.html');
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  // Engine can exist before room.js has defined Room: typeof keeps the check from throwing
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   return errors;
 }
 
 export const getState = (page) => page.evaluate(() => JSON.parse(JSON.stringify(State)));
+
+// Stops the page's clock before the game loads: no timer fires (the 1 s income tick, the fire tick)
+// until the test moves it (page.clock.runFor, or resume). page.clock.install alone lets time run on,
+// so on a slow host an income tick could land between the load and the test reading the stores.
+export async function freezeClock(page) {
+  const start = new Date('2026-01-01T00:00:00Z');
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(new Date(start.getTime() + 1000));
+}
 
 // A fresh game that has walked the square map, then opens the town the normal way.
 // beforeTown: a function run in the page on the square map, just before the town opens
@@ -141,6 +151,9 @@ export async function townWithCityStates(page) {
     $SM.set('game.population', 80);
     // one fire tick: the hearths, then the city-states
     window.tick = (n = 1) => { for (let i = 0; i < n; i++) { Network.tick(); clearTimeout(Network._tickTimeout); CityStates.update(); } };
+    // the hearth has burned since the town opened: its fire lights the ground districts and beacons need
+    Network.tick();
+    clearTimeout(Network._tickTimeout);
     const g = World.hex.gen, cap = g.capital;
     window.cap = cap;
     window.nearest = (t) => CityStates.list().filter((c) => c.t === t)
@@ -153,9 +166,17 @@ export async function townWithCityStates(page) {
       let at = cap;
       for (let i = 0; i < 40 && !(at[0] === goal[0] && at[1] === goal[1]); i++) {
         Fire.around(at[0], at[1], Fire.HOP).forEach((p) => { if (World.hex.mask[p[0]]) World.hex.mask[p[0]][p[1]] = true; });
+        // the nearest to the goal that the fire reaches once raised (a dark beacon anchors nothing)
         const next = Fire.around(at[0], at[1], Fire.HOP).filter((p) => Network.canBeacon(p[0], p[1]))
-          .sort((a, b) => WorldGen.distance(a, goal) - WorldGen.distance(b, goal))[0];
-        if (!next || !Network.raiseBeacon(next[0], next[1])) return false;
+          .sort((a, b) => WorldGen.distance(a, goal) - WorldGen.distance(b, goal))
+          .find((p) => {
+            if (!Network.raiseBeacon(p[0], p[1])) return false;
+            if (World.hex.fire.nodes.some((n) => !n.hearth && n.at[0] === p[0] && n.at[1] === p[1] && n.s >= Fire.LIT_MIN)) return true;
+            $SM.remove('game.network.beacons["' + p.join(',') + '"]');
+            Network.refresh();
+            return false;
+          });
+        if (!next) return false;
         at = next;
       }
       return at[0] === goal[0] && at[1] === goal[1];

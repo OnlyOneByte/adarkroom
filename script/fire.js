@@ -40,7 +40,7 @@ var Fire = {
 		'seasoned oak': { tier: 'F3', fire: 2,   burn: 1, cap: 2 },
 		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 }
 	},
-	// beacon: the share of fire kept per hop; hills: a beacon on hills loses nothing (one hop more).
+	// beacon: the share of fire kept per hop; hills: a beacon on hills carries one hop further.
 	// hops is CITY.md's table, how far a line from a stone hearth (16) carries: it isn't a cap,
 	// it falls out of keep and Fire.RELAY_MIN, so a stronger hearth carries further.
 	BEACONS: {
@@ -83,31 +83,30 @@ var Fire = {
 		return best;
 	},
 
-	// the fuel a hearth burns: the strongest unlocked one it has in stock
-	pickFuel: function (unlocked, have) {
-		var pick = null;
-		for (var k in Fire.FUELS) {
-			var f = Fire.FUELS[k];
-			if (!unlocked[f.tier] || !(have(k) > 0)) continue;
-			if (!pick || Fire.tier(f.tier).n > Fire.tier(Fire.FUELS[pick].tier).n) pick = k;
-		}
-		return pick;
-	},
-
 	/*
-	 * One fire tick of a hearth. need = fire wanted (its output plus the upkeep of the beacons
-	 * it fed last tick); stock = units of its fuel; stored = fire held over (H4 and up);
+	 * One fire tick of a hearth, over every unlocked fuel it has in stock: the strongest first,
+	 * then the next tops up what that left short, until the need (and the store) is met.
+	 * need = fire wanted (its output plus the upkeep of the beacons it fed last tick);
+	 * have(fuel) = units in stock; stored = fire held over (H4 and up);
 	 * room = fire it may hold over, the tier's store by default (a small city's hearth holds less).
-	 * Returns { burn: units used, out: fire made, stored }.
+	 * Units burn in fractions, like every other store, so no fire is wasted.
+	 * Returns { burn: { fuel: units used }, fuel: the fuel whose reach its lines get (the
+	 * weakest burned: a line works at the lowest), out: fire made, stored }.
 	 */
-	burn: function (hearthId, fuel, need, stock, stored, room) {
-		var h = Fire.HEARTHS[hearthId], f = fuel ? Fire.FUELS[fuel] : null;
-		var perUnit = f ? f.fire * f.burn : 0, store = typeof room == 'number' ? room : h.store;
-		var want = need + Math.max(0, store - stored);
-		var burn = perUnit ? Math.min(stock, Math.ceil(want / perUnit)) : 0;
-		var fire = burn * perUnit + stored;
-		var used = Math.min(fire, need);
-		return { burn: burn, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
+	burnAll: function (hearthId, unlocked, have, need, stored, room) {
+		var h = Fire.HEARTHS[hearthId], store = typeof room == 'number' ? room : h.store;
+		var want = need + Math.max(0, store - stored), made = 0, burn = {}, fuel = null;
+		Object.keys(Fire.FUELS).filter(function (k) { return unlocked[Fire.FUELS[k].tier] && have(k) > 0; })
+			.sort(function (a, b) { return Fire.tier(Fire.FUELS[b].tier).n - Fire.tier(Fire.FUELS[a].tier).n; })
+			.forEach(function (k) {
+				if (made >= want) return;
+				var f = Fire.FUELS[k], per = f.fire * f.burn, n = Math.min(have(k), (want - made) / per);
+				burn[k] = n;
+				made += n * per;
+				fuel = k; // strongest first, so the last one burned is the weakest
+			});
+		var fire = made + stored, used = Math.min(fire, need);
+		return { burn: burn, fuel: fuel, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
 	},
 
 	// offset (odd rows shifted right) <-> cube coordinates
@@ -116,9 +115,10 @@ var Fire = {
 		return [q, y, -q - y];
 	},
 
+	// Fire.cube's distance, worked out without making the cubes (perf: the network asks it a lot)
 	distance: function (a, b) {
-		var A = Fire.cube(a[0], a[1]), B = Fire.cube(b[0], b[1]);
-		return (Math.abs(A[0] - B[0]) + Math.abs(A[1] - B[1]) + Math.abs(A[2] - B[2])) / 2;
+		var dq = a[0] - (a[1] - (a[1] & 1)) / 2 - b[0] + (b[1] - (b[1] & 1)) / 2, dr = a[1] - b[1];
+		return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
 	},
 
 	// the hexes on the straight line from a to b, both ends included
@@ -138,15 +138,25 @@ var Fire = {
 
 	// every hex exactly r from [x, y]
 	ring: function (x, y, r) {
-		return Fire.around(x, y, r).filter(function (p) { return Fire.distance([x, y], p) === r; });
+		return Fire.offsets(y, r, true).map(function (d) { return [x + d[0], y + d[1]]; });
 	},
 
 	// every hex within r of [x, y]
 	around: function (x, y, r) {
-		var out = [];
+		return Fire.offsets(y, r, false).map(function (d) { return [x + d[0], y + d[1]]; });
+	},
+
+	// the steps from a hex on row y to every hex within r (exactly r: ring), row by row; they only
+	// differ between even and odd rows, so each set is worked out once (perf)
+	_offsets: {},
+	offsets: function (y, r, ring) {
+		var k = (y & 1) + ',' + r + ',' + !!ring, out = Fire._offsets[k];
+		if (out) return out;
+		out = Fire._offsets[k] = [];
 		for (var dy = -r; dy <= r; dy++) {
 			for (var dx = -r - 1; dx <= r + 1; dx++) {
-				if (Fire.distance([x, y], [x + dx, y + dy]) <= r) out.push([x + dx, y + dy]);
+				var d = Fire.distance([0, y & 1], [dx, (y & 1) + dy]);
+				if (ring ? d === r : d <= r) out.push([dx, dy]);
 			}
 		}
 		return out;
@@ -155,59 +165,130 @@ var Fire = {
 	/*
 	 * The network: which hexes the fire reaches, and how strongly.
 	 *   net.cols, net.rows
-	 *   net.danger(x, y)   the hex's danger before any light
+	 *   net.danger(x, y)   the hex's danger before any light; or net.field, the same for every
+	 *                      hex as an array (x + y * cols), read without a call (perf)
 	 *   net.hills(x, y)    true on hills
+	 *   net.open(x, y)     true on open dry ground a line can cross (optional: all of it)
 	 *   net.hearths[]      { at: [x, y], out, share, cap }
 	 *   net.beacons[]      [x, y]
 	 *   net.beacon         the beacon tier in use, one of Fire.BEACONS
 	 * A hearth lights its own ground, a ring at a time, -25% a ring. A beacon links to any node
-	 * up to Fire.HOP hexes away. Sharing hearths linked into one network pool their fire and
+	 * up to Fire.HOP hexes away. Sharing hearths whose fire reaches each other pool it, and
 	 * each sends the pool out; every hop keeps `keep` of it, and fire carries on only while it
 	 * is at least Fire.RELAY_MIN. Nothing goes into a hex over the fuel's danger cap: a beacon
-	 * there is dark, and so is everything past it.
+	 * there is dark, and so is everything past it. A line between two nodes needs every hex
+	 * between them open and under the cap.
 	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
 	 */
 	compute: function (net) {
-		var cols = net.cols, rows = net.rows, n = cols * rows;
+		var cols = net.cols, rows = net.rows, n = cols * rows, field = net.field;
+		var danger = field ? function (x, y) { return field[x + y * cols]; } : net.danger;
 		var fire = new Float32Array(n), lit = new Uint8Array(n);
 		var nodes = net.hearths.map(function (h) { return { at: h.at, s: 0, hearth: h }; })
 			.concat(net.beacons.map(function (b) { return { at: b, s: 0, hearth: null }; }));
-		var adj = nodes.map(function () { return []; });
+		// links: every pair of nodes up to Fire.HOP apart. Nodes are bucketed in cells a hop wide
+		// (a hop can be one column more across), so only neighbouring cells are compared (perf)
+		var adj = nodes.map(function () { return []; }), cells = {}, CX = Fire.HOP + 1, CY = Fire.HOP;
+		var cell = function (cx, cy) { return cx + ',' + cy; };
+		nodes.forEach(function (node, i) {
+			var k = cell(Math.floor(node.at[0] / CX), Math.floor(node.at[1] / CY));
+			(cells[k] = cells[k] || []).push(i);
+		});
 		for (var i = 0; i < nodes.length; i++) {
-			for (var j = i + 1; j < nodes.length; j++) {
-				if (Fire.distance(nodes[i].at, nodes[j].at) <= Fire.HOP) {
-					adj[i].push(j);
-					adj[j].push(i);
+			var cx = Math.floor(nodes[i].at[0] / CX), cy = Math.floor(nodes[i].at[1] / CY);
+			for (var dx = -1; dx <= 1; dx++) {
+				for (var dy = -1; dy <= 1; dy++) {
+					(cells[cell(cx + dx, cy + dy)] || []).forEach(function (j) {
+						if (j !== i && Fire.distance(nodes[i].at, nodes[j].at) <= Fire.HOP) adj[i].push(j);
+					});
 				}
 			}
+			adj[i].sort(function (a, b) { return a - b; }); // in node order, as the walks expect
 		}
 		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
 		// fire reaching a hex from a line with this fuel cap
 		var cover = function (p, s, cap) {
-			if (!inside(p) || net.danger(p[0], p[1]) > cap) return;
+			if (!inside(p) || danger(p[0], p[1]) > cap) return;
 			var k = p[0] + p[1] * cols;
 			if (s > fire[k]) fire[k] = s;
 		};
 
-		// pools: sharing hearths in one linked network add up
-		var comp = new Int32Array(nodes.length).fill(-1);
-		for (i = 0; i < nodes.length; i++) {
-			if (comp[i] >= 0) continue;
-			var stack = [i];
-			comp[i] = i;
-			while (stack.length) {
-				var a = stack.pop();
-				adj[a].forEach(function (b) { if (comp[b] < 0) { comp[b] = i; stack.push(b); } });
+		var B = net.beacon, H = net.hearths.length;
+		// the hexes strictly between two linked nodes: the most danger on them, and whether all are
+		// open dry ground (a line can't jump what it couldn't light, or cross water or mountains)
+		var corridors = {};
+		var between = function (a, b) {
+			var k = Math.min(a, b) + ',' + Math.max(a, b), c = corridors[k];
+			if (c) return c;
+			c = corridors[k] = { danger: 0, open: true };
+			var l = Fire.line(nodes[a].at, nodes[b].at);
+			for (var i = 1; i < l.length - 1; i++) {
+				var p = l[i];
+				if (!inside(p) || (net.open && !net.open(p[0], p[1]))) c.open = false;
+				else c.danger = Math.max(c.danger, danger(p[0], p[1]));
 			}
-		}
-		var pool = {};
-		net.hearths.forEach(function (h, hi) {
-			if (h.share) pool[comp[hi]] = (pool[comp[hi]] || 0) + h.out;
-		});
+			return c;
+		};
+		var carries = function (a, b, cap) {
+			var c = between(a, b);
+			return c.open && c.danger <= cap;
+		};
+		// a hearth's fire out along the beacons, keeping each beacon's strongest: { best, links }
+		var spread = function (hi, s0, cap) {
+			var best = {}, links = {}, queue = [[hi, s0]];
+			for (var qi = 0; qi < queue.length; qi++) {
+				var q = queue[qi];
+				adj[q[0]].forEach(function (b) {
+					if (b < H) return; // a hearth doesn't relay another's line
+					var at = nodes[b].at;
+					var s = q[1] * B.keep;
+					if (s < Fire.LIT_MIN || best[b] >= s) return;
+					if (danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
+					if (!carries(q[0], b, cap)) return;
+					best[b] = s;
+					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
+					// a beacon on hills (where its tier can use them) carries one hop further
+					var relay = B.hills && net.hills(at[0], at[1]) ? Fire.RELAY_MIN * B.keep : Fire.RELAY_MIN;
+					if (s >= relay) queue.push([b, s]);
+				});
+			}
+			return { best: best, links: links };
+		};
 
-		var all = [], B = net.beacon;
+		// pools: sharing hearths whose fire reaches each other add up. Fire reaches a hearth from
+		// the other's hex, or from one of its beacons strong enough to relay, within a hop; a pool
+		// sends further, so it is walked again until no more hearths join it.
+		var root = net.hearths.map(function (h, i) { return i; });
+		var find = function (i) { return root[i] === i ? i : (root[i] = find(root[i])); };
+		var walks, joined = true;
+		while (joined) {
+			joined = false;
+			var pool = {};
+			net.hearths.forEach(function (h, hi) {
+				if (h.share) pool[find(hi)] = (pool[find(hi)] || 0) + h.out;
+			});
+			walks = net.hearths.map(function (h, hi) {
+				var s0 = h.share ? pool[find(hi)] : h.out;
+				return { s0: s0, w: h.share && B && s0 >= Fire.RELAY_MIN ? spread(hi, s0, h.cap) : null };
+			});
+			walks.forEach(function (wk, a) {
+				if (!wk.w) return;
+				var from = [a];
+				for (var k in wk.w.best) if (wk.w.best[k] >= Fire.RELAY_MIN) from.push(+k);
+				from.forEach(function (f) {
+					adj[f].forEach(function (b) {
+						if (b < H && net.hearths[b].share && find(b) !== find(a) && carries(f, b, net.hearths[a].cap)) {
+							root[find(b)] = find(a);
+							joined = true;
+						}
+					});
+				});
+			});
+		}
+
+		var all = [];
 		net.hearths.forEach(function (h, hi) {
-			var s0 = h.share ? pool[comp[hi]] : h.out;
+			var s0 = walks[hi].s0, w = walks[hi].w;
 			if (s0 > nodes[hi].s) nodes[hi].s = s0;
 			// its own ground: ring by ring while the ring inside still carries
 			for (var r = 0, s = s0; r <= 1 / Fire.RING_FALLOFF; r++) {
@@ -215,29 +296,14 @@ var Fire = {
 				Fire.ring(h.at[0], h.at[1], r).forEach(function (p) { cover(p, s, h.cap); });
 				if (s < Fire.RELAY_MIN) break;
 			}
-			if (!h.share || !B || s0 < Fire.RELAY_MIN) return;
-			// out along the beacons, keeping each beacon's strongest fire
-			var best = {}, links = {}, queue = [[hi, s0]];
-			for (var qi = 0; qi < queue.length; qi++) {
-				var q = queue[qi];
-				adj[q[0]].forEach(function (b) {
-					if (b < net.hearths.length) return; // a hearth doesn't relay another's line
-					var at = nodes[b].at;
-					var s = q[1] * (B.hills && net.hills(at[0], at[1]) ? 1 : B.keep);
-					if (s < Fire.LIT_MIN || best[b] >= s) return;
-					if (net.danger(at[0], at[1]) > h.cap) return; // past the fuel's reach: dark
-					best[b] = s;
-					if (s > nodes[b].s) nodes[b].s = s;
-					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
-					if (s >= Fire.RELAY_MIN) queue.push([b, s]);
-				});
-			}
-			for (var b in best) {
+			if (!w) return;
+			for (var b in w.best) {
 				var at = nodes[b].at;
-				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, best[b], h.cap); });
+				if (w.best[b] > nodes[b].s) nodes[b].s = w.best[b];
+				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, w.best[b], h.cap); });
 			}
-			for (var k in links) {
-				var l = links[k];
+			for (var k in w.links) {
+				var l = w.links[k];
 				all.push(l);
 				Fire.line(nodes[l[0]].at, nodes[l[1]].at).forEach(function (c) {
 					Fire.around(c[0], c[1], Fire.CORRIDOR).forEach(function (p) { cover(p, l[2], h.cap); });

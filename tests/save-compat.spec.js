@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState } from './helpers.js';
+import { openGame, getState, freezeClock } from './helpers.js';
 
 // A village save made by the unmodified v1.3 game; see fixtures/generate-v1.3-save.js.
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/v1.3-village.json', import.meta.url)));
 
 test('a v1.3 village save loads intact', async ({ page }) => {
-  await page.clock.install(); // freeze income ticks so stores compare exactly
+  await freezeClock(page); // no income ticks so stores compare exactly
   const errors = await openGame(page, { save: fixture });
 
   const state = await getState(page);
@@ -19,6 +19,7 @@ test('a v1.3 village save loads intact', async ({ page }) => {
   expect(state.game.workers).toEqual(fixture.game.workers);
   expect(state.stores).toEqual(fixture.stores);
   expect(state.game.builder.level).toBe(4);
+  await page.clock.resume(); // time runs again for the clicks
 
   await expect(page.locator('#location_outside')).toBeVisible();
   await page.locator('#location_outside').click();

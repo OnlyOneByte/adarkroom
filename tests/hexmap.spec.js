@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState, freshToTown, onHexTrek } from './helpers.js';
+import { openGame, getState, freshToTown, onHexTrek, freezeClock } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 // made by the unmodified old games; see fixtures/generate-world-saves.js
@@ -123,7 +123,7 @@ test('treks continue on the hex map and come home to the same world', async ({ p
   // reload: the world comes back from the seed and the deltas
   const before = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask) }));
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask) }));
   expect(after).toEqual(before);
   expect(errors).toEqual([]);
@@ -162,7 +162,7 @@ test('every terrain and both kinds of multi-hex feature appear across seeds', as
 });
 
 test('a v1.3 save with a full village and a walked map migrates and opens the hex map', async ({ page }) => {
-  await page.clock.install();
+  await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save: v13 });
   const state = await getState(page);
   expect(state.version).toBe(2.6);
@@ -205,7 +205,7 @@ test('a v2.0 save with an open town loads into the hex map', async ({ page }) =>
   // the hex map stays the same across reloads
   const before = await page.evaluate(() => JSON.stringify(World.hex.map));
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   expect(await page.evaluate(() => JSON.stringify(World.hex.map))).toBe(before);
   expect(errors).toEqual([]);
 });
@@ -474,7 +474,7 @@ test('a hex save survives export and import, and stays small', async ({ page }) 
   // a player's base64 export, pasted back in with the line breaks the dialog shows
   await page.evaluate(() => { localStorage.clear(); });
   await page.evaluate((s) => Engine.import64(s.replace(/(.{60})/g, '$1\n')), before.export);
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
   const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask) }));
   expect(after).toEqual({ map: before.map, mask: before.mask });
   expect(before.size).toBeLessThan(60000); // the whole save, not just the world
@@ -495,7 +495,7 @@ test('reloading mid-trek on the hex map wakes at home in the world as last commi
     return { map, mask };
   });
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
   const after = await page.evaluate(() => ({ map: JSON.stringify(World.hex.map), mask: JSON.stringify(World.hex.mask), state: World.state }));
   // like the prologue: an unfinished trek's discoveries are not kept
   expect(after).toEqual({ ...before, state: undefined });
@@ -508,12 +508,12 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
   const r = await page.evaluate(() => {
     if (!World.panel) World.init(); // sets up the landmarks, so the wasteland core is the real one
     const bad = [], T = WorldGen.TERRAIN;
-    let slowest = 0;
+    let slowest = 0, slowSeed = 0;
     for (let seed = 1; seed <= 200; seed++) {
       const square = World.generateMap(WorldGen.rng(seed));
       const t0 = performance.now();
       const g = WorldGen.generate(seed, square);
-      slowest = Math.max(slowest, performance.now() - t0);
+      if (performance.now() - t0 > slowest) [slowest, slowSeed] = [performance.now() - t0, seed];
       const C = g.cols, at = (x, y) => x + y * C;
       const inside = (x, y) => x >= 0 && y >= 0 && x < C && y < g.rows;
       // flood fill on foot from the capital, independent of the generator's own answer
@@ -557,6 +557,14 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
         }
         if (!open.some((a) => open.some((b) => b - a >= 2 && b - a <= 4))) bad.push([seed, 'dead-end pass', x, y, open]);
       });
+    }
+    // the slowest world timed again, best of 3: a pause on a busy host (a GC, another process)
+    // doesn't come back, a slow world does
+    const square = World.generateMap(WorldGen.rng(slowSeed));
+    for (let i = 0; i < 3; i++) {
+      const t0 = performance.now();
+      WorldGen.generate(slowSeed, square);
+      slowest = Math.min(slowest, performance.now() - t0);
     }
     return { bad: bad.slice(0, 20), slowest };
   });
