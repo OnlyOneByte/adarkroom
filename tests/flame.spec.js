@@ -416,12 +416,17 @@ test('H7 and H8: a city of 64 brings the bread oven, whose fire grows with its p
     const f8 = { before: Network.has('F8'), call: Fire.unlock('F8'), after: Network.has('F8') };
     $SM.set('stores.coal', 100);
     burnTick();
-    return { at60, H7: Network.has('H7'), out, f8, fuel: $SM.get('game.cities.capital.hearth.fuel'), H8: Network.has('H8') };
+    // a founded city's hearth: the town hearth's fire up to 32 people, its own tier's by 64, then growing
+    const ramp = [16, 32, 48, 64, 96, 128].map((n) => Fire.foundedOut(Fire.HEARTHS.H7, n, Network.HEARTH_PEOPLE));
+    const ember = [8, 16, 32, 64].map((n) => Fire.foundedOut(Fire.HEARTHS.H4, n, Network.HEARTH_PEOPLE));
+    return { at60, H7: Network.has('H7'), out, ramp, ember, f8, fuel: $SM.get('game.cities.capital.hearth.fuel'), H8: Network.has('H8') };
   });
   expect(r.at60).toBe(false);
   expect(r.H7).toBe(true);
-  // 40 fire; the capital's 64 people (twice HEARTH_PEOPLE) double it, the second town's 16 halve it
-  expect(r.out).toEqual({ capital: 80, city2: 20 });
+  // 40 fire; the capital's 64 people (twice HEARTH_PEOPLE) double it; the second town's 16 get the town hearth's half, 12
+  expect(r.out).toEqual({ capital: 80, city2: 12 });
+  expect(r.ramp).toEqual([12, 24, 32, 40, 60, 80]);
+  expect(r.ember).toEqual([6, 12, 24, 24]); // the ember tiers keep the 3b ramp
   expect(r.f8).toEqual({ before: false, call: true, after: true });
   expect(r.fuel).toBe('coal');
   expect(r.H8).toBe(true);

@@ -109,6 +109,18 @@ var Fire = {
 	 * garrison of the deep mines; Phase 6 calls it). The game sets Fire.onUnlock (Network.beat); the
 	 * tier comes in once the one before it is in, like every other.
 	 */
+	/*
+	 * provisional (flame-build.md): the fire a founded city's hearth of tier H makes with this many
+	 * people. Whatever its tier it gives the town hearth's (H4) up to P people (24 x people / P), so a
+	 * small town's big hearth doesn't eat all its wood; it rises to its own tier's fire by 2P, and
+	 * the bread oven and forge hearth grow on past that, up to H.grow times their fire.
+	 */
+	foundedOut: function (H, people, P) {
+		var base = Math.min(H.out, Fire.HEARTHS.H4.out);
+		var out = base * Math.min(1, people / P) + (H.out - base) * Math.max(0, Math.min(1, (people - P) / P));
+		return H.grow && people > 2 * P ? H.out * Math.min(H.grow, people / (2 * P)) : out;
+	},
+
 	onUnlock: null,
 	unlock: function (id) {
 		return Fire.onUnlock ? Fire.onUnlock(id) : false;
