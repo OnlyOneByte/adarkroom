@@ -1311,8 +1311,18 @@ var Network = {
 	harbourSite: function () {
 		var g = $SM.get('game.network.harbour'), gen = World.hex.gen;
 		if (g) return World.siteAt(g[0], g[1]);
-		// (the generator's rule: the drowned fleet is put out on this one's water, WorldGen._fleet)
-		var best = WorldGen.harbour(gen);
+		var sea = function (site) {
+			return site.hexes.some(function (h) {
+				return District.neighbours(h).some(function (p) {
+					if (p[0] < 0 || p[1] < 0 || p[0] >= gen.cols || p[1] >= gen.rows) return false;
+					var f = gen.formationAt[p[0] + p[1] * gen.cols];
+					return f >= 0 && gen.formations[f].kind === 'sea';
+				});
+			});
+		};
+		var near = function (a, b) { return Fire.distance(a.anchor, gen.capital) - Fire.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
+		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
+		var best = falls.filter(sea).sort(near)[0] || falls.filter(Network.coastal).sort(near)[0];
 		if (!best) return null;
 		$SM.set('game.network.harbour', best.anchor.slice(), true);
 		return best;

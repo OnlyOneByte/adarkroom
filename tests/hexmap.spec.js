@@ -328,8 +328,7 @@ test('every land region with a site, and the ship, can be walked to from the cap
           q.push([nx, ny]);
         }
       }
-      // (the drowned fleet lies out on open sea, where no one walks: POWERS #5)
-      g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => { if (!seen[x + y * g.cols] !== !!s.fleet) out.push([seed, 'site', i]); }));
+      g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => { if (!seen[x + y * g.cols]) out.push([seed, 'site', i]); }));
       if (!seen[g.warHeart[0] + g.warHeart[1] * g.cols]) out.push([seed, 'ship']);
       // every mountain range has a pass
       const passAt = new Set(g.passes.map(([x, y]) => x + ',' + y));
@@ -544,9 +543,7 @@ test('200 worlds: every landmark, site, pass and the ship can be walked to; noth
       if (ships !== 1 || !seen[at(g.warHeart[0], g.warHeart[1])]) bad.push([seed, 'ship']);
       const owner = new Int16Array(C * g.rows).fill(-1);
       g.sites.forEach((s, i) => s.hexes.forEach(([x, y]) => {
-        // (the drowned fleet lies out on water, inland sea or not, where no one walks: POWERS #5)
-        if (s.fleet ? owner[at(x, y)] >= 0 || g.terrain[x][y] !== T.ocean || seen[at(x, y)] :
-          owner[at(x, y)] >= 0 || g.formationAt[at(x, y)] >= 0 || !seen[at(x, y)]) bad.push([seed, 'site', i, x, y]);
+        if (owner[at(x, y)] >= 0 || g.formationAt[at(x, y)] >= 0 || !seen[at(x, y)]) bad.push([seed, 'site', i, x, y]);
         owner[at(x, y)] = i;
       }));
       // a pass is hills you can reach; a crater dropped on one is open ground, not a pass

@@ -92,7 +92,7 @@ var Fleet = {
 Powers.LIST.push({
 	id: 'fleet', name: _('the drowned fleet'), unlock: 'B12',
 	// its Π: out on the drowned harbour's water (WorldGen._fleet); armies may be ordered there once it is seen
-	anchor: function () { var gen = World.hex.gen; return gen.fleet >= 0 ? gen.sites[gen.fleet].anchor : null; },
+	anchor: function () { var gen = World.hex.gen; return Fleet.place() >= 0 ? gen.sites[gen.fleet].anchor : null; },
 	known: function () { return !!Powers.state('fleet').seen; },
 	// POWERS §3, band 3: garrison 100, a gunship (20), hulks 1,000, 120 ticks of stores
 	garrison: 100, walls: 1000, kind: 'hulks', stores: 120,
@@ -119,6 +119,27 @@ Powers.LIST.push({
 
 	site: function () {
 		return World.hex ? Powers.site('fleet') : null;
+	},
+
+	// its complex put out on the drowned harbour's water (WorldGen._fleet), once a world: the generator makes the
+	// world afresh on each load, and the harbour, once picked, is kept, so it lands where it did. Returns its index
+	place: function () {
+		var hex = World.hex, gen = hex.gen;
+		if (gen.fleet !== undefined) return gen.fleet;
+		gen.fleet = -1; // (Network.harbourSite asks nothing of the fleet, but no second pass while it runs)
+		var hb = Network.harbourSite();
+		gen.fleet = WorldGen._fleet(gen, hb);
+		if (gen.fleet < 0) return -1;
+		// the world's live copies: a shallows hex made deep, its danger, what was worked out from the sites
+		gen.sites[gen.fleet].hexes.forEach(function (h) {
+			hex.map[h[0]][h[1]] = gen.map[h[0]][h[1]];
+			if (World.state) World.state.map[h[0]][h[1]] = gen.map[h[0]][h[1]];
+		});
+		hex.danger = Danger.field(gen);
+		hex.base = null;
+		delete CityStates._spheres;
+		Network._ground = Network._kinds = null;
+		return gen.fleet;
 	},
 
 	// the drowned harbour's city, once resettled
@@ -248,6 +269,13 @@ Powers.LIST.push({
 
 	init: function () {
 		var P = Powers, CS = CityStates, fn = Fleet.wrap;
+		// the fleet put out on the water as soon as the world is up (it is made afresh on each load)
+		fn(World, 'openHexMap', function (old, args) {
+			var out = old.apply(World, args);
+			if (World.hex) Fleet.place();
+			return out;
+		});
+		if (World.hex) Fleet.place();
 		// the trek: the inland seas open to the wanderer (and the settlers with them) once it is broken
 		fn(World, 'move', function (old, args) {
 			Fleet._to = [World.curPos[0] + args[0][0], World.curPos[1] + args[0][1]];

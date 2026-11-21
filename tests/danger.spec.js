@@ -32,7 +32,7 @@ function survey(seeds) {
     // a crater's hexes against the ring they sit in
     // against the same world without its sites, below the top of the scale where there's room to stand out
     const flat = Danger.field({ ...g, sites: [] });
-    const spike = g.sites.filter((s) => (s.kind === 'crater' || s.kind === 'complex') && !s.garrison && !s.fleet).flatMap((s) => s.hexes)
+    const spike = g.sites.filter((s) => (s.kind === 'crater' || s.kind === 'complex') && !s.garrison).flatMap((s) => s.hexes)
       .filter((h) => flat[h[0] + h[1] * C] < 7.5).map((h) => f[h[0] + h[1] * C] - flat[h[0] + h[1] * C]);
     const ringMean = (h) => { const r = ring[Math.floor(WorldGen.distance(h, g.capital) / 10)]; return r[0] / r[1]; };
     const pocket = g.pockets.map((p) => f[p[0] + p[1] * C] - ringMean(p));
@@ -53,7 +53,7 @@ test('danger: 0 at home, rising with distance to 10 at the heart, with hotspots 
     expect(s.heart).toBeGreaterThan(9.5);
     // every 10-hex ring is more dangerous than the one inside it, out to the heart
     for (let i = 1; i < s.heartRing; i++) expect(s.rings[i]).toBeGreaterThan(s.rings[i - 1]);
-    for (const d of s.spike) expect(d).toBeGreaterThan(2);       // craters and complexes are hotspots (not the garrison's or the fleet's: POWERS §3)
+    for (const d of s.spike) expect(d).toBeGreaterThan(2);       // craters and complexes are hotspots (not the garrison's: POWERS §3)
     expect(s.pocket.filter((d) => d < -1).length).toBeGreaterThan(2); // most pockets are clearly safer
   }
   expect(errors).toEqual([]);

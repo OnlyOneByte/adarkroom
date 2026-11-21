@@ -66,6 +66,21 @@ function siege(ctx, P, kit, fed, roll) {
   return out;
 }
 
+// the drowned harbour as Network.harbourSite picks it (network.js isn't loaded here): the fallen city nearest
+// home on an inland sea's shore, else the nearest on any water. shortcut: a copy of the game's rule; follow it
+// when harbourSite's rule changes
+function harbourSite(G, gen) {
+  const touches = (s, ok) => s.hexes.some((h) => [0, 1, 2, 3, 4, 5].some((d) => {
+    const [x, y] = G.neighbour(h[0], h[1], d);
+    return x >= 0 && y >= 0 && x < gen.cols && y < gen.rows && ok(x, y);
+  }));
+  const sea = (s) => touches(s, (x, y) => { const f = gen.formationAt[x + y * gen.cols]; return f >= 0 && gen.formations[f].kind === 'sea'; });
+  const coast = (s) => touches(s, (x, y) => G.isWater(gen.terrain[x][y]));
+  const near = (a, b) => G.distance(a.anchor, gen.capital) - G.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b);
+  const falls = gen.sites.filter((s) => s.kind === 'fallenCity');
+  return falls.filter(sea).sort(near)[0] || falls.filter(coast).sort(near)[0] || null;
+}
+
 // the land a man walks from home (passable hexes), Uint8Array
 function walkable(G, gen) {
   const out = new Uint8Array(gen.cols * gen.rows), q = [gen.capital];
@@ -135,9 +150,12 @@ export function simulatePowerFleet({ seeds, firstSeed = 1 }) {
   for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
     rand.seed(seed * 7919);
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
-    const field = D.field(gen), danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+    // the game's Fleet.place: put out on the drowned harbour's water
+    const hb = harbourSite(G, gen);
+    gen.fleet = G._fleet(gen, hb);
     if (gen.fleet < 0) { out.push({ seed, none: true }); continue; }
-    const site = gen.sites[gen.fleet], hb = G.harbour(gen), cols = gen.cols;
+    const field = D.field(gen), danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+    const site = gen.sites[gen.fleet], cols = gen.cols;
     const walk = walkable(G, gen);
     let lostLand = 0;
     // (the fleet's own hexes aside: a shallows hex under it is made deep)

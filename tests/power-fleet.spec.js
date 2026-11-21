@@ -92,7 +92,7 @@ async function fleetSave(page) {
     City.setFocus('city4', 'military');
     $SM.set('game.armies.trained["city4"]', 80, true);
     Network.refresh();
-    return { at, site: site.hexes, yard: Fleet.boatyard(), fleet: World.hex.gen.fleet };
+    return { at, site: site.hexes, yard: Fleet.boatyard(), fleet: Fleet.place() };
   }, TIERS);
   expect(hb.yard).toBe('city4');
   expect(hb.fleet).toBeGreaterThanOrEqual(0);

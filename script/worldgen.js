@@ -124,7 +124,6 @@ var WorldGen = {
 	 *   coreOffset     [dx, dy] from square to hex coordinates
 	 *   deposits[]     { kind: 'iron'|'coal'|'sulphur', at:[x,y], cleared } the prologue's mines
  *   garrison       the index in sites[] of the garrison of the deep mines' complex (-1: none)
-	 *   fleet          the index in sites[] of the drowned fleet's complex, out on the water (-1: none)
 	 *   pockets[]      [x,y] centres of the safer pockets (Danger)
 	 */
 	generate: function (seed, squareMap, cleared) {
@@ -512,29 +511,7 @@ var WorldGen = {
 		// 8. The garrison of the deep mines (POWERS §2, the first power): the complex nearest home moves to the
 		// old wasteland's edge, where a charcoal line can reach it, on its own rng (nothing else moves)
 		out.garrison = G._garrison(out);
-		// 9. The drowned fleet (POWERS §2, #5): a complex moves out onto the drowned harbour's water (WorldGen._fleet)
-		out.fleet = G._fleet(out);
 		return out;
-	},
-
-	// the drowned harbour (blaze-draft): the fallen city nearest the capital on an inland sea's shore; failing
-	// that, the nearest on any water. null: none (Network.harbourSite keeps the game's pick)
-	harbour: function (gen) {
-		var G = WorldGen, cols = gen.cols, rows = gen.rows;
-		var touches = function (site, ok) {
-			return site.hexes.some(function (h) {
-				for (var d = 0; d < 6; d++) {
-					var p = G.neighbour(h[0], h[1], d);
-					if (p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows && ok(p[0], p[1])) return true;
-				}
-				return false;
-			});
-		};
-		var sea = function (s) { return touches(s, function (x, y) { var f = gen.formationAt[x + y * cols]; return f >= 0 && gen.formations[f].kind === 'sea'; }); };
-		var coast = function (s) { return touches(s, function (x, y) { return G.isWater(gen.terrain[x][y]); }); };
-		var near = function (a, b) { return G.distance(a.anchor, gen.capital) - G.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
-		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
-		return falls.filter(sea).sort(near)[0] || falls.filter(coast).sort(near)[0] || null;
 	},
 
 	// the water joined to a site's shore: Int32Array(cols*rows), the steps out from the shore (1 on the water
@@ -557,18 +534,19 @@ var WorldGen = {
 	FLEET_SIZE: 4,          // provisional: the hulks, chained hull to hull
 	FLEET_DANGER: [5, 7],   // POWERS §3: the fleet's band 3
 
-	// moves the complex nearest the drowned harbour (one no power has taken) out onto open water joined to
-	// the harbour's shore: at FLEET_DANGER, an inland sea's first, nearest the harbour by water. Its hexes are
-	// open sea (no one walks to it) and it has no danger spike of its own (site.fleet, Danger.field).
+	// the drowned fleet (POWERS §2, #5), the last of the powers to claim a complex: the one nearest the drowned
+	// harbour (hb: its site, Network.harbourSite) moves out onto open water joined to the harbour's shore: at
+	// FLEET_DANGER, an inland sea's first, nearest the harbour by water, on its own rng. Its hexes are open sea
+	// (no one walks to it) and it has no danger spike of its own (site.fleet, Danger.field). Run on the game's
+	// world once the harbour is known (Fleet.place), not in generate: the harbour is the game's pick.
 	// Returns its index, or -1
-	_fleet: function (gen) {
-		var G = WorldGen, T = G.TERRAIN, cols = gen.cols, rows = gen.rows, hb = G.harbour(gen);
+	_fleet: function (gen, hb) {
+		var G = WorldGen, T = G.TERRAIN, cols = gen.cols, rows = gen.rows;
 		if (!hb) return -1;
-		// (a complex another power has moved carries a flag of its own: garrison, ...)
-		var taken = function (s) { return Object.keys(s).some(function (k) { return k !== 'kind' && k !== 'anchor' && k !== 'hexes'; }); };
 		var i = -1;
 		gen.sites.forEach(function (s, j) {
-			if (s.kind !== 'complex' || taken(s)) return;
+			// (a power claims its complex with site.power; the garrison's is site.garrison)
+			if (s.kind !== 'complex' || s.power || s.garrison) return;
 			if (i < 0 || G.distance(s.anchor, hb.anchor) < G.distance(gen.sites[i].anchor, hb.anchor)) i = j;
 		});
 		if (i < 0) return -1;
