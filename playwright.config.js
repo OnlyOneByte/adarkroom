@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import { defineConfig, devices } from '@playwright/test';
 
-const PORT = 8181;
+const PORT = Number(process.env.PW_PORT) || 8181; // PW_PORT: when another checkout already serves 8181
 
 export default defineConfig({
   testDir: 'tests',

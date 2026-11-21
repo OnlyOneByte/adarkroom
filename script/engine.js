@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.3,
+    VERSION: 2.4,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -687,6 +687,11 @@
       }
 
       Engine.activeModule = module;
+      // the town panel, with its land and cities, is taller than the others; the village's stockpile
+      // is the capital's, hidden while the town panel shows another city
+      var town = typeof City != 'undefined' && module == City;
+      $('body').toggleClass('tallTown', town);
+      $('#storesContainer').css('visibility', town && City.activeCity != City.CAPITAL ? 'hidden' : '');
       module.onArrival(diff);
       Notifications.printQueue(module);
     },

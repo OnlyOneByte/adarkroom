@@ -11,6 +11,9 @@
  *   npm run sim -- --seeds 5 --treks 30
  *   npm run sim -- --ci              small run with assertions; exits 1 if one fails
  *
+ * Then the cities (simulateCities, below): how soon the 2nd and 3rd city are founded, and
+ * whether a focused city's governor keeps its hearth lit for two hours.
+ *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
  * ember tier of each ladder; it reports the land lit and how far out, and how many lines a
@@ -428,6 +431,285 @@ export function checkFire({ rows, cut }) {
   return fails;
 }
 
+/*
+ * Cities (Phase 3b): how soon a capital founds its 2nd and 3rd city, and whether a focused
+ * city's governor keeps its hearth lit.
+ *
+ * Founding: from the town's opening with the ember tiers at their top (F4 B4 H4), a bot picks the
+ * nearest place it can found (a fallen city's old centre, or open land 6-10 hexes from every city),
+ * raises beacons toward it until it is lit, pays the settlers (City.SETTLERS) and walks them there.
+ * The capital's village is not simulated: it pays in at CAPITAL_INCOME a fire tick, and its hearth
+ * burns tallow, so beacons and settlers cost only wood and cured meat. A trek step takes
+ * STEP_SECONDS. 'Cities held' counts what stands EMBER_MINUTES after the town's opening.
+ *
+ * Governors: each founded 2nd city is played for two hours of fire ticks under each focus with the
+ * game's own jobs (script/city.js), districts (script/districts.js), hearth (script/fire.js) and
+ * governor (script/governor.js); the bot gives it the districts its ground fits (woods, hunting
+ * grounds, huts), and people come to its houses as they do in the game.
+ */
+// provisional: a village of 80 at the town's opening, about 20 gatherers, 20 hunters (10 meat a tick)
+// and the 2 charcutiers that meat keeps busy (5 meat each for 1 cured meat); the rest on other work
+const CAPITAL_INCOME = { wood: 20, 'cured meat': 2 };
+const CAPITAL_START = { wood: 500, 'cured meat': 50 }; // provisional: what is left after the 20 huts
+const STEP_SECONDS = 1;
+const GOVERN_TICKS = 720; // two hours of 10 s fire ticks
+const EMBER_MINUTES = 60; // provisional: how long after the town's opening the ember era lasts, for 'cities held'
+
+function loadCities(rand) {
+  const { ctx, store } = loadGame(rand);
+  for (const f of ['script/districts.js', 'script/city.js', 'script/governor.js']) {
+    vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
+  }
+  return { ctx, store };
+}
+
+// what District.TYPES[].fits sees of a hex (Network.ground)
+function groundOf(ctx, gen, at, city) {
+  const { WorldGen: G } = ctx;
+  const key = (x, y) => {
+    if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows) return null;
+    const c = gen.terrain[x][y];
+    return Object.keys(G.TERRAIN).find((k) => G.TERRAIN[k] === c) || null;
+  };
+  const f = gen.formationAt[at[0] + at[1] * gen.cols];
+  return { at, terrain: key(at[0], at[1]), terrainAt: key, site: gen.siteAt[at[0] + at[1] * gen.cols] >= 0,
+    deep: f >= 0 && gen.formations[f].kind === 'forest', city, capital: false };
+}
+
+function foundCities(ctx, gen, field, home, max) {
+  const { Fire: F, WorldGen: G, Danger: D, District: Di, City: C } = ctx;
+  const cost = C.SETTLERS.stores;
+  const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+  const H = F.HEARTHS.H4, cap = gen.capital, cols = gen.cols;
+  const net = { cols, rows: gen.rows, danger, hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
+    hearths: [{ at: cap, out: H.out, share: true, cap: F.FUELS.tallow.cap }], beacons: [], beacon: F.BEACONS.B4 };
+  const cities = [{ at: cap, districts: { [cap.join(',')]: Di.HEARTH } }];
+  const taken = (p) => cities.some((c) => Object.keys(c.districts).some((k) => F.distance(k.split(',').map(Number), p) <= 1));
+  const open = (p) => p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < gen.rows && home.dist[p[0] + p[1] * cols] < Infinity &&
+    G.isPassable(gen.map[p[0]][p[1]]) && gen.map[p[0]][p[1]] !== G.TERRAIN.ocean;
+  const land = (p) => Di.land(groundOf(ctx, gen, p, {}));
+  const isBeacon = (p) => net.beacons.some((b) => b[0] === p[0] && b[1] === p[1]);
+  let r = F.compute(net);
+  const lit = (p) => !!r.lit[p[0] + p[1] * cols];
+  let wood = CAPITAL_START.wood, meat = CAPITAL_START['cured meat'], t = 0;
+  // waits until the capital has this much, in whole fire ticks
+  const wait = (w, m) => {
+    const ticks = Math.max(0, Math.ceil((w - wood) / CAPITAL_INCOME.wood), Math.ceil((m - meat) / CAPITAL_INCOME['cured meat']));
+    t += ticks * 10;
+    wood += ticks * CAPITAL_INCOME.wood;
+    meat += ticks * CAPITAL_INCOME['cured meat'];
+  };
+  const out = [], bad = new Set();
+  while (out.length < max) {
+    // candidates: fallen cities' old centres, and open land 6-10 hexes from every city
+    const cands = [];
+    for (const s of gen.sites) {
+      if (s.kind === 'fallenCity' && open(s.anchor) && land(s.anchor) && !taken(s.anchor) && G.distance(s.anchor, cap) <= 16) cands.push({ at: s.anchor, site: s });
+    }
+    for (const p of F.around(cap[0], cap[1], 12)) {
+      if (gen.siteAt[p[0] + p[1] * cols] >= 0 || !open(p) || !land(p)) continue;
+      const d = Math.min(...cities.map((c) => F.distance(c.at, p)));
+      if (d >= 6 && d <= 10) cands.push({ at: p, site: null });
+    }
+    // the cheapest to light: fewest hexes past the nearest lit node; a fallen city wins a tie by a hop
+    const nodes = () => [cap].concat(net.beacons);
+    const gap = (c) => Math.min(...nodes().map((n) => F.distance(n, c.at))) - (c.site ? F.HOP : 0);
+    const pick = cands.filter((c) => !bad.has(c.at.join(','))).sort((a, b) => gap(a) - gap(b))[0];
+    if (!pick) break;
+    let raised = 0, ok = true;
+    while (!(lit(pick.at) && !isBeacon(pick.at))) {
+      const from = nodes().sort((a, b) => F.distance(a, pick.at) - F.distance(b, pick.at))[0];
+      const line = F.line(from, pick.at);
+      let next = null;
+      for (let k = Math.min(F.HOP, line.length - 1); k >= 1 && !next; k--) {
+        next = [line[k]].concat(F.around(line[k][0], line[k][1], 1))
+          .find((q) => open(q) && !isBeacon(q) && !taken(q) && F.distance(q, from) <= F.HOP && !(q[0] === pick.at[0] && q[1] === pick.at[1]));
+      }
+      if (!next || raised >= 10) { ok = false; break; }
+      wait(20, 0);
+      wood -= 20;
+      net.beacons.push(next);
+      raised++;
+      r = F.compute(net);
+      if (r.nodes[r.nodes.length - 1].s < F.LIT_MIN) { net.beacons.pop(); r = F.compute(net); ok = false; break; } // past the fuel's reach
+    }
+    if (!ok) { bad.add(pick.at.join(',')); continue; }
+    wait(cost.wood, cost['cured meat']);
+    wood -= cost.wood;
+    meat -= cost['cured meat'];
+    const steps = home.dist[pick.at[0] + pick.at[1] * cols];
+    t += steps * STEP_SECONDS;
+    const districts = { [pick.at.join(',')]: Di.HEARTH };
+    cities.push({ at: pick.at, districts });
+    out.push({ at: pick.at, site: !!pick.site, minutes: t / 60, beacons: raised, steps });
+  }
+  return out;
+}
+
+// One founded city under a focus for GOVERN_TICKS fire ticks; returns how its hearth fared.
+function governCity(ctx, store, gen, at, focus, rand) {
+  const { Fire: F, District: Di, City: C, Governor: Gv } = ctx;
+  const id = 'sim', districts = { [at.join(',')]: Di.HEARTH };
+  // the districts its ground fits, next to the hearth quarter: woods, hunting grounds, huts, one each
+  for (const type of ['woods', 'hunting grounds', 'huts']) {
+    const p = Di.neighbours(at).find((q) => !districts[q.join(',')] && Di.TYPES[type].fits(groundOf(ctx, gen, q, districts)));
+    if (p) districts[p.join(',')] = type;
+  }
+  const city = { citizens: C.SETTLERS.people, stores: { ...C.SETTLERS.stores }, buildings: {}, workers: {}, hearth: { out: 0, stored: 0 } };
+  const tiers = {};
+  ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].forEach((k) => { tiers[k] = true; });
+  const H = F.HEARTHS.H4;
+  const hexesOf = (type) => Object.keys(districts).filter((k) => districts[k] === type).map((k) => k.split(',').map(Number));
+  const max = (b) => (C.Buildings[b].later || (C.Buildings[b].needs && !tiers[C.Buildings[b].needs]) ? 0 : C.Buildings[b].maximum * hexesOf(C.Buildings[b].district).length);
+  const slots = (j) => {
+    const inc = C._INCOME[j];
+    if (inc.needs && !tiers[inc.needs]) return 0;
+    if (!inc.raw) return Infinity;
+    return hexesOf(inc.district).reduce((s, p) => s + Di.TYPES[inc.district].jobs[j](groundOf(ctx, gen, p, districts)), 0);
+  };
+  const scale = () => Math.min(1, city.citizens / 32); // Network.HEARTH_PEOPLE
+  const share = (j) => {
+    const inc = C._INCOME[j], fn = inc.raw ? Di.TYPES[inc.district].jobs[j] : null;
+    let total = 0, weight = 0;
+    for (const p of hexesOf(inc.district)) {
+      const w = fn ? fn(groundOf(ctx, gen, p, districts)) : 1;
+      if (!w) continue;
+      total += w * Di.jobShare(inc.district, j, p, at, districts);
+      weight += w;
+    }
+    if (!weight) return 1;
+    const full = H.out * scale();
+    return total / weight * (Di.DARK_FLOOR + (1 - Di.DARK_FLOOR) * (full > 0 ? Math.min(1, city.hearth.out / full) : 0));
+  };
+  const open = () => {
+    const jobs = new Set();
+    for (const b in city.buildings) if (city.buildings[b] > 0) (C.Buildings[b].jobs || []).forEach((j) => jobs.add(j));
+    for (const j in C._INCOME) if (C._INCOME[j].raw) jobs.add(j);
+    return [...jobs].filter((j) => slots(j) > 0);
+  };
+  const res = { focus, cold: 0, lowest: Infinity, built: 0, citizens: 0 };
+  let nextPeople = 3 + Math.floor(rand.next() * 15);
+  for (let tick = 0; tick < GOVERN_TICKS; tick++) {
+    // the hearth
+    const fuel = F.pickFuel(tiers, (k) => city.stores[k] || 0);
+    const need = H.out * scale();
+    const r = F.burn('H4', fuel, need, fuel ? city.stores[fuel] : 0, city.hearth.stored, H.store * scale());
+    if (r.burn) city.stores[fuel] -= r.burn;
+    city.hearth = { out: need > 0 ? r.out * need / H.out : 0, stored: r.stored };
+    if (!(city.hearth.out > 0)) res.cold++;
+    // the governor
+    const view = { focus, citizens: city.citizens, jobs: {}, stores: { ...city.stores }, fuels: {}, builds: [], need, cold: !(city.hearth.out > 0) };
+    for (const j of open()) {
+      const inc = C._INCOME[j], s = share(j), per = {};
+      for (const k in inc.stores) per[k] = inc.stores[k] * s * 10 / inc.delay;
+      view.jobs[j] = { slots: slots(j), stores: per };
+    }
+    for (const f in F.FUELS) if (tiers[F.FUELS[f].tier]) view.fuels[f] = F.FUELS[f].fire * F.FUELS[f].burn;
+    for (const b in C.Buildings) {
+      if ((city.buildings[b] || 0) >= max(b)) continue;
+      store[`game.cities["${id}"].buildings["${b}"]`] = city.buildings[b] || 0;
+      view.builds.push({ key: b, cost: C.Buildings[b].cost(id) });
+    }
+    const plan = Gv.plan(view);
+    city.workers = plan.workers;
+    if (plan.build) {
+      const cost = view.builds.find((b) => b.key === plan.build).cost;
+      for (const k in cost) city.stores[k] -= cost[k];
+      city.buildings[plan.build] = (city.buildings[plan.build] || 0) + 1;
+      res.built++;
+    }
+    // the jobs pay out at their pace (City.updateIncome), all or nothing like $SM.collectIncome
+    for (const j in city.workers) {
+      const n = city.workers[j];
+      if (!n) continue;
+      const inc = C._INCOME[j], delay = Math.max(1, Math.round(inc.delay / Math.max(0.1, share(j))));
+      const per = 10 / delay, add = {};
+      for (const k in inc.stores) add[k] = inc.stores[k] * n * per;
+      if (Object.keys(add).every((k) => (city.stores[k] || 0) + add[k] >= 0)) for (const k in add) city.stores[k] = (city.stores[k] || 0) + add[k];
+    }
+    // people come to its houses (City.increaseCitizens, every 0.5-3 minutes)
+    if (--nextPeople <= 0) {
+      const room = (city.buildings.house || 0) * C.Buildings.house.room, space = room - city.citizens;
+      if (space > 0) city.citizens += Math.max(1, Math.floor(rand.next() * (space / 2) + space / 2));
+      nextPeople = 3 + Math.floor(rand.next() * 15);
+    }
+    if (tick > 0) {
+      let stock = 0;
+      for (const f in view.fuels) stock += (city.stores[f] || 0) * view.fuels[f];
+      res.lowest = Math.min(res.lowest, stock);
+    }
+  }
+  res.citizens = city.citizens;
+  res.buildings = city.buildings;
+  return res;
+}
+
+export function simulateCities({ seeds, firstSeed = 1 }) {
+  const rand = seeded();
+  const { ctx, store } = loadCities(rand);
+  const { World: W, WorldGen: G, Danger: D } = ctx;
+  const founding = [], governors = [];
+  for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
+    rand.seed(seed * 104729);
+    const gen = G.generate(seed, W.generateMap(G.rng(seed)));
+    const field = D.field(gen);
+    W.hex = { gen, map: gen.map, danger: field, passes: {} };
+    const home = homeward(W, G, gen);
+    const cities = foundCities(ctx, gen, field, home, 5);
+    founding.push({ seed, cities });
+    if (cities[0]) {
+      for (const focus of ctx.Governor.FOCUSES) governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, focus, rand) });
+    }
+  }
+  return { founding, governors, seeds };
+}
+
+export function citiesTable({ founding, governors, seeds }) {
+  const lines = [];
+  const nth = (n) => founding.map((f) => f.cities[n]).filter(Boolean);
+  const med = (a) => (a.length ? median(a) : null);
+  lines.push('| city | seeds that found it | minutes from the town opening (median / max) | beacons raised for it (median) | trek steps (median) | resettled a fallen city |');
+  lines.push('|---|---|---|---|---|---|');
+  for (let n = 0; n < 4; n++) {
+    const c = nth(n);
+    const m = c.map((x) => x.minutes);
+    lines.push(`| ${['2nd', '3rd', '4th', '5th'][n]} | ${c.length}/${seeds} | ${c.length ? med(m).toFixed(1) + ' / ' + Math.max(...m).toFixed(1) : '-'} | ${med(c.map((x) => x.beacons)) ?? '-'} | ${med(c.map((x) => x.steps)) ?? '-'} | ${c.filter((x) => x.site).length}/${c.length} |`);
+  }
+  const held = founding.map((f) => 1 + f.cities.filter((c) => c.minutes <= EMBER_MINUTES).length);
+  const count = (n) => held.filter((h) => h === n).length;
+  lines.push('');
+  lines.push(`cities held ${EMBER_MINUTES} minutes after the town opens (the capital included): median ${median(held)}; ` +
+    [1, 2, 3, 4, 5, 6].map((n) => `${n}: ${count(n)}`).join(', ') + ` seeds`);
+  lines.push('');
+  lines.push(`| focus (2nd city, ${GOVERN_TICKS / 360} h) | cities | ticks with a cold hearth | lowest fuel held (fire, median) | buildings built (median) | people at the end (median) |`);
+  lines.push('|---|---|---|---|---|---|');
+  const foci = [...new Set(governors.map((g) => g.focus))];
+  for (const f of foci) {
+    const g = governors.filter((x) => x.focus === f);
+    lines.push(`| ${f} | ${g.length} | ${g.reduce((a, x) => a + x.cold, 0)} | ${med(g.map((x) => x.lowest)).toFixed(1)} | ${med(g.map((x) => x.built))} | ${med(g.map((x) => x.citizens))} |`);
+  }
+  return lines.join('\n');
+}
+
+// The guards CI holds the cities to (CITY.md: an ember-era empire holds 2-3 small cities): every
+// seed founds a 2nd city, 15-25 minutes after the town opens (median); most seeds hold 2-3 cities when
+// the ember era ends; no focused city's hearth goes cold in two hours.
+export function checkCities({ founding, governors, seeds }) {
+  const fails = [];
+  const second = founding.filter((f) => f.cities[0]);
+  if (second.length < seeds) fails.push(`only ${second.length}/${seeds} seeds found a 2nd city`);
+  const m2 = median(second.map((f) => f.cities[0].minutes));
+  if (!(m2 >= 15 && m2 <= 25)) fails.push(`2nd city after ${m2.toFixed(1)} minutes (median), want 15-25`);
+  const held = founding.map((f) => 1 + f.cities.filter((c) => c.minutes <= EMBER_MINUTES).length);
+  const ok = held.filter((h) => h >= 2 && h <= 3).length;
+  if (ok < seeds * 0.8) fails.push(`${ok}/${seeds} seeds hold 2-3 cities at ${EMBER_MINUTES} minutes, want 80%`);
+  for (const g of governors) {
+    if (g.cold > 0) fails.push(`seed ${g.seed}: a ${g.focus} city's hearth was cold for ${g.cold} ticks`);
+  }
+  if (!governors.length) fails.push('no governed city');
+  return fails;
+}
+
 const median = (a) => {
   if (!a.length) return null;
   const s = a.slice().sort((x, y) => x - y);
@@ -492,9 +774,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const fire = simulateFire({ seeds });
   console.log(`\nThe fire network, ${seeds} seeds, normal difficulty: six beacon lines from the capital\n`);
   console.log(fireTable(fire));
+  const cities = simulateCities({ seeds });
+  console.log(`\nCities, ${seeds} seeds, normal difficulty, ember tiers at the top (F4 B4 H4)\n`);
+  console.log(citiesTable(cities));
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire));
+    const fails = check(run).concat(checkFire(fire), checkCities(cities));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);
