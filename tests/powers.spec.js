@@ -284,6 +284,27 @@ test('the shafts are dark without a beacon at the gate: the storm fails, losses 
   expect(errors3).toEqual([]);
 });
 
+test('the garrison is unseen until "smoke in the hills" marks it, even on land the prologue walked', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const r = await page.evaluate(() => {
+    const gen = World.hex.gen, site = gen.sites[gen.garrison], m = World.hex.map;
+    site.hexes.forEach((h) => { World.hex.mask[h[0]][h[1]] = true; }); // as if walked in the prologue
+    const look = () => ({
+      glyphs: site.hexes.map((h) => World.hexGlyph(h[0], h[1], m)[0]),
+      label: World.hexLabel(site.anchor[0], site.anchor[1], { map: m, mask: World.hex.mask }),
+    });
+    const before = look();
+    $SM.set('game.network.story.smoke', 'look');
+    Network.markGarrison();
+    return { before, after: look(), danger: World.dangerAt(site.anchor[0], site.anchor[1]), at: site.anchor, cap: gen.capital };
+  });
+  expect(r.before.glyphs).not.toContain('Π');
+  expect(r.before.label).not.toContain('complex');
+  expect(r.after.glyphs.every((g) => g === 'Π')).toBe(true);
+  expect(r.after.label).toBe('the&nbsp;garrison&nbsp;of&nbsp;the&nbsp;deep&nbsp;mines');
+  expect(errors).toEqual([]);
+});
+
 test('a v2.7 save loads as v2.8: the powers start empty, its hex map kept (not re-projected), the garrison picked where it now stands', async ({ page }) => {
   const save = await gateSave(page);
   // as a v2.7 save: generator 1, the garrison's old anchor stored, no powers
