@@ -71,9 +71,9 @@ Events.Flame = {
 						'leave': {
 							text: _('leave them be'),
 							onChoose: function () {
-								// they come back once, a while later, then stop asking
+								// they come back a while later; left be twice or more, after a longer while, every time
 								$SM.add('game.network.story.strangerAsked', 1);
-								$SM.set('game.network.story.strangerTicks', Network.STRANGER_WAIT);
+								$SM.set('game.network.story.strangerTicks', $SM.get('game.network.story.strangerAsked') >= 2 ? Network.STRANGER_RETURN : Network.STRANGER_WAIT);
 							},
 							nextScene: { 1: 'left' }
 						}

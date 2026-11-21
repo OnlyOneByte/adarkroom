@@ -32,6 +32,7 @@ var Network = {
 	PITS_GLYPH: 'o',
 	// provisional (flame era, design/text/flame-build.md)
 	STRANGER_WAIT: 30,   // fire ticks (5 min) from the old chimney to the stranger, and to the stranger's second ask
+	STRANGER_RETURN: 180, // fire ticks (30 min): left be twice or more, the stranger comes back after this, every time
 	CODA_WAIT: 30,       // fire ticks from the burning pits to the coda
 	SECOND_TIER: 64,     // people in a city: its second population tier (H7)
 	BAND2: 4,            // the danger where band 2 starts (Danger.BAND_SIZE * 2): the garrison's hills
@@ -1226,7 +1227,7 @@ var Network = {
 	flameStory: function () {
 		var st = $SM.get('game.network.story') || {};
 		if (st['the charcoal stranger'] && !st.oldChimney && Network.has('H4')) return Events.Flame.oldChimney();
-		if (st.oldChimney && !st.strangerSat && (st.strangerAsked || 0) < 2 && !(st.strangerTicks > 0)) return Events.Flame.stranger();
+		if (st.oldChimney && !st.strangerSat && !(st.strangerTicks > 0)) return Events.Flame.stranger();
 		if (st.pitsFound && !st.charcoalWay) return Events.Flame.burningPits();
 		if (Network._smoke && !st.smoke) return Events.Flame.smoke();
 		return null;

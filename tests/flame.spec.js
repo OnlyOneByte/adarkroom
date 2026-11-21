@@ -235,14 +235,26 @@ test('the charcoal stranger: the old chimney (H5), the stranger, the old pits on
   expect(errors).toEqual([]);
 });
 
-test('the stranger left be twice stops asking; the old pits cleared by force give more charcoal', async ({ page }) => {
+test('the stranger left be twice comes back after 30 minutes, every time; the old pits cleared by force give more charcoal', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(['H5']) });
-  const r = await page.evaluate(() => {
+  await page.evaluate(() => {
     secondCity();
-    $SM.setM('game.network.story', { 'the charcoal stranger': 'city2', oldChimney: 'new', strangerAsked: 2, strangerTicks: 0 });
-    return Network.flameStory();
+    $SM.setM('game.network.story', { 'the charcoal stranger': 'city2', oldChimney: 'new', strangerAsked: 1, strangerTicks: 0 });
+    Network._nextAsk = 0;
+    Network.checkStory();
   });
-  expect(r).toBeNull();
+  await choose(page, 'leave them be');
+  await choose(page, 'go back');
+  await closed(page);
+  const r = await page.evaluate(() => {
+    const out = { ticks: $SM.get('game.network.story.strangerTicks'), asked: $SM.get('game.network.story.strangerAsked') };
+    for (let i = 0; i < 179; i++) Network.flameTick();
+    out.early = !!Network.flameStory();
+    Network.flameTick();
+    out.back = Network.flameStory() && Network.flameStory().title;
+    return out;
+  });
+  expect(r).toEqual({ ticks: 180, asked: 2, early: false, back: 'A Stranger in the Ruins' });
   const scene = await page.evaluate(() => {
     const s = Events.Flame.pits().scenes;
     return { fight: s.fight.combat, enemy: s.fight.enemyName, cleared: s.cleared.loot.charcoal, took: s.took.loot.charcoal };
