@@ -8,10 +8,11 @@
  *
  *   cities    city-states held, the capital included, at least MIN_GAP hexes apart
  *   beacons   beacons raised, each Fire.HOP from a hearth or beacon, only where the fuel's fire reaches
- * Every hex is seen, every ember tier is in, each city has up to 14 districts with their buildings
- * filled, its citizens housed and at work, and a town hearth burning a stand-in late fuel.
+ *   era       'ember' (default) or 'flame': which eras' tiers are in
+ * Every hex is seen, every tier of the era is in, each city has up to 14 districts with their buildings
+ * filled, its citizens housed and at work, and a hearth burning a stand-in late fuel.
  */
-export function synth({ cities: nCities = 64, beacons: nBeacons = 500, seed = 7 } = {}) {
+export function synth({ cities: nCities = 64, beacons: nBeacons = 500, seed = 7, era = 'ember' } = {}) {
   let a = seed >>> 0;
   const rand = () => {
     a = (a + 0x6D2B79F5) | 0;
@@ -33,12 +34,12 @@ export function synth({ cities: nCities = 64, beacons: nBeacons = 500, seed = 7 
   // the whole map seen
   for (let x = 0; x < cols; x++) for (let y = 0; y < rows; y++) mask[x][y] = true;
 
-  // every ember tier and every story beat behind them
+  // every tier of the era and every story beat behind them
   const tiers = {};
-  Fire.TIERS.forEach((t) => { if (t.n <= 4) tiers[t.id] = true; });
-  // shortcut: only the ember fuels have numbers yet, and tallow's line stops at danger 2.5 (a few
-  // per cent of the map). A late-game empire burns the old fire (F16), so it gets stand-in numbers
-  // here that reach every danger; drop this once the later fuels are in Fire.FUELS.
+  Fire.TIERS.forEach((t) => { if (t.n <= (era === 'flame' ? 8 : 4)) tiers[t.id] = true; });
+  // shortcut: only the ember and flame fuels have numbers yet, and their lines stop at danger 6 at
+  // most. A late-game empire burns the old fire (F16), so it gets stand-in numbers here that reach
+  // every danger; drop this once the later fuels are in Fire.FUELS.
   if (!Fire.FUELS['the old fire']) Fire.FUELS['the old fire'] = { tier: 'F16', fire: 4, burn: 2, cap: Danger.MAX };
   tiers.F16 = true;
   const FUEL = 'the old fire';
