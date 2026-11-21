@@ -11,6 +11,7 @@
  *                                    measurements under the DevTools profiler); prints the top functions
  *   options: --cities N --beacons N --seed N --json
  *            --flame   the flame era's tiers in too (roads, the bread oven and forge hearth, the marsh lantern)
+ *            --blaze   the blaze era's too (the heliograph's long hops, the boiler's hearth)
  * Exits 1 when a measurement is over its budget.
  *
  * Headless, the jQuery DOM calls go to a no-op stand-in, so the Node numbers are the game logic
@@ -333,7 +334,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const i = argv.indexOf('--' + name);
     return i >= 0 ? Number(argv[i + 1]) : dflt;
   };
-  const opts = { cities: arg('cities', 64), beacons: arg('beacons', 500), seed: arg('seed', 7), era: argv.includes('--flame') ? 'flame' : 'ember' };
+  const opts = { cities: arg('cities', 64), beacons: arg('beacons', 500), seed: arg('seed', 7), era: argv.includes('--blaze') ? 'blaze' : argv.includes('--flame') ? 'flame' : 'ember' };
   const profile = argv.includes('--profile') ? path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'bench-prof-')), 'bench.cpuprofile') : null;
   const report = () => {
     const h = hotspots(profile);
