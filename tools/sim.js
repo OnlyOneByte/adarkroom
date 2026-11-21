@@ -19,6 +19,8 @@
  *
  * Then the armies (tools/sim-armies.js): a city-state taken by force, waited out, and a storm lost.
  *
+ * Then the powers (tools/sim-powers.js): the garrison of the deep mines stormed, starved, fed, and a storm lost.
+ *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
  * ember and flame tier of each ladder; it reports the land lit and how far out, by danger band
@@ -35,6 +37,7 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { simulateArmies, armiesTable, checkArmies } from './sim-armies.js';
+import { simulatePowers, powersTable, checkPowers } from './sim-powers.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -65,7 +68,7 @@ export function loadGame(rand) {
   vm.createContext(ctx);
   // the context's own Math, so the encounter tables' Math.random is the sim's seeded one
   vm.runInContext('Math.random = __rand;', Object.assign(ctx, { __rand: () => rand.next() }));
-  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js']) {
+  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js', 'script/powers.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext('World.setupLandmarks();', ctx);
@@ -1054,9 +1057,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const armies = simulateArmies({ seeds });
   console.log(`\nArmies and sieges, ${seeds} seeds, normal difficulty, a beacon line at the ember top (F4 B4 H4)\n`);
   console.log(armiesTable(armies));
+  const powers = simulatePowers({ seeds });
+  console.log(`\nThe powers, ${seeds} seeds: an army camped at the garrison of the deep mines\n`);
+  console.log(powersTable(powers));
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies));
+    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);

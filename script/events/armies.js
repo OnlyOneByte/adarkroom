@@ -8,21 +8,17 @@ Events.Armies = {
 
 	// invest, and the choices every few ticks (POWERS §4 "the siege camp")
 	camp: function (id) {
-		var A = Armies, a = A.byId(id), c = CityStates.byId(a.to);
-		var text = a.siege.ticks ? [A.status(a)] : [_('the army digs in below the walls.'), _("the soldiers eat in silence. the meat won't last the week.")];
-		return {
-			title: _('The Siege Camp'),
-			scenes: {
-				start: {
-					text: text,
-					buttons: {
-						'press': { text: _('press the walls'), onChoose: function () { A.stance(id, 'press'); }, nextScene: 'end' },
-						'wait': { text: _('wait them out'), onChoose: function () { A.stance(id, 'wait'); }, nextScene: 'end' },
-						'back': { text: _('fall back'), onChoose: function () { A.fallBack(id); }, nextScene: 'end' }
-					}
-				}
-			}
+		var A = Armies, a = A.byId(id);
+		var text = a.siege.ticks ? [A.status(a)] : a.power ? Events.Powers.invest(a) :
+			[_('the army digs in below the walls.'), _("the soldiers eat in silence. the meat won't last the week.")];
+		var buttons = {
+			'press': { text: _('press the walls'), onChoose: function () { A.stance(id, 'press'); }, nextScene: 'end' },
+			'wait': { text: _('wait them out'), onChoose: function () { A.stance(id, 'wait'); }, nextScene: 'end' },
+			'back': { text: _('fall back'), onChoose: function () { A.fallBack(id); }, nextScene: 'end' }
 		};
+		// a power's puzzle can add its own (Events.Powers.campButtons)
+		if (a.power) Events.Powers.campButtons(a, buttons);
+		return { title: _('The Siege Camp'), scenes: { start: { text: text, buttons: buttons } } };
 	},
 
 	// POWERS §4 "a sally in the night", resolved by numbers
@@ -74,7 +70,7 @@ Events.Armies = {
 		var A = Armies, a = A.byId(id), s = a.siege;
 		var left = Math.min(A.soldiers(a), A.routed(s.invested, s.garrison, s.garrisonMax));
 		return {
-			title: CityStates.byId(a.to).name,
+			title: A.target(a).name,
 			scenes: {
 				start: {
 					text: [_('the army breaks under the walls. it runs for the light.'), (left === 1 ? _('1 soldier comes away from the walls. the baggage stays where it fell.') : _('{0} soldiers come away from the walls. the baggage stays where it fell.', left))],

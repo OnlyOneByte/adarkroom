@@ -26,3 +26,9 @@ div#cityArmies #armyStatus {
 	clear: both;
 	padding-top: 4px;
 }
+
+/* a power's storm: the army beside the wanderer (script/powers.js) */
+#event #stormArmy {
+	color: #666;
+	margin-bottom: 8px;
+}

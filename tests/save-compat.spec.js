@@ -12,7 +12,7 @@ test('a v1.3 village save loads intact', async ({ page }) => {
 
   const state = await getState(page);
   // Engine.loadGame silently starts a new game on a bad save, so check the values.
-  expect(state.version).toBe(2.7); // migrated by $SM.updateOldState
+  expect(state.version).toBe(2.8); // migrated by $SM.updateOldState
   expect(state.features.location).toEqual(fixture.features.location);
   expect(state.game.buildings).toEqual(fixture.game.buildings);
   expect(state.game.population).toBe(fixture.game.population);
@@ -36,5 +36,28 @@ test('the loaded save keeps producing', async ({ page }) => {
   const state = await getState(page);
   expect(state.stores.fur).toBeGreaterThan(fixture.stores.fur);
   expect(state.stores.bait).toBeGreaterThan(fixture.stores.bait);
+  expect(errors).toEqual([]);
+});
+
+// A hex-map save from generator 1 (v2.3, the fire network); see fixtures/generate-v2.3-save.js.
+const hexSave = JSON.parse(fs.readFileSync(new URL('./fixtures/v2.3-fire.json', import.meta.url)));
+
+test('a generator-1 hex save loads as v2.8 without being re-projected: its map, mask and city kept, the garrison moved and unseen', async ({ page }) => {
+  const errors = await openGame(page, { save: hexSave });
+  const r = await page.evaluate(() => {
+    const gen = World.hex.gen, g = Network.garrison(), site = gen.sites[gen.garrison];
+    return {
+      version: $SM.get('version'), gen: $SM.get('game.world.hex.gen'), mask: $SM.get('game.world.hex.mask'),
+      delta: $SM.get('game.world.hex.delta'), capital: $SM.get('game.cities.capital.hex'),
+      garrison: g, at: site.anchor, hidden: site.hexes.every((h) => World.hexGlyph(h[0], h[1], World.hex.map)[0] !== 'Π'),
+    };
+  });
+  expect(r.version).toBe(2.8);
+  expect(r.gen).toBe(2);
+  expect(r.mask).toBe(hexSave.game.world.hex.mask);
+  expect(r.delta).toEqual(hexSave.game.world.hex.delta);
+  expect(r.capital).toEqual(hexSave.game.cities.capital.hex);
+  expect(r.garrison).toEqual(r.at);
+  expect(r.hidden).toBe(true); // not until "smoke in the hills" marks it
   expect(errors).toEqual([]);
 });

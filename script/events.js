@@ -155,6 +155,8 @@ var Events = {
 		}
 		$('<div>').addClass('clear').appendTo(healBtns);
 		Events.setHeal(healBtns);
+		// a power's storm adds the army's squads (script/powers.js)
+		if (scene.onCombat) scene.onCombat();
 		
 		// Set up the enemy attack timers
 		Events.startEnemyAttacks();
@@ -753,6 +755,8 @@ var Events = {
 			var attackFn = scene.ranged ? Events.animateRanged : Events.animateMelee;
 
 			attackFn($('#enemy'), dmg, Events.checkPlayerDeath);
+			// ... and their attack finds the army too
+			if (scene.onAttack) scene.onAttack();
 		}
 	},
 
