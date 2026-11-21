@@ -49,6 +49,7 @@ const pure = (page, o) => page.evaluate((o) => {
   const r = Fire.compute({
     cols: 80, rows: 20, danger: o.danger ? new Function('x', 'y', o.danger) : () => 0,
     hills: o.hills ? () => true : () => false, beacon: Fire.BEACONS[o.B || 'B4'],
+    open: o.open ? new Function('x', 'y', o.open) : undefined,
     hearths: o.hearths, beacons: o.beacons,
   });
   return { nodes: r.nodes.map((n) => Math.round(n.s * 100) / 100), lit: r.lit.reduce((a, b) => a + b, 0) };
@@ -516,6 +517,18 @@ test('QA Q5: with two fuels burned in a tick, the lines reach only as far as the
   expect(r.both.fuel).toBe('wood');
   expect(r.tallow.burn).toEqual({ tallow: 6 });
   expect(r.tallow.fuel).toBe('tallow');
+});
+
+// QA Q1 (provisional, pending user): a line can't jump ground it couldn't light, or cross water or mountains
+test('QA Q1: a line needs every hex between its two nodes under the fuel\'s cap and open dry ground', async ({ page }) => {
+  await openGame(page);
+  const o = { hearths: [{ at: [5, 10], out: 24, share: true, cap: 1 }], beacons: [[8, 10], [11, 10]] };
+  const clear = await pure(page, o);
+  const danger = await pure(page, { ...o, danger: 'return x === 10 ? 5 : 0' }); // between the two beacons
+  const water = await pure(page, { ...o, open: 'return x !== 7' }); // between the hearth and the first
+  expect(clear.nodes).toEqual([24, 16.8, 11.76]);
+  expect(danger.nodes).toEqual([24, 16.8, 0]);
+  expect(water.nodes).toEqual([24, 0, 0]);
 });
 
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {

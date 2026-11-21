@@ -235,6 +235,7 @@ var Network = {
 			cols: gen.cols, rows: gen.rows,
 			danger: World.baseDangerAt,
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
+			open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
 			hearths: cs.map(function (c) {
 				var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
 				return { at: c.city.hex, out: h.out || 0, share: Network.shares(c.id), cap: f ? f.cap : 0 };
