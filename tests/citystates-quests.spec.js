@@ -186,9 +186,10 @@ test('meet: the drifters move every 50 steps; "go on alone" keeps the quest; 20 
   // the black well is marked north of their camp: its ground, bold, and a hover line
   const well = await page.evaluate(() => {
     const w = $SM.get('game.citystates.well'), at = CityStates.byId(cs.id).at;
-    return { w, north: w[1] < at[1], seen: !!World.state.mask[w[0]][w[1]], glyph: World.hexGlyph(w[0], w[1]), label: World.hexLabel(w[0], w[1]) };
+    return { w, north: w[1] < at[1], land: !WorldGen.isWater(World.hex.gen.terrain[w[0]][w[1]]) && WorldGen.isPassable(World.hex.gen.terrain[w[0]][w[1]]), seen: !!World.state.mask[w[0]][w[1]], glyph: World.hexGlyph(w[0], w[1]), label: World.hexLabel(w[0], w[1]) };
   });
   expect(well.north).toBe(true);
+  expect(well.land).toBe(true);
   expect(well.seen).toBe(true);
   expect(well.glyph[1]).toBe(true);
   expect(well.label).toBe('a&nbsp;black&nbsp;stain&nbsp;on&nbsp;the&nbsp;ice.');

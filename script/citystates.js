@@ -1641,8 +1641,16 @@ var CityStates = {
 			if (n[1] < 0) break;
 			at = n;
 		}
-		var near = Fire.around(at[0], at[1], 3).filter(function (p) { return CS.freeLand(gen, p[0], p[1], taken); })
-			.sort(function (a, b) { return Fire.distance(a, at) - Fire.distance(b, at); })[0] || at;
+		// the open land nearest that spot and still north of the camp (the north edge can be sea), on the
+		// ice where it can be; failing that, the open land nearest it anywhere
+		var land = Fire.around(c.at[0], c.at[1], 2 * CS.QUEST.WELL).filter(function (p) {
+			return !(p[0] === c.at[0] && p[1] === c.at[1]) && CS.freeLand(gen, p[0], p[1], taken);
+		});
+		var byNear = function (a, b) {
+			return Fire.distance(a, at) - Fire.distance(b, at) ||
+				(gen.terrain[b[0]][b[1]] === WorldGen.TERRAIN.tundra) - (gen.terrain[a[0]][a[1]] === WorldGen.TERRAIN.tundra);
+		};
+		var near = land.filter(function (p) { return p[1] < c.at[1]; }).sort(byNear)[0] || land.sort(byNear)[0] || c.at.slice();
 		$SM.set('game.citystates.well', near.slice());
 		CS._well = near.slice();
 		var mask = World.state ? World.state.mask : World.hex.mask;
