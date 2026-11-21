@@ -70,18 +70,18 @@ async function flameTown(page, { tiers = EMBER } = {}) {
   return errors;
 }
 
-test('the flame era is wired: tiers 5-8 of every ladder have a beat and numbers; the blaze is not yet', async ({ page }) => {
+test('the flame era is wired: tiers 5-8 of every ladder have a beat and numbers (the blaze era: tests/blaze.spec.js)', async ({ page }) => {
   const errors = await openGame(page);
   const r = await page.evaluate(() => ({
-    tiers: Fire.TIERS.filter((t) => t.n >= 5).map((t) => ({ id: t.id, era: t.era, when: t.when })),
+    tiers: Fire.TIERS.filter((t) => t.n >= 5 && t.n <= 8).map((t) => ({ id: t.id, era: t.era, when: t.when })),
     fuels: Object.keys(Fire.FUELS).map((k) => Fire.FUELS[k].tier),
     beacons: Object.keys(Fire.BEACONS), hearths: Object.keys(Fire.HEARTHS),
     unknown: Fire.unlock('F9'),
   }));
-  for (const t of r.tiers) expect(!!t.when).toBe(t.era === 'flame');
-  expect(r.fuels).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']);
-  expect(r.beacons).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']);
-  expect(r.hearths).toEqual(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8']);
+  for (const t of r.tiers) expect(!!t.when && t.era === 'flame').toBe(true);
+  expect(r.fuels.slice(0, 8)).toEqual(['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8']);
+  expect(r.beacons.slice(0, 8)).toEqual(['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8']);
+  expect(r.hearths.slice(0, 8)).toEqual(['H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8']);
   expect(r.unknown).toBe(false); // only the beats Network.BEATS knows
   expect(errors).toEqual([]);
 });
@@ -498,7 +498,7 @@ test('coal: mines on a coal seam, and once the garrison is broken on the hills b
   expect(errors).toEqual([]);
 });
 
-test('a v2.3 save loads as v2.8 with the flame era in: no flame tier, no carts, no errors, the fire tick runs', async ({ page }) => {
+test('a v2.3 save loads as v2.9 with the flame era in: no flame tier, no carts, no errors, the fire tick runs', async ({ page }) => {
   const errors = await openGame(page, { save: load('v2.3-fire') });
   const r = await page.evaluate(() => {
     clearTimeout(Network._tickTimeout);
@@ -506,7 +506,7 @@ test('a v2.3 save loads as v2.8 with the flame era in: no flame tier, no carts, 
     return { flame: Object.keys(Network.tiers()).filter((id) => Fire.tier(id).era === 'flame'), lit: World.hex.fire.lit.reduce((a, b) => a + b, 0),
       version: $SM.get('version'), carts: $SM.get('game.network.carts') };
   });
-  expect(r.version).toBe(2.8);
+  expect(r.version).toBe(2.9);
   expect(r.carts).toEqual([]);
   expect(r.flame).toEqual([]);
   expect(r.lit).toBeGreaterThan(0);

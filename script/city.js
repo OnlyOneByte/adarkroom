@@ -119,6 +119,31 @@ var City = {
 			jobs: ['collier'],
 			cost: function () { return { 'wood': 200 }; }
 		},
+		// the blaze era
+		'coke ovens': {
+			name: _('coke ovens'),
+			district: 'forge',
+			maximum: 2,
+			needs: 'F9',
+			jobs: ['coker'],
+			cost: function () { return { 'wood': 200, 'iron': 20 }; }
+		},
+		'pitch boilers': {
+			name: _('pitch boilers'),
+			district: 'tar pits',
+			maximum: 2,
+			needs: 'F10',
+			jobs: ['pitch boiler'],
+			cost: function () { return { 'wood': 200 }; }
+		},
+		'try-works': {
+			name: _('try-works'),
+			district: 'harbour',
+			maximum: 1,
+			needs: 'F11',
+			jobs: ['tryer'],
+			cost: function () { return { 'wood': 250 }; }
+		},
 		'wall': {
 			name: _('wall'),
 			district: 'walls',
@@ -203,6 +228,31 @@ var City = {
 		'coal miner': {
 			name: _('coal miner'), district: 'mines', raw: true, needs: 'F8', delay: 10,
 			stores: { 'coal': 1 }
+		},
+		// the blaze era (provisional, design/text/blaze-build.md)
+		'coker': {
+			name: _('coker'), district: 'forge', needs: 'F9', delay: 20,
+			stores: { 'coal': -3, 'coke': 2 }
+		},
+		'tar gatherer': {
+			name: _('tar gatherer'), district: 'tar pits', raw: true, needs: 'F10', delay: 10,
+			stores: { 'tar': 2 }
+		},
+		'pitch boiler': {
+			name: _('pitch boiler'), district: 'tar pits', needs: 'F10', delay: 10,
+			stores: { 'tar': -2, 'wood': -1, 'pitch': 1 }
+		},
+		'whaler': {
+			name: _('whaler'), district: 'harbour', raw: true, needs: 'F11', delay: 10,
+			stores: { 'whale fat': 2 }
+		},
+		'tryer': {
+			name: _('tryer'), district: 'harbour', needs: 'F11', delay: 10,
+			stores: { 'whale fat': -1, 'whale oil': 1 }
+		},
+		'well-hand': {
+			name: _('well-hand'), district: 'old-world works', raw: true, needs: 'F12', delay: 10,
+			stores: { 'rock oil': 2 }
 		}
 	},
 
@@ -544,9 +594,9 @@ var City = {
 			for (var s in income.stores) per[s] = income.stores[s] * share * 10 / income.delay;
 			view.jobs[j] = { slots: City.jobSlots(cityId, j), stores: per };
 		}
-		var tiers = Network.tiers();
+		var tiers = Network.tiers(), H = Fire.HEARTHS[Network.hearthTier()];
 		for (var f in Fire.FUELS) {
-			if (tiers[Fire.FUELS[f].tier]) view.fuels[f] = Fire.FUELS[f].fire * Fire.FUELS[f].burn;
+			if (tiers[Fire.FUELS[f].tier]) view.fuels[f] = Fire.perUnit(H, f);
 		}
 		for (var k in view.fuels) view.stores[k] = $SM.get(City.storePath(cityId, k), true);
 		for (var b in City.Buildings) {
@@ -555,7 +605,7 @@ var City = {
 			for (var ck in cost) view.stores[ck] = $SM.get(City.storePath(cityId, ck), true);
 			view.builds.push({ key: b, cost: cost, have: $SM.get(City.path(cityId, 'buildings["' + b + '"]'), true) });
 		}
-		['meat', 'fur', 'oak', 'bait'].forEach(function (k) { view.stores[k] = $SM.get(City.storePath(cityId, k), true); });
+		['meat', 'fur', 'oak', 'bait', 'tar', 'whale fat'].forEach(function (k) { view.stores[k] = $SM.get(City.storePath(cityId, k), true); });
 		view.need = Network.hearthNeed(cityId);
 		view.cold = !(c.hearth && c.hearth.out > 0);
 		view.room = City.getMaxCitizens(cityId);
