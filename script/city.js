@@ -746,7 +746,7 @@ var City = {
 			box.remove();
 			return;
 		}
-		if (!box.length) box = $('<div>').attr({ id: 'cityStores', 'data-legend': _('stores') }).insertAfter('#town');
+		if (!box.length) box = $('<div>').attr('id', 'cityStores').appendTo('#town');
 		box.empty();
 		var stores = $SM.get(City.storesPath()) || {};
 		for (var k in stores) {

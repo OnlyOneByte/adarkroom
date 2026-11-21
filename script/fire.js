@@ -96,17 +96,18 @@ var Fire = {
 
 	/*
 	 * One fire tick of a hearth. need = fire wanted (its output plus the upkeep of the beacons
-	 * it fed last tick); stock = units of its fuel; stored = fire held over (H4 and up).
+	 * it fed last tick); stock = units of its fuel; stored = fire held over (H4 and up);
+	 * room = fire it may hold over, the tier's store by default (a small city's hearth holds less).
 	 * Returns { burn: units used, out: fire made, stored }.
 	 */
-	burn: function (hearthId, fuel, need, stock, stored) {
+	burn: function (hearthId, fuel, need, stock, stored, room) {
 		var h = Fire.HEARTHS[hearthId], f = fuel ? Fire.FUELS[fuel] : null;
-		var perUnit = f ? f.fire * f.burn : 0;
-		var want = need + Math.max(0, h.store - stored);
+		var perUnit = f ? f.fire * f.burn : 0, store = typeof room == 'number' ? room : h.store;
+		var want = need + Math.max(0, store - stored);
 		var burn = perUnit ? Math.min(stock, Math.ceil(want / perUnit)) : 0;
 		var fire = burn * perUnit + stored;
 		var used = Math.min(fire, need);
-		return { burn: burn, out: need > 0 ? h.out * used / need : 0, stored: Math.min(h.store, fire - used) };
+		return { burn: burn, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
 	},
 
 	// offset (odd rows shifted right) <-> cube coordinates

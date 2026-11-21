@@ -288,10 +288,15 @@ var Network = {
 
 	// the fire a city's hearth makes when it is fully fed
 	hearthOut: function (cityId) {
-		var out = Fire.HEARTHS[Network.hearthTier()].out;
-		if (cityId == City.CAPITAL) return out;
+		return Fire.HEARTHS[Network.hearthTier()].out * Network.hearthScale(cityId);
+	},
+
+	// how much of its tier's fire and store a city's hearth works with: all for the capital,
+	// for a founded city its people over Network.HEARTH_PEOPLE
+	hearthScale: function (cityId) {
+		if (cityId == City.CAPITAL) return 1;
 		var c = $SM.get('game.cities["' + cityId + '"]');
-		return out * Math.min(1, (c.population.citizens || 0) / Network.HEARTH_PEOPLE);
+		return Math.min(1, (c.population.citizens || 0) / Network.HEARTH_PEOPLE);
 	},
 
 	scheduleTick: function () {
@@ -308,7 +313,7 @@ var Network = {
 				var fuel = Fire.pickFuel(tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); });
 				var need = Network.hearthNeed(c.id);
 				var stock = fuel ? $SM.get(City.storePath(c.id, fuel), true) : 0;
-				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0);
+				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0, H.store * Network.hearthScale(c.id));
 				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn);
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
@@ -546,6 +551,7 @@ var Network = {
 		City.createCity(next.id, next.name, {
 			hex: f.at, districts: d, stores: s.stores, citizens: s.people, parent: s.from
 		});
+		$SM.fireUpdate('game.cities["' + next.id + '"]');
 		World.state.map[f.at[0]][f.at[1]] = World.TILE.VILLAGE; // a city of ours: home
 		Notifications.notify(World, f.site ? _('old walls, old hearths. the settlers clear the ash and move in.') :
 			_('the settlers stop. they light a fire from the one they carried.'));
@@ -615,6 +621,9 @@ var Network = {
 		$('<span>').addClass('landmark hexProbe').appendTo(map);
 		$('<div>').attr('id', 'landInfo').html('&nbsp;').appendTo(land);
 		$('<div>').attr('id', 'landActions').appendTo(land);
+		// the cities and their focus sit under the land, once there is more than one
+		$('<div>').addClass('clear').appendTo(land);
+		$('#citySwitch, #cityFocus').appendTo(land);
 		Network.cam = World.hexCentre(World.hex.gen.capital[0], World.hex.gen.capital[1]);
 
 		var start = null, dragged = false;
