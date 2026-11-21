@@ -458,7 +458,7 @@ test('BUG 6: no ember beacon on a lake', async ({ page }) => {
 
 // BUG 7: Network.hexNote names the capital's hex by its district, so the hover on home reads
 // "hearth quarter" instead of "the capital", on the trek map and in the land view.
-test.fixme('BUG 7: the capital\'s hex is still labelled the capital', async ({ page }) => {
+test('BUG 7: the capital\'s hex is still labelled the capital', async ({ page }) => {
   const errors = await town(page);
   const label = await page.evaluate(() => {
     const cap = World.hex.gen.capital;
