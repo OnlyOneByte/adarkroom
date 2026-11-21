@@ -482,12 +482,12 @@ test('the land view: a click picks a hex and offers what can go there; the map s
   await page.waitForFunction(() => !$('#locationSlider').is(':animated')); // the slide to the town
   await expect(page.locator('#fireStatus')).toHaveText('the town hearth burns tallow. fire 24. beacons lit: 2 of 2.');
   // click the hex east of the capital, in the middle of the view
-  const box = await page.locator('#landMap canvas').boundingBox();
   const target = await page.evaluate(() => {
     const cap = World.hex.gen.capital, p = World.hexCentre(cap[0] + 1, cap[1]), c = World.hexCentre(cap[0], cap[1]);
     return { dx: p[0] - c[0], dy: p[1] - c[1], hex: [cap[0] + 1, cap[1]] };
   });
-  await page.mouse.click(box.x + box.width / 2 + target.dx, box.y + box.height / 2 + target.dy);
+  // through the locator, which waits for the canvas to sit still and take the click
+  await page.locator('#landMap canvas').click({ position: { x: 230 + target.dx, y: 150 + target.dy } });
   expect(await page.evaluate(() => Network.selected)).toEqual(target.hex);
   await expect(page.locator('#landActions .button').first()).toBeVisible();
   // lit hexes are drawn: the view is not blank where the line is
