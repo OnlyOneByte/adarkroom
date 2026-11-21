@@ -504,6 +504,20 @@ test('QA Q9: fuel burns in fractions, so a hearth without a store wastes none', 
   expect(r.stored).toBe(0);
 });
 
+// QA Q5 (provisional, pending user): a line works at the lowest, so the weakest fuel burned sets the reach
+test('QA Q5: with two fuels burned in a tick, the lines reach only as far as the weaker one', async ({ page }) => {
+  await openGame(page);
+  const r = await page.evaluate(() => {
+    const t = { F1: true, F2: true, F3: true, F4: true };
+    const burn = (tallow) => Fire.burnAll('H4', t, (k) => ({ wood: 1000, tallow })[k] || 0, 24, 32);
+    return { both: burn(2), tallow: burn(100) };
+  });
+  expect(r.both.burn).toEqual({ tallow: 2, wood: 16 });
+  expect(r.both.fuel).toBe('wood');
+  expect(r.tallow.burn).toEqual({ tallow: 6 });
+  expect(r.tallow.fuel).toBe('tallow');
+});
+
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {
   const errors = await town(page);
   const before = await page.evaluate(() => {

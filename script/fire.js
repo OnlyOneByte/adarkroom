@@ -91,7 +91,7 @@ var Fire = {
 	 * room = fire it may hold over, the tier's store by default (a small city's hearth holds less).
 	 * Units burn in fractions, like every other store, so no fire is wasted.
 	 * Returns { burn: { fuel: units used }, fuel: the fuel whose reach its lines get (the
-	 * strongest burned), out: fire made, stored }.
+	 * weakest burned: a line works at the lowest), out: fire made, stored }.
 	 */
 	burnAll: function (hearthId, unlocked, have, need, stored, room) {
 		var h = Fire.HEARTHS[hearthId], store = typeof room == 'number' ? room : h.store;
@@ -103,7 +103,7 @@ var Fire = {
 				var f = Fire.FUELS[k], per = f.fire * f.burn, n = Math.min(have(k), (want - made) / per);
 				burn[k] = n;
 				made += n * per;
-				if (!fuel) fuel = k;
+				fuel = k; // strongest first, so the last one burned is the weakest
 			});
 		var fire = made + stored, used = Math.min(fire, need);
 		return { burn: burn, fuel: fuel, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
