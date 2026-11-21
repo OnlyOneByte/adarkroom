@@ -57,11 +57,12 @@ export async function freshToTown(page, { beforeTown } = {}) {
   await page.locator('#lightButton').click();
   await page.evaluate(() => {
     clearTimeout(Events._eventTimeout); // no random events mid-test
+    // the same world every run: set before the compass is stored, which opens the path and makes the world
+    WorldGen.newSeed = () => 4242;
     Room.unlockForest();
     $SM.set('game.builder.level', 4);
     $SM.set('game.temperature', Room.TempEnum.Hot);
     $SM.setM('stores', { wood: 100000, fur: 10000, meat: 10000, 'cured meat': 50, compass: 1, waterskin: 1 });
-    WorldGen.newSeed = () => 4242; // the same world every run
     if (!Path.tab) Path.init();
     // pack cured meat the way the player does, through the outfitting buttons, as much as fits
     window.packMeat = () => {

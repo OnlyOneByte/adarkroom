@@ -151,15 +151,19 @@ test('on the hex map danger picks the encounter tier, its strength, the fight ch
   const errors = await onHexTrek(page);
   const r = await page.evaluate(() => {
     const g = World.hex.gen, T = World.TILE;
-    // a field hex at each kind of danger
+    // a field hex at each kind of danger (the first-tier fights want a field). Some worlds have
+    // no field at low danger, only barrens and forest round home, so a plain hex is made one.
     const find = (lo, hi) => {
+      let plain = null;
       for (let x = 1; x < g.cols - 1; x++) for (let y = 1; y < g.rows - 1; y++) {
-        if (g.reachable[x + y * g.cols] && World.state.map[x][y] === WorldGen.TERRAIN.field) {
-          const d = World.dangerAt(x, y);
-          if (d >= lo && d < hi) return [x, y];
-        }
+        if (!g.reachable[x + y * g.cols] || World.siteAt(x, y)) continue;
+        const d = World.dangerAt(x, y);
+        if (d < lo || d >= hi) continue;
+        if (World.state.map[x][y] === WorldGen.TERRAIN.field) return [x, y];
+        if (!plain && World.state.map[x][y] === WorldGen.TERRAIN.barrens) plain = [x, y];
       }
-      return null;
+      if (plain) World.state.map[plain[0]][plain[1]] = WorldGen.TERRAIN.field;
+      return plain;
     };
     const tierAt = (pos) => {
       World.curPos = pos;
