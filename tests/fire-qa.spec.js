@@ -378,7 +378,7 @@ test('BUG 1: a trickle of a strong fuel does not starve a hearth with plenty of 
 
 // BUG 2: running on its stored fire (fuel just ran out) the hearth records fuel: null, so its reach
 // cap drops to 0 and the whole network goes dark while the hearth still makes full fire.
-test.fixme('BUG 2: a hearth burning its store keeps its lines lit through a short fuel gap', async ({ page }) => {
+test('BUG 2: a hearth burning its store keeps its lines lit through a short fuel gap', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     $SM.setM('stores', { wood: 0, tallow: 1000, 'dry wood': 0, 'seasoned oak': 0 });
