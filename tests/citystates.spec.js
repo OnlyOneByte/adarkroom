@@ -122,14 +122,14 @@ test('a city-state is won by influence from a fresh save: a beacon line to the h
     // run the ticks until the stranger comes (25)
     let ticks = 1;
     while (!Events.activeEvent() && ticks < 2000) { tick(); ticks++; }
-    return { c, lined, first: st.inf, G, S, touched: CityStates.touched(c), met: st.met, ticks, inf: CityStates.state(c.id).inf,
+    return { c, lined, first: st.inf, G, S, rate: CityStates.RATE, settlers: City.SETTLERS.stores, touched: CityStates.touched(c), met: st.met, ticks, inf: CityStates.state(c.id).inf,
       title: Events.activeEvent() && Events.activeEvent().title, label: World.hexLabel(c.at[0], c.at[1], { map: World.hex.map, mask: World.hex.mask }) };
   });
   expect(r.lined).toBe(true);
   expect(r.touched).toBe(true);
   expect(r.met).toBe(true);
-  // 1.0 × G × T / S a minute, a sixth of it a 10 s tick; touched counts double
-  expect(r.first).toBeCloseTo(r.G * 1.5 / r.S / 6, 5);
+  // RATE × G × T / S a minute, a sixth of it a 10 s tick; touched counts double
+  expect(r.first).toBeCloseTo(r.rate * r.G * 1.5 / r.S / 6, 5);
   expect(r.title).toBe('A Stranger at the Hearth');
   expect(r.inf).toBeGreaterThanOrEqual(25);
   expect(r.label).toContain(r.c.name);
@@ -148,6 +148,13 @@ test('a city-state is won by influence from a fresh save: a beacon line to the h
   await row.click();
   await expect(page.locator('#cityStates')).toContainText('they want leather, tools, cloth.');
   await page.locator('#cityStates').screenshot({ path: 'test-results/citystates-panel.png' });
+  // the page grows with the town panel: room under the city-states for the menu fixed at the bottom
+  await page.waitForTimeout(100);
+  const room = await page.evaluate(() => {
+    const cs = $('#cityStates'), c = $('div#content');
+    return c.offset().top + c.outerHeight() - (cs.offset().top + cs.outerHeight());
+  });
+  expect(room).toBeGreaterThanOrEqual(40);
 
   const j = await page.evaluate(() => {
     const c = herders;
@@ -166,6 +173,8 @@ test('a city-state is won by influence from a fresh save: a beacon line to the h
   expect(types).toContain('hunting grounds');
   expect(j.city).toMatchObject({ name: r.c.name, focus: 'farming', population: { citizens: 16 }, hex: r.c.at });
   expect(j.tile).toBe('A');
+  // it starts with what settlers would have carried (pending user), so its hearth burns
+  expect(j.city.stores).toEqual(r.settlers);
   expect(j.status).toBe("they're yours.");
   expect(j.land).toBeNull();
   expect(j.notes).toContain('carry their coals to the line');
@@ -173,7 +182,8 @@ test('a city-state is won by influence from a fresh save: a beacon line to the h
   // from the line to 100 took (25 / rate) + the rest, in 10 s ticks
   expect(r.ticks + j.ticks).toBeLessThan(2000);
   // it is a city of ours now: in the switcher, burning on the next tick
-  await page.evaluate(() => tick(2));
+  const hearth = await page.evaluate((id) => { tick(2); return $SM.get('game.cities["' + id + '"].hearth.out'); }, j.id);
+  expect(hearth).toBeGreaterThan(0);
   await expect(page.locator(`#city_switch_${j.id}`)).toHaveCount(1);
   await page.screenshot({ path: 'test-results/citystates-joined.png' });
   expect(errors).toEqual([]);
