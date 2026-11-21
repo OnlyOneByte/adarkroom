@@ -675,7 +675,7 @@ test('lights off and on again with the land view open repaints it without errors
 // BUG 9: Network.tick writes each city's hearth with two $SM.set calls (and a third for its fuel),
 // each a full stateUpdate round, so with the 50 cities DESIGN.md "Scale" plans one fire tick takes
 // 200-300 ms, a visible hitch every 10 s (latent until Phase 3b founds cities).
-test.fixme('BUG 9: one fire tick with 50 cities stays inside 50 ms', async ({ page }) => {
+test('BUG 9: one fire tick with 50 cities stays inside 50 ms', async ({ page }) => {
   const errors = await town(page);
   const ms = await page.evaluate(() => {
     $SM.setM('stores', { wood: 1e6 });
