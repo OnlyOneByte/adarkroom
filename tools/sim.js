@@ -652,7 +652,7 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
   };
   const scale = () => Math.min(1, city.citizens / 32); // Network.HEARTH_PEOPLE
   // Network.hearthOut: from the bread oven, the fire grows with the people
-  const outScale = () => (H.grow ? Math.min(H.grow, city.citizens / 32) : scale());
+  const outScale = () => F.foundedOut(H, city.citizens, 32) / H.out; // Network.hearthOut
   const share = (j) => {
     const inc = C._INCOME[j], fn = inc.raw ? Di.TYPES[inc.district].jobs[j] : null;
     let total = 0, weight = 0;
@@ -779,7 +779,7 @@ export function citiesTable({ founding, governors, seeds }) {
 
 // The guards CI holds the cities to (CITY.md: an ember-era empire holds 2-3 small cities): every
 // seed founds a 2nd city, 15-25 minutes after the town opens (median); most seeds hold 2-3 cities when
-// the ember era ends; no focused city's hearth goes cold in two hours.
+// the ember era ends; no focused city's hearth goes cold in two hours; a flame-era fire city reaches 20 people.
 export function checkCities({ founding, governors, seeds }) {
   const fails = [];
   const second = founding.filter((f) => f.cities[0]);
@@ -793,6 +793,10 @@ export function checkCities({ founding, governors, seeds }) {
     if (g.cold > 0) fails.push(`seed ${g.seed}: a ${g.focus} city's hearth was cold for ${g.cold} ticks`);
   }
   if (!governors.length) fails.push('no governed city');
+  // a flame-era fire city grows: its big hearth doesn't eat the wood its houses need (Fire.foundedOut)
+  const flame = governors.filter((g) => g.focus.startsWith('fire (flame'));
+  const fp = flame.length ? median(flame.map((g) => g.citizens)) : 0;
+  if (!(fp >= 20)) fails.push(`the flame-era fire city has ${fp} people after 2 h (median), want 20 or more`);
   return fails;
 }
 

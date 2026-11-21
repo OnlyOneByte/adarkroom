@@ -363,9 +363,8 @@ var Network = {
 	// the city's people, past the tier's own fire, up to H.grow times it
 	hearthOut: function (cityId) {
 		var H = Fire.HEARTHS[Network.hearthTier()];
-		if (!H.grow) return H.out * Network.hearthScale(cityId);
-		var s = Math.min(H.grow, Network.people(cityId) / Network.HEARTH_PEOPLE);
-		return H.out * (cityId == City.CAPITAL ? Math.max(1, s) : s);
+		if (cityId == City.CAPITAL) return H.out * (H.grow ? Math.max(1, Math.min(H.grow, Network.people(cityId) / Network.HEARTH_PEOPLE)) : 1);
+		return Fire.foundedOut(H, Network.people(cityId), Network.HEARTH_PEOPLE);
 	},
 
 	// the fire a city's hearth can hold over; a kiln of stone holds half (flame-draft H6)
