@@ -269,3 +269,34 @@ test('a v2.4 save with a hex map loads (as v2.9) and gets its city-states around
   expect(r.onCity).toBe(0);
   expect(errors).toEqual([]);
 });
+
+test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joining); gifts raise the floor they fade to', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const c = await page.evaluate(() => {
+    const c = CityStates.list().find((x) => x.t === 'bog_cutters');
+    window.bog = c;
+    $SM.set('game.citystates.cs["' + c.id + '"].met', true);
+    $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true); // their stranger came already
+    $SM.set('game.network.tiers.F5', true);
+    // a pack of leather left at their gate: 1/3 a piece at band 2, past 50
+    CityStates.give(c, { leather: 200 });
+    CityStates.playQueued();
+    return c;
+  });
+  await expect(page.locator('#event')).toContainText('says peat burns low and long');
+  await choose(page, 'learn the cutting');
+  await page.waitForFunction(() => !Events.activeEvent() || Events.activeEvent().title === 'The Bog Cutters');
+  await page.evaluate(() => CityStates.playQueued());
+  await expect(page.locator('#event')).toContainText('cuts the black earth into squares');
+  await choose(page, 'cut it their way');
+  const r = await page.evaluate(() => {
+    const st = CityStates.state(bog.id), before = st.inf;
+    tick(6 * 60); // an hour out of the glow
+    return { beat: $SM.get('game.citystates.beats.F6'), way: $SM.get('game.citystates.beats.F6way'), F6: Network.has('F6'), B8: Network.has('B8'),
+      floor: st.floor, before, after: CityStates.state(bog.id).inf, joined: !!CityStates.state(bog.id).city };
+  });
+  expect(r).toMatchObject({ beat: c.id, way: 'their way', F6: true, B8: false, floor: 50, joined: false });
+  expect(r.before).toBeGreaterThanOrEqual(50);
+  expect(r.after).toBe(50); // faded to the 50 the gift passed, not to 0
+  expect(errors).toEqual([]);
+});

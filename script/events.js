@@ -555,6 +555,8 @@ var Events = {
 			}
 
 			attackFn($('#wanderer'), dmg, function() {
+				// the event closed under the swing (the wanderer fell, the fight ended): nothing left to hit
+				if (!Events.activeEvent() || !Events.activeEvent().scenes[Events.activeScene]) return;
 				const enemy = $('#enemy');
 				const enemyHp = enemy.data('hp');
 				const scene = Events.activeEvent().scenes[Events.activeScene];
