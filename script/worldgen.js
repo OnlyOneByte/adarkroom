@@ -511,6 +511,7 @@ var WorldGen = {
 		// 8. The garrison of the deep mines (POWERS §2, the first power): the complex nearest home moves to the
 		// old wasteland's edge, where a charcoal line can reach it, on its own rng (nothing else moves)
 		out.garrison = G._garrison(out);
+		out.wardens = typeof Wardens != 'undefined' ? Wardens.place(out) : -1; // the pass wardens' pass (script/powers/wardens.js)
 		return out;
 	},
 

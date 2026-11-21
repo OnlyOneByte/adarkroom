@@ -84,7 +84,7 @@ var Danger = {
 		gen.sites.forEach(function (s) {
 			var v = Danger.SPIKE[s.kind];
 			// the garrison of the deep mines is old-world, but low-tech (POWERS §3: danger 2-4): no spike
-			if (!v || s.garrison) return;
+			if (!v || s.garrison || s.wardens) return; // (nor the pass wardens': POWERS §3 danger 4-5)
 			s.hexes.forEach(function (h) {
 				var k = h[0] + h[1] * cols;
 				spike[k] = src[k] = v;

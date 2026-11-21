@@ -32,7 +32,7 @@ function survey(seeds) {
     // a crater's hexes against the ring they sit in
     // against the same world without its sites, below the top of the scale where there's room to stand out
     const flat = Danger.field({ ...g, sites: [] });
-    const spike = g.sites.filter((s) => (s.kind === 'crater' || s.kind === 'complex') && !s.garrison).flatMap((s) => s.hexes)
+    const spike = g.sites.filter((s) => (s.kind === 'crater' || s.kind === 'complex') && !s.garrison && !s.wardens).flatMap((s) => s.hexes)
       .filter((h) => flat[h[0] + h[1] * C] < 7.5).map((h) => f[h[0] + h[1] * C] - flat[h[0] + h[1] * C]);
     const ringMean = (h) => { const r = ring[Math.floor(WorldGen.distance(h, g.capital) / 10)]; return r[0] / r[1]; };
     const pocket = g.pockets.map((p) => f[p[0] + p[1] * C] - ringMean(p));

@@ -116,11 +116,11 @@ test('the garrison of the deep mines broken by force from a save at its gate: ad
   await p2.locator('#power_march_garrison').click();
   const a0 = await p2.evaluate(() => JSON.parse(JSON.stringify(Armies.list()[0])));
   expect(a0.power).toBe('garrison');
-  for (let i = 0; i < 200 && (await p2.evaluate(() => Armies.list()[0].state)) === 'march'; i++) await p2.evaluate(() => tick());
+  for (let i = 0; i < 200 && (await p2.evaluate(() => Armies.list()[0].state)) === 'march'; i++) await p2.evaluate(() => quiet(() => tick()));
   expect(await p2.evaluate(() => Armies.list()[0] && Armies.list()[0].state)).toBe('siege');
 
   // the camp: the puzzle told; they are fed through the adits, so the army waits them out in vain
-  await p2.evaluate(() => CityStates.playQueued());
+  await p2.evaluate(() => Events.startEvent(Events.Armies.camp(Armies.list()[0].id)));
   await expect(p2.locator('#event')).toContainText('three adits feed the stockade');
   await choose(p2, 'wait them out');
   await p2.waitForFunction(() => !Events.activeEvent());

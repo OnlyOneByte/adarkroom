@@ -38,6 +38,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { simulateArmies, armiesTable, checkArmies } from './sim-armies.js';
 import { simulatePowers, powersTable, checkPowers } from './sim-powers.js';
+import { wardensRun } from './sim-power-wardens.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -71,6 +72,7 @@ export function loadGame(rand) {
   for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js', 'script/powers.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'script/powers/wardens.js'), 'utf8'), ctx, { filename: 'script/powers/wardens.js' }); // power #3: its pass moves a complex
   vm.runInContext('World.setupLandmarks();', ctx);
   return { ctx, store };
 }
@@ -1146,6 +1148,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const powers = simulatePowers({ seeds });
   console.log(`\nThe powers, ${seeds} seeds: an army camped at the garrison of the deep mines\n`);
   console.log(powersTable(powers));
+  wardensRun({ seeds, ci }); // power #3, the pass wardens: its table, and in CI its checks (exit code 1 on a failure)
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
     const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers));
