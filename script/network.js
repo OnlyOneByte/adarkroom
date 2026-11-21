@@ -21,8 +21,6 @@
 var Network = {
 	CAIRN_GLYPH: '|',
 	DISTRICT_COST: { wood: 50 }, // provisional
-	// founding a city (CITY.md, provisional): people from the parent city, and their supplies
-	SETTLERS: { people: 8, stores: { 'wood': 40, 'cured meat': 20 } },
 	// provisional: a founded city's hearth wants its full fire only once it has this many people
 	HEARTH_PEOPLE: 32,
 	// provisional: old districts a resettled fallen city starts with, by the site's size in hexes
@@ -314,13 +312,15 @@ var Network = {
 				var need = Network.hearthNeed(c.id);
 				var stock = fuel ? $SM.get(City.storePath(c.id, fuel), true) : 0;
 				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0, H.store * Network.hearthScale(c.id));
-				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn);
+				// quiet writes for the founded cities, one update for them all below (perf: ticks grow with cities)
+				var quiet = c.id != City.CAPITAL;
+				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn, quiet);
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
 				if (Network.shares(c.id)) out = r.out;
 				$SM.set(City.path(c.id, 'hearth'), {
 					fuel: out > 0 ? fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
-				});
+				}, true);
 			});
 			Network.refresh();
 			if (World.hex && World.hex.fire) {
@@ -331,8 +331,8 @@ var Network = {
 					$SM.set(City.path(c.id, 'hearth.fed'), Network.shares(c.id) ? fed : 0, true);
 				});
 			}
-			City.updateIncome();
 			Network.cities().forEach(function (c) { if (c.city.focus) City.govern(c.id); });
+			$SM.fireUpdate('game.cities', true); // the town panel and every city's income, once
 			Network.checkStory();
 		}
 		Network.scheduleTick();
@@ -431,7 +431,7 @@ var Network = {
 
 	/*
 	 * Founding (DESIGN.md "Founding cities"): only on lit land, two steps: light the way, then
-	 * settle. Settlers leave a city with Network.SETTLERS and trek to the site with the wanderer;
+	 * settle. Settlers leave a city with City.SETTLERS and trek to the site with the wanderer;
 	 * on arrival the city is made. A fallen city that is lit can be resettled instead: it starts
 	 * with some of its old districts, and may have a story.
 	 */
@@ -459,8 +459,8 @@ var Network = {
 	cantSend: function (cityId) {
 		var s = Network.settlers(), pack = $SM.get('game.world.pack');
 		if (s || (pack && pack.settlers)) return _('settlers are already on their way');
-		if (City.people(cityId) < Network.SETTLERS.people) return _('not enough people');
-		var st = Network.SETTLERS.stores;
+		if (City.people(cityId) < City.SETTLERS.people) return _('not enough people');
+		var st = City.SETTLERS.stores;
 		for (var k in st) {
 			if ($SM.get(City.storePath(cityId, k), true) < st[k]) return _('not enough ' + k);
 		}
@@ -473,11 +473,11 @@ var Network = {
 			if (why) Notifications.notify(City, why);
 			return false;
 		}
-		Network.pay(cityId, Network.SETTLERS.stores);
-		City.removePeople(cityId, Network.SETTLERS.people);
+		Network.pay(cityId, City.SETTLERS.stores);
+		City.removePeople(cityId, City.SETTLERS.people);
 		$SM.set('game.network.settlers', {
-			from: cityId, to: f.at, people: Network.SETTLERS.people,
-			stores: $.extend({}, Network.SETTLERS.stores), resettle: !!f.site, out: false
+			from: cityId, to: f.at, people: City.SETTLERS.people,
+			stores: $.extend({}, City.SETTLERS.stores), resettle: !!f.site, out: false
 		});
 		Notifications.notify(null, _('eight settlers wait at the edge of town, packs on their backs.'));
 		Network.draw();
@@ -739,7 +739,7 @@ var Network = {
 		});
 		var f = Network.foundingSite(h[0], h[1]);
 		if (f && !Network.settlers()) {
-			var cost = $.extend({ 'settlers': Network.SETTLERS.people }, Network.SETTLERS.stores);
+			var cost = $.extend({ 'settlers': City.SETTLERS.people }, City.SETTLERS.stores);
 			new Button.Button({
 				id: 'land_found', text: f.site ? _('resettle') : _('found a town'), width: '80px', cost: cost,
 				click: function () { Network.sendSettlers(cityId, h[0], h[1]); Network.updateActions(); }

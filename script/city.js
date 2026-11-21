@@ -38,6 +38,13 @@ var City = {
 		idle: _('{0} has hands and no work.')
 	},
 
+	/*
+	 * Founding a city: people from the parent city, and their supplies (the new city's first stores).
+	 * provisional: CITY.md's 40 wood + 20 cured meat made founding almost free; these are tuned with
+	 * the simulator (npm run sim) so the ember era holds 2-3 cities, the 2nd ~20 minutes in.
+	 */
+	SETTLERS: { people: 8, stores: { 'wood': 600, 'cured meat': 300 } },
+
 	_STORES_OFFSET: 0,
 	_POP_DELAY: [0.5, 3],
 	_UNLOCK_HUTS: 20,
@@ -447,7 +454,8 @@ var City = {
 		return City.buildIn(City.activeCity, $(buildBtn).attr('buildThing'));
 	},
 
-	// builds one of a thing in a city, paid from its stores; quiet: no notifications (its governor)
+	// builds one of a thing in a city, paid from its stores; quiet (its governor): no notifications
+	// and no state events, the caller fires one
 	buildIn: function (cityId, thing, quiet) {
 		var building = City.Buildings[thing];
 		var count = City.path(cityId, 'buildings["' + thing + '"]');
@@ -463,9 +471,9 @@ var City = {
 			}
 			storeMod[k] = have - cost[k];
 		}
-		$SM.setM(City.storesPath(cityId), storeMod);
+		$SM.setM(City.storesPath(cityId), storeMod, quiet);
 		if (building.buildMsg && !quiet) Notifications.notify(City, building.buildMsg);
-		$SM.add(count, 1);
+		$SM.add(count, 1, quiet);
 		if (!quiet) AudioEngine.playSound(AudioLibrary.BUILD);
 		return true;
 	},
@@ -516,13 +524,15 @@ var City = {
 			Notifications.notify(null, _(City.NOTICES[n], City.callName(cityId), _(fuel)));
 		});
 		$SM.set(City.path(cityId, 'notices'), now, true);
-		$SM.fireUpdate('game.cities["' + cityId + '"]');
 	},
 
 	setFocus: function (cityId, focus) {
 		$SM.set(City.path(cityId, 'focus'), focus || null);
 		$SM.set(City.path(cityId, 'notices'), {});
-		if (focus) City.govern(cityId);
+		if (focus) {
+			City.govern(cityId);
+			$SM.fireUpdate('game.cities["' + cityId + '"]', true);
+		}
 	},
 
 	// Opens the worker rows of every building a city has built, and of the raw jobs its land holds.

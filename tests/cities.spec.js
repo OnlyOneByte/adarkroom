@@ -16,7 +16,7 @@ async function townToFound(page) {
     ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].forEach((id) => { t[id] = true; });
     $SM.set('game.network.tiers', t);
     $SM.setM('game.network.story', { stoneHearth: true, brazier: true, firstBrazier: true, trekHome: true, cairnTold: true, cairnDone: true });
-    $SM.setM('stores', { tallow: 1000, 'cured meat': 200 });
+    $SM.setM('stores', { tallow: 1000, 'cured meat': 2000 });
     $SM.set('game.population', 80);
     window.burnTick = () => Network.tick();
     burnTick();
@@ -77,13 +77,13 @@ test('settlers found a city on lit land: the cost, the trek, the new hearth', as
   expect(r.sent).toBe(true);
   expect(r.again).toBe('settlers are already on their way');
   expect(r.waiting.people).toBe(r.before.people - 8);
-  expect(r.waiting.wood).toBe(r.before.wood - 40);
-  expect(r.waiting.meat).toBe(r.before.meat - 20);
+  expect(r.waiting.wood).toBe(r.before.wood - 600);
+  expect(r.waiting.meat).toBe(r.before.meat - 300);
   expect(r.waiting.s).toMatchObject({ from: 'capital', to: r.at, people: 8, resettle: false, out: false });
   expect(r.out).toBe(true);
   // the city, its hearth quarter on the site, the settlers' supplies as its stores
   expect(r.c).toMatchObject({ name: 'second town', focus: null, population: { citizens: 8 }, parent: 'capital',
-    stores: { wood: 40, 'cured meat': 20 }, hex: r.at, districts: { [r.at.join(',')]: 'hearth quarter' } });
+    stores: { wood: 600, 'cured meat': 300 }, hex: r.at, districts: { [r.at.join(',')]: 'hearth quarter' } });
   // it is ours: home, and the trek ended there
   expect(r.tile).toBe('A');
   expect(r.home).toBe(true);
@@ -110,7 +110,7 @@ test('settlers lost on a trek wait by the dropped pack; the corpse run brings ba
     return { at, pack, lost, label };
   });
   expect(r.lost).toBeNull();
-  expect(r.pack.settlers).toMatchObject({ from: 'capital', people: 8, stores: { wood: 40, 'cured meat': 20 } });
+  expect(r.pack.settlers).toMatchObject({ from: 'capital', people: 8, stores: { wood: 600, 'cured meat': 300 } });
   expect(r.label).toContain('settlers&nbsp;8');
   // home again after the death's fade, then the corpse run
   await page.waitForFunction(() => Engine.activeModule === Room && !World.dead || !Engine.keyLock, null, { timeout: 10000 });
@@ -125,9 +125,9 @@ test('settlers lost on a trek wait by the dropped pack; the corpse run brings ba
     stepOnto(at);
     return { back, c: $SM.get('game.cities.city2') };
   }, r.at);
-  expect(r2.back).toMatchObject({ people: 4, stores: { wood: 20, 'cured meat': 10 }, out: true });
+  expect(r2.back).toMatchObject({ people: 4, stores: { wood: 300, 'cured meat': 150 }, out: true });
   expect(r2.c.population.citizens).toBe(4);
-  expect(r2.c.stores).toEqual({ wood: 20, 'cured meat': 10 });
+  expect(r2.c.stores).toEqual({ wood: 300, 'cured meat': 150 });
   expect(errors).toEqual([]);
 });
 
@@ -145,7 +145,7 @@ test('settlers home without reaching the site wait for the next trek; called off
   });
   expect(r.waiting.out).toBe(false);
   expect(r.people).toBe(r.before.people + 8);
-  expect(r.wood).toBe(r.before.wood + 40);
+  expect(r.wood).toBe(r.before.wood + 600);
   expect(r.left).toBeNull();
   expect(errors).toEqual([]);
 });
@@ -166,7 +166,7 @@ test('a site gone dark while the settlers walk: they will not stay, and go home 
   expect(r.city).toBeNull();
   expect(r.settlers).toBeNull();
   expect(r.people).toBe(r.before.people + 8);
-  expect(r.wood).toBe(r.before.wood + 40);
+  expect(r.wood).toBe(r.before.wood + 600);
   expect(errors).toEqual([]);
 });
 
@@ -216,7 +216,7 @@ test('the town panel switches between cities: each shows its own people, stores 
   await expect(page.locator('#cityStores')).toHaveCount(0); // the capital keeps the village's stockpile
   await page.locator('#city_switch_city2').click();
   await expect(page.locator('#citizens')).toHaveText('citizens 8/0');
-  await expect(page.locator('#city_store_wood .row_val')).toHaveText('40');
+  await expect(page.locator('#city_store_wood .row_val')).toHaveText('600');
   await expect(page.locator('#city_workers_row_gatherer')).toBeVisible();
   // a building paid from this city's stores: the woodshed (100 wood)
   const r = await page.evaluate(() => {

@@ -437,20 +437,23 @@ export function checkFire({ rows, cut }) {
  *
  * Founding: from the town's opening with the ember tiers at their top (F4 B4 H4), a bot picks the
  * nearest place it can found (a fallen city's old centre, or open land 6-10 hexes from every city),
- * raises beacons toward it until it is lit, pays the settlers and walks them there. The capital's
- * village is not simulated: it pays in at CAPITAL_INCOME a fire tick (provisional, a village of
- * 80 at the town's opening), and its hearth burns tallow, so beacons and settlers cost only wood
- * and cured meat. A trek step takes STEP_SECONDS.
+ * raises beacons toward it until it is lit, pays the settlers (City.SETTLERS) and walks them there.
+ * The capital's village is not simulated: it pays in at CAPITAL_INCOME a fire tick, and its hearth
+ * burns tallow, so beacons and settlers cost only wood and cured meat. A trek step takes
+ * STEP_SECONDS. 'Cities held' counts what stands EMBER_MINUTES after the town's opening.
  *
  * Governors: each founded 2nd city is played for two hours of fire ticks under each focus with the
  * game's own jobs (script/city.js), districts (script/districts.js), hearth (script/fire.js) and
  * governor (script/governor.js); the bot gives it the districts its ground fits (woods, hunting
  * grounds, huts), and people come to its houses as they do in the game.
  */
-const CAPITAL_INCOME = { wood: 20, 'cured meat': 2 }; // provisional
+// provisional: a village of 80 at the town's opening, about 20 gatherers, 20 hunters (10 meat a tick)
+// and the 2 charcutiers that meat keeps busy (5 meat each for 1 cured meat); the rest on other work
+const CAPITAL_INCOME = { wood: 20, 'cured meat': 2 };
 const CAPITAL_START = { wood: 500, 'cured meat': 50 }; // provisional: what is left after the 20 huts
 const STEP_SECONDS = 1;
 const GOVERN_TICKS = 720; // two hours of 10 s fire ticks
+const EMBER_MINUTES = 60; // provisional: how long after the town's opening the ember era lasts, for 'cities held'
 
 function loadCities(rand) {
   const { ctx, store } = loadGame(rand);
@@ -474,7 +477,8 @@ function groundOf(ctx, gen, at, city) {
 }
 
 function foundCities(ctx, gen, field, home, max) {
-  const { Fire: F, WorldGen: G, Danger: D, District: Di } = ctx;
+  const { Fire: F, WorldGen: G, Danger: D, District: Di, City: C } = ctx;
+  const cost = C.SETTLERS.stores;
   const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
   const H = F.HEARTHS.H4, cap = gen.capital, cols = gen.cols;
   const net = { cols, rows: gen.rows, danger, hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
@@ -530,9 +534,9 @@ function foundCities(ctx, gen, field, home, max) {
       if (r.nodes[r.nodes.length - 1].s < F.LIT_MIN) { net.beacons.pop(); r = F.compute(net); ok = false; break; } // past the fuel's reach
     }
     if (!ok) { bad.add(pick.at.join(',')); continue; }
-    wait(40, 20);
-    wood -= 40;
-    meat -= 20;
+    wait(cost.wood, cost['cured meat']);
+    wood -= cost.wood;
+    meat -= cost['cured meat'];
     const steps = home.dist[pick.at[0] + pick.at[1] * cols];
     t += steps * STEP_SECONDS;
     const districts = { [pick.at.join(',')]: Di.HEARTH };
@@ -551,7 +555,7 @@ function governCity(ctx, store, gen, at, focus, rand) {
     const p = Di.neighbours(at).find((q) => !districts[q.join(',')] && Di.TYPES[type].fits(groundOf(ctx, gen, q, districts)));
     if (p) districts[p.join(',')] = type;
   }
-  const city = { citizens: 8, stores: { wood: 40, 'cured meat': 20 }, buildings: {}, workers: {}, hearth: { out: 0, stored: 0 } };
+  const city = { citizens: C.SETTLERS.people, stores: { ...C.SETTLERS.stores }, buildings: {}, workers: {}, hearth: { out: 0, stored: 0 } };
   const tiers = {};
   ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].forEach((k) => { tiers[k] = true; });
   const H = F.HEARTHS.H4;
@@ -671,6 +675,11 @@ export function citiesTable({ founding, governors, seeds }) {
     const m = c.map((x) => x.minutes);
     lines.push(`| ${['2nd', '3rd', '4th', '5th'][n]} | ${c.length}/${seeds} | ${c.length ? med(m).toFixed(1) + ' / ' + Math.max(...m).toFixed(1) : '-'} | ${med(c.map((x) => x.beacons)) ?? '-'} | ${med(c.map((x) => x.steps)) ?? '-'} | ${c.filter((x) => x.site).length}/${c.length} |`);
   }
+  const held = founding.map((f) => 1 + f.cities.filter((c) => c.minutes <= EMBER_MINUTES).length);
+  const count = (n) => held.filter((h) => h === n).length;
+  lines.push('');
+  lines.push(`cities held ${EMBER_MINUTES} minutes after the town opens (the capital included): median ${median(held)}; ` +
+    [1, 2, 3, 4, 5, 6].map((n) => `${n}: ${count(n)}`).join(', ') + ` seeds`);
   lines.push('');
   lines.push(`| focus (2nd city, ${GOVERN_TICKS / 360} h) | cities | ticks with a cold hearth | lowest fuel held (fire, median) | buildings built (median) | people at the end (median) |`);
   lines.push('|---|---|---|---|---|---|');
@@ -682,16 +691,18 @@ export function citiesTable({ founding, governors, seeds }) {
   return lines.join('\n');
 }
 
-// The guards CI holds the cities to: every seed founds a 2nd city and most a 3rd, in ember-era
-// time, and no focused city's hearth goes cold in two hours.
+// The guards CI holds the cities to (CITY.md: an ember-era empire holds 2-3 small cities): every
+// seed founds a 2nd city, 15-25 minutes after the town opens (median); most seeds hold 2-3 cities when
+// the ember era ends; no focused city's hearth goes cold in two hours.
 export function checkCities({ founding, governors, seeds }) {
   const fails = [];
-  const second = founding.filter((f) => f.cities[0]), third = founding.filter((f) => f.cities[1]);
+  const second = founding.filter((f) => f.cities[0]);
   if (second.length < seeds) fails.push(`only ${second.length}/${seeds} seeds found a 2nd city`);
-  if (third.length < seeds * 0.8) fails.push(`only ${third.length}/${seeds} seeds found a 3rd city`);
-  const m2 = median(second.map((f) => f.cities[0].minutes)), m3 = median(third.map((f) => f.cities[1].minutes));
-  if (!(m2 <= 30)) fails.push(`2nd city after ${m2} minutes (median), want by 30`);
-  if (!(m3 <= 60)) fails.push(`3rd city after ${m3} minutes (median), want by 60`);
+  const m2 = median(second.map((f) => f.cities[0].minutes));
+  if (!(m2 >= 15 && m2 <= 25)) fails.push(`2nd city after ${m2.toFixed(1)} minutes (median), want 15-25`);
+  const held = founding.map((f) => 1 + f.cities.filter((c) => c.minutes <= EMBER_MINUTES).length);
+  const ok = held.filter((h) => h >= 2 && h <= 3).length;
+  if (ok < seeds * 0.8) fails.push(`${ok}/${seeds} seeds hold 2-3 cities at ${EMBER_MINUTES} minutes, want 80%`);
   for (const g of governors) {
     if (g.cold > 0) fails.push(`seed ${g.seed}: a ${g.focus} city's hearth was cold for ${g.cold} ticks`);
   }
