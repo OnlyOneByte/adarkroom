@@ -356,7 +356,7 @@ test('perf: 300 beacons compute, tick and draw inside the frame budget', async (
 
 // BUG 1: Fire.pickFuel takes the strongest fuel with any stock and burns only that, so a trickle
 // of dry wood (one drier) or tallow (one renderer) starves a hearth sitting on a big woodpile.
-test.fixme('BUG 1: a trickle of a strong fuel does not starve a hearth with plenty of wood', async ({ page }) => {
+test('BUG 1: a trickle of a strong fuel does not starve a hearth with plenty of wood', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
     $SM.setM('stores', { wood: 10000, 'dry wood': 0, tallow: 0, 'seasoned oak': 0 });

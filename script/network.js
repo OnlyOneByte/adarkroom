@@ -308,18 +308,19 @@ var Network = {
 			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers();
 			Network.cities().forEach(function (c) {
 				var h = c.city.hearth || {};
-				var fuel = Fire.pickFuel(tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); });
 				var need = Network.hearthNeed(c.id);
-				var stock = fuel ? $SM.get(City.storePath(c.id, fuel), true) : 0;
-				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0, H.store * Network.hearthScale(c.id));
+				var r = Fire.burnAll(hid, tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); },
+					need, h.stored || 0, H.store * Network.hearthScale(c.id));
 				// quiet writes for the founded cities, one update for them all below (perf: ticks grow with cities)
 				var quiet = c.id != City.CAPITAL;
-				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn, quiet);
+				for (var k in r.burn) {
+					if (r.burn[k]) $SM.add(City.storePath(c.id, k), -r.burn[k], quiet);
+				}
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
 				if (Network.shares(c.id)) out = r.out;
 				$SM.set(City.path(c.id, 'hearth'), {
-					fuel: out > 0 ? fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
+					fuel: out > 0 ? r.fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
 				}, true);
 			});
 			Network.refresh();
