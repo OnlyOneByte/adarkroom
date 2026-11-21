@@ -109,7 +109,7 @@ var Network = {
 		B6: _('a road between two cities. lamps along it, one after another. goods can move now.'),
 		B7: _('a bridge across the water. a light on either bank.'),
 		H7: _('the city is big enough to need bread. the oven is never let go cold.'),
-		H8: _('coke burns clean and hot. the forge hearth roars.')
+		H8: _('coal burns clean and hot. the forge hearth roars.')
 	},
 
 	init: function () {
