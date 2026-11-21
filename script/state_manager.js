@@ -371,6 +371,12 @@ var StateManager = {
 			$SM.set('version', 2.5);
 			version = 2.5;
 		}
+		if(version == 2.5) {
+			// v2.6 has armies and sieges (game.armies): it starts empty on load
+			Engine.log('upgraded save to v2.6');
+			$SM.set('version', 2.6);
+			version = 2.6;
+		}
 	},
 
 	/******************************************************************

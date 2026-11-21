@@ -1088,7 +1088,8 @@ var CityStates = {
 		var text = Events.CityStates.TEXT[c.t] || {};
 		if (text.flavour && text.flavour[100]) Notifications.notify(null, text.flavour[100]);
 		if (text.join) Notifications.notify(null, text.join);
-		CS.beat(c);
+		// taken by force (script/armies.js): a story one's beat waits for its craftsmen to come home
+		if (how !== 'force') CS.beat(c);
 		Engine.event('progress', 'city-state joined');
 		$SM.fireUpdate('game.cities["' + next.id + '"]');
 		Network.refresh();
@@ -1341,6 +1342,8 @@ var CityStates = {
 			Button.setDisabled(b, !!why);
 			if (why) $('<div>').addClass('csLine').text(why).appendTo(box);
 		}
+		// force (script/armies.js)
+		if (typeof Armies != 'undefined' && Armies._ready) Armies.actions(c, box);
 		$('<div>').addClass('clear').appendTo(box);
 		return box;
 	},
@@ -1749,6 +1752,12 @@ var CityStates = {
 
 	// they join at the end of the quest's scene, with the beat's extras
 	questJoin: function (c) {
+		CityStates.extras(c);
+		return CityStates.join(c, 'quest');
+	},
+
+	// what a quest city-state's beat brings besides its tier (also when its craftsmen come home, Phase 5)
+	extras: function (c) {
 		var CS = CityStates;
 		if (c.t === 'resin_tappers') $SM.set('game.citystates.beats["jungle jobs"]', c.id);
 		if (c.t === 'drifters') {
@@ -1756,7 +1765,6 @@ var CityStates = {
 			CS.markWell(c);
 		}
 		if (c.t === 'archive_clerks') CS.oldMaps(c);
-		return CS.join(c, 'quest');
 	},
 
 	// the clerks' old maps: the old works and the craters far around show on the map

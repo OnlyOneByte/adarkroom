@@ -305,11 +305,11 @@ test('ember chains in a founded city pay into its own stores', async ({ page }) 
   expect(errors).toEqual([]);
 });
 
-test('a v2.3 save loads as v2.5: every city gets its notices, the town still works', async ({ page }) => {
+test('a v2.3 save loads as v2.6: every city gets its notices, the town still works', async ({ page }) => {
   const save = load('v2.3-fire');
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.5);
+  expect(s.version).toBe(2.6);
   expect(s.game.cities.capital.notices).toEqual({});
   expect(s.game.cities.capital.districts).toEqual(save.game.cities.capital.districts);
   expect(s.game.network.tiers).toEqual(save.game.network.tiers);
