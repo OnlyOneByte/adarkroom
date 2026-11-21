@@ -40,7 +40,7 @@ var Fire = {
 		'seasoned oak': { tier: 'F3', fire: 2,   burn: 1, cap: 2 },
 		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 }
 	},
-	// beacon: the share of fire kept per hop; hills: a beacon on hills loses nothing (one hop more).
+	// beacon: the share of fire kept per hop; hills: a beacon on hills carries one hop further.
 	// hops is CITY.md's table, how far a line from a stone hearth (16) carries: it isn't a cap,
 	// it falls out of keep and Fire.RELAY_MIN, so a stronger hearth carries further.
 	BEACONS: {
@@ -196,12 +196,14 @@ var Fire = {
 				adj[q[0]].forEach(function (b) {
 					if (b < H) return; // a hearth doesn't relay another's line
 					var at = nodes[b].at;
-					var s = q[1] * (B.hills && net.hills(at[0], at[1]) ? 1 : B.keep);
+					var s = q[1] * B.keep;
 					if (s < Fire.LIT_MIN || best[b] >= s) return;
 					if (net.danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
 					best[b] = s;
 					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
-					if (s >= Fire.RELAY_MIN) queue.push([b, s]);
+					// a beacon on hills (where its tier can use them) carries one hop further
+					var relay = B.hills && net.hills(at[0], at[1]) ? Fire.RELAY_MIN * B.keep : Fire.RELAY_MIN;
+					if (s >= relay) queue.push([b, s]);
 				});
 			}
 			return { best: best, links: links };
