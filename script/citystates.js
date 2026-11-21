@@ -1081,8 +1081,8 @@ var CityStates = {
 		if (World.state) World.state.map[c.at[0]][c.at[1]] = World.TILE.VILLAGE;
 		else World.saveHex(World.worldFlags());
 		CS.index();
-		Notifications.notify(null, CS.fill(CS.story(c.t) ? _('{name} carry their coals to the line. they\'re part of the empire now.') :
-			_('the people of {name} carry their coals to the line. they\'re part of the empire now.'), c));
+		// fixes C19: every name in the pool is a place, so the joining line names its people
+		Notifications.notify(null, CS.fill(_('the people of {name} carry their coals to the line. they\'re part of the empire now.'), c));
 		var text = Events.CityStates.TEXT[c.t] || {};
 		if (text.flavour && text.flavour[100]) Notifications.notify(null, text.flavour[100]);
 		if (text.join) Notifications.notify(null, text.join);
