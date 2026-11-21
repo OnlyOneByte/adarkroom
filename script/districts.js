@@ -12,7 +12,8 @@
  *   name     display name
  *   glyph    what the district shows on the hex map
  *   fits(g)  g = { terrain: key, at, terrainAt(x, y), site: bool, city: { 'x,y': type }, capital: bool,
- *            coal: bool (a coal seam under it), spent: 0-1 (how worn a bog cut dug deep is) };
+ *            coal: bool (a coal seam under it), spent: 0-1 (how worn a bog cut dug deep is),
+ *            well: bool (the black well) };
  *            true if the type can go on that hex
  *   holds    City.Buildings keys this type holds (CITY.md)
  *   jobs     { job: slots(g) } raw jobs a hex of this type opens, from its ground
@@ -131,27 +132,44 @@ var District = {
 		// shortcut: only coal is mined here for now; iron and sulphur stay the village's mines until a tier needs them
 		jobs: { 'coal miner': function (g) { return g.coal ? 4 : 0; } }
 	};
-	T['forge'] = { name: _('forge'), glyph: 'g', fits: on('hills', 'barrens'), holds: [], jobs: {}, stub: true };
+	// the blaze era: forge and harbour open with coal (F8: the bloomery's and the boats' beats need them; coke
+	// ovens F9, whaling F11), tar pits (F10), old-world works (F12)
+	T['forge'] = {
+		name: _('forge'), glyph: 'g', fits: on('hills', 'barrens'), holds: ['coke ovens'], jobs: {}, needs: 'F8',
+		// next to the hearth: more fire (CITY.md: +fire and +steel; shortcut: steel stays the village's steelworks)
+		bonus: [{ next: 'hearth quarter', job: '*', add: 0.25 }]
+	};
 	T['trading post'] = { name: _('trading post'), glyph: 'p', fits: any, holds: [], jobs: {}, stub: true };
+	var water = function (g) {
+		return District.neighbours(g.at).filter(function (p) {
+			var t = g.terrainAt(p[0], p[1]);
+			return t === 'lake' || t === 'ocean';
+		}).length;
+	};
 	T['harbour'] = {
-		name: _('harbour'), glyph: 'r', holds: [], jobs: {}, stub: true,
-		fits: function (g) {
-			return any(g) && District.neighbours(g.at).some(function (p) {
-				var t = g.terrainAt(p[0], p[1]);
-				return t === 'lake' || t === 'ocean';
-			});
-		}
+		name: _('harbour'), glyph: 'r', holds: ['try-works'], needs: 'F8',
+		// provisional: a whaler's boat to every two sides on the water, at least one
+		jobs: { 'whaler': function (g) { var n = water(g); return n ? Math.max(1, Math.floor(n / 2)) : 0; } },
+		fits: function (g) { return any(g) && water(g) > 0; }
 	};
 	T['tar pits'] = {
-		name: _('tar pits'), glyph: 'k', holds: [], jobs: {}, stub: true,
+		name: _('tar pits'), glyph: 'k', holds: ['pitch boilers'], needs: 'F10',
+		jobs: { 'tar gatherer': function () { return 4; } },
 		fits: function (g) {
 			return g.terrain === 'desert' || (any(g) && District.neighbours(g.at).some(function (p) {
 				return g.terrainAt(p[0], p[1]) === 'wastes';
 			}));
-		}
+		},
+		// fumes: tar pits beside huts work slower
+		bonus: [{ next: 'huts', job: '*', add: -0.2 }]
 	};
 	// shortcut: every new district is on the city's edge when placed, so walls fit any land for now
 	T['walls'] = { name: _('walls'), glyph: '#', fits: any, holds: ['wall'], jobs: {} };
 	T['workshop'] = { name: _('workshop'), glyph: 'o', fits: any, holds: [], jobs: {}, stub: true };
-	T['old-world works'] = { name: _('old-world works'), glyph: 'x', fits: function (g) { return g.site; }, holds: [], jobs: {}, stub: true };
+	// shortcut: only the black well for now; the refinery, cell-works and engine hall come with the old fire
+	T['old-world works'] = {
+		name: _('old-world works'), glyph: 'x', holds: [], needs: 'F12',
+		fits: function (g) { return !!g.well; },
+		jobs: { 'well-hand': function (g) { return g.well ? 4 : 0; } }
+	};
 })();

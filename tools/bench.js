@@ -103,7 +103,7 @@ var Button = { Button: function () { return __dom; }, setDisabled: function () {
 var Space = {}, AudioEngine = { playSound: function () {} }, AudioLibrary = {};
 var Events = { activeEvent: function () { return null; }, startEvent: function () {}, Story: {} };
 `;
-const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'events/flame', 'citystates', 'events/citystates', 'armies', 'events/armies', 'powers', 'events/powers'];
+const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'events/flame', 'events/blaze', 'citystates', 'events/citystates', 'armies', 'events/armies', 'powers', 'events/powers'];
 
 // Loads the game's scripts as globals of this process, as the page does. (Not a vm context: every
 // global lookup there goes through the context's interceptor, some 250x slower, which would swamp

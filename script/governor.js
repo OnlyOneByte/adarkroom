@@ -26,17 +26,18 @@ var Governor = {
 	// what each focus works and builds, in order; military is a stub until armies (Phase 5)
 	JOBS: {
 		fire: ['woodcutter', 'gatherer', 'drier', 'oak cutter', 'seasoner', 'hunter', 'renderer',
-			'collier', 'peat cutter', 'resin tapper', 'coal miner'],
+			'collier', 'peat cutter', 'resin tapper', 'coal miner', 'well-hand', 'coker', 'tar gatherer', 'pitch boiler',
+			'whaler', 'tryer'],
 		farming: ['hunter', 'charcutier', 'trapper', 'woodcutter', 'gatherer'],
-		industry: ['hunter', 'tanner', 'charcutier', 'coal miner', 'woodcutter', 'gatherer', 'labourer'],
+		industry: ['hunter', 'tanner', 'charcutier', 'coal miner', 'coker', 'woodcutter', 'gatherer', 'labourer'],
 		trade: ['trapper', 'hunter', 'tanner', 'woodcutter', 'gatherer'],
 		military: []
 	},
 	BUILDS: {
 		// [key, n]: only while the city has fewer than n of it. A first house, then the fuel buildings, then houses again
-		fire: ['woodshed', ['house', 1], 'charcoal pits', 'tallow vats', 'house'],
+		fire: ['woodshed', ['house', 1], 'charcoal pits', 'tallow vats', 'coke ovens', 'pitch boilers', 'try-works', 'house'],
 		farming: ['house', 'smokehouse'],
-		industry: ['tannery', 'smokehouse', 'house'],
+		industry: ['tannery', 'smokehouse', 'coke ovens', 'house'],
 		trade: ['house', 'tannery'],
 		military: ['wall']
 	},
