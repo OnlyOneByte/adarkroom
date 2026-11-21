@@ -601,6 +601,15 @@ var CityStates = {
 		// a reload mid-trek wakes at home: an envoy out with the wanderer is home again
 		var e = CityStates.envoy();
 		if (e && e.out) $SM.set('game.citystates.envoy.out', false, true);
+		// and a quest under way on that trek is where it was before it set out
+		var all = (CityStates.get() || {}).cs || {};
+		for (var id in all) {
+			var q = all[id].q;
+			if (!q) continue;
+			if (q.party === 'with') q.party = 'waiting';
+			if (typeof q.walked == 'number') q.walked = null;
+			if (all[id].fetched && !all[id].quest) all[id].fetched = false;
+		}
 		CityStates.onHexMap();
 		CityStates.scheduleTick();
 	},
@@ -685,6 +694,7 @@ var CityStates = {
 		});
 		CityStates._land = land;
 		CityStates._byId = by;
+		CityStates._quests = null;
 	},
 
 	// the city-state whose land a hex is (still their own), or null
@@ -698,6 +708,8 @@ var CityStates = {
 
 	// what a hex of theirs shows: [glyph, bold], or null
 	glyphAt: function (x, y) {
+		// a quest's marked hex: its ground, bold
+		if (CityStates.questHere(x, y)) return [World.hex.gen.terrain[x][y], true];
 		var c = CityStates.landAt(x, y);
 		if (!c) return null;
 		if (c.at[0] === x && c.at[1] === y) return [CityStates.GLYPH, true];
@@ -713,6 +725,8 @@ var CityStates = {
 	label: function (x, y) {
 		var e = CityStates.envoy();
 		if (e && e.fell && e.fell[0] === x && e.fell[1] === y) return CityStates.nb(_('an envoy, waiting.'));
+		var q = CityStates.questLabel(x, y);
+		if (q) return q;
 		var c = CityStates.landAt(x, y);
 		if (!c) return null;
 		if (c.at[0] !== x || c.at[1] !== y) return CityStates.nb(CityStates.fill(_("{name}'s land."), c));
@@ -919,7 +933,7 @@ var CityStates = {
 	// the light quest: their hill (their own hex) lit for LIGHT_HOLD ticks, then influence opens
 	lightQuest: function (c, st, path, notes) {
 		var CS = CityStates, lit = !!World.hex.fire.lit[c.at[0] + c.at[1] * World.hex.gen.cols];
-		if (!(st.told && st.told.quest)) return;
+		if (!CS.talks(st)) return;
 		var place = _('the hill');
 		if (lit) {
 			var n = (st.lit || 0) + 1;
@@ -978,6 +992,8 @@ var CityStates = {
 	// at 25 (or from an envoy): their wants, price or task are known; barter opens at their gate
 	tell: function (c) {
 		$SM.set('game.citystates.cs["' + c.id + '"].told.talks', true);
+		// a quest's place is fixed and marked now
+		if (CityStates.questOf) CityStates.questOf(c);
 	},
 
 	/*
@@ -991,6 +1007,11 @@ var CityStates = {
 		if (CS.forceOnly(c.t)) return [_('they will not bend.')];
 		if (c.t === 'mirror_folk') return [CS.fill(_('the {goods} are left in the sun outside the town. no one touches them.'), c, { goods: list })];
 		if (c.t === 'ash_faithful' && !st.quest) return [_("they won't take anything until the hill burns.")];
+		// the clerks' page, carried in an envoy's pack
+		if (c.t === 'archive_clerks' && goods['knowledge fragment'] > 0 && CS.questOf(c) && !st.quest) {
+			CS.questDone(c);
+			return [];
+		}
 		// a price first: told at 25, paid in full, they join
 		var price = CS.tribute(c.t, c.band);
 		if (price && st.told && st.told[25] && CS.covers(goods, price)) {
@@ -1186,12 +1207,14 @@ var CityStates = {
 			e = CS.envoy();
 		}
 		CS.meet(World.state.mask, true);
+		if (CS.questStep(x, y)) return;
 		var c = CS.landAt(x, y);
 		if (c && e && e.out && e.to === c.id && c.at[0] === x && c.at[1] === y) Events.startEvent(Events.CityStates.gate(c));
 	},
 
 	// the wanderer falls: the envoy waits at the fall hex, like lost settlers; a second fall loses them
 	onDie: function () {
+		CityStates.questFail(true);
 		var e = CityStates.envoy();
 		if (!e || !e.out) return;
 		var c = CityStates.byId(e.to);
@@ -1205,6 +1228,7 @@ var CityStates = {
 	},
 
 	onHome: function () {
+		CityStates.questFail(false);
 		var e = CityStates.envoy();
 		if (e && e.out) $SM.set('game.citystates.envoy.out', false, true);
 		CityStates.playQueued();
@@ -1354,8 +1378,293 @@ var CityStates = {
 
 	handleStateUpdates: function (e) {
 		if (!e.stateName) return;
+		if (e.stateName.indexOf('game.citystates') === 0) CityStates._quests = null;
 		if (e.stateName.indexOf('game.citystates') === 0 || e.stateName.indexOf('game.cities') === 0 || e.category == 'stores') {
 			CityStates.updatePanel();
 		}
+	}
+});
+
+/*
+ * Quests (PHASE4 §3; content §1 quest_pool, §3.5, §3.8): find, clear, meet and fetch, the four story
+ * city-states that join on a quest (fixes C10, G14, C21). Each is told when talks open (25, or an
+ * envoy's report), and its place is fixed then and saved in the city-state's state, `q`:
+ *   find    { at, party: 'waiting' | 'with' }      a lost party on a marked hex, walked to their gate
+ *   clear   { at }                                  a fight one band hard on a marked hex near them
+ *   meet    { walked }                              walk QUEST.MEET_STEPS steps with the moving camp
+ *   fetch   { site, at }                            a knowledge fragment from a Π, carried to their gate
+ * A quest that fails stays open (pending user): the party waits again, the raiders stay, the camp moves
+ * on, the fragment lies in the dropped pack.
+ */
+(function (more) {
+	for (var k in more) CityStates[k] = more[k];
+})({
+	QUEST: {
+		// provisional (not in PHASE4): how far the find party and the clear fight are from the city-state
+		FIND: [4, 8], CLEAR: [2, 4],
+		FETCH: [6, 20],          // PHASE4 §3: fetch from a site 6-20 hexes off, at least a band above them
+		MEET_STEPS: 20,          // fixes C21
+		DRIFT_STEPS: 50,         // the drifters move a hex every 50 trek steps (content spawn.moves)
+		CHAIN: 'the black well', // the drifters start this chain (F12)
+		MAPS: 20                 // the clerks' old maps show the Π and Ø this far around
+	},
+
+	// the quest of a temperament, or null (the ash-faithful's light quest has its own rules)
+	questType: function (t) {
+		var q = CityStates.TEMPERAMENTS[t].quest_pool[0];
+		return q && q.type !== 'light' ? q : null;
+	},
+
+	/*
+	 * Where a quest is (pure, for the simulator too): gen, danger(x, y) at normal, c the city-state, list all
+	 * of them. Returns { at } or { site, at } (fetch), or null when the world has no such place.
+	 */
+	questSite: function (gen, danger, c, list) {
+		var CS = CityStates, G = WorldGen, q = CS.questType(c.t);
+		if (!q || q.type === 'meet') return null;
+		var cols = gen.cols, taken = {};
+		list.forEach(function (o) { o.land.forEach(function (h) { taken[h[0] + ',' + h[1]] = true; }); });
+		if (q.type === 'fetch') {
+			var band = function (s) { return Danger.band(danger(s.anchor[0], s.anchor[1])); };
+			var byDist = function (a, b) { return G.distance(a.anchor, c.at) - G.distance(b.anchor, c.at); };
+			var far = gen.sites.filter(function (s) {
+				var d = G.distance(s.anchor, c.at);
+				return s.kind === 'complex' && d >= CS.QUEST.FETCH[0] && d <= CS.QUEST.FETCH[1];
+			}).sort(byDist);
+			// a band above them if there is one; else the nearest in the window; else the nearest past 6
+			var s = far.filter(function (s) { return band(s) >= c.band + 1; })[0] || far[0] ||
+				gen.sites.filter(function (s) { return s.kind === 'complex' && G.distance(s.anchor, c.at) >= CS.QUEST.FETCH[0]; }).sort(byDist)[0];
+			return s ? { site: gen.sites.indexOf(s), at: s.anchor.slice() } : null;
+		}
+		var win = q.type === 'find' ? CS.QUEST.FIND : CS.QUEST.CLEAR;
+		// the deep trees for the tappers, the far side of the pits for the tar-keepers: their own ground first
+		var ground = q.type === 'find' ? G.TERRAIN.jungle : G.TERRAIN.desert;
+		var best = null, score = -1, rand = G.rng(gen.seed ^ (c.at[0] * 7919 + c.at[1] * 104729));
+		for (var dy = -win[1]; dy <= win[1]; dy++) {
+			for (var dx = -win[1] - 1; dx <= win[1] + 1; dx++) {
+				var x = c.at[0] + dx, y = c.at[1] + dy;
+				if (x < 0 || y < 0 || x >= cols || y >= gen.rows) continue;
+				var d = G.distance([x, y], c.at), t = gen.terrain[x][y];
+				if (d < win[0] || d > win[1] || !gen.reachable[x + y * cols] || taken[x + ',' + y] || gen.siteAt[x + y * cols] >= 0) continue;
+				if (G.isWater(t) || !G.isPassable(t) || !G.isTerrain(gen.map[x][y].charAt(0))) continue;
+				var sc = (t === ground ? 2 : 0) + rand();
+				if (sc > score) {
+					score = sc;
+					best = [x, y];
+				}
+			}
+		}
+		return best ? { at: best } : null;
+	},
+
+	// open land the wanderer can reach, outside any site and any other city-state's land
+	freeLand: function (gen, x, y, taken) {
+		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || taken[x + ',' + y] || gen.siteAt[x + y * gen.cols] >= 0) return false;
+		var t = gen.terrain[x][y];
+		return !!gen.reachable[x + y * gen.cols] && !WorldGen.isWater(t) && WorldGen.isPassable(t) && WorldGen.isTerrain(gen.map[x][y].charAt(0));
+	},
+
+	// the drifters' next hex (pure): a free land neighbour, tundra first; null to stay put. roll in [0, 1)
+	driftTo: function (gen, c, list, roll) {
+		var G = WorldGen, taken = {}, opts = [];
+		list.forEach(function (o) { if (o !== c) o.land.forEach(function (h) { taken[h[0] + ',' + h[1]] = true; }); });
+		for (var d = 0; d < 6; d++) {
+			var n = G.neighbour(c.at[0], c.at[1], d);
+			if (CityStates.freeLand(gen, n[0], n[1], taken)) opts.push({ at: n, tundra: gen.terrain[n[0]][n[1]] === G.TERRAIN.tundra });
+		}
+		var tundra = opts.filter(function (o) { return o.tundra; }), pick = tundra.length ? tundra : opts;
+		return pick.length ? pick[Math.floor(roll * pick.length)].at : null;
+	},
+
+	// talks are open: at 25, or once an envoy has reported
+	talks: function (st) {
+		return !!(st.told && (st.told[25] || st.told.talks));
+	},
+
+	// the quest's state, its place fixed and marked on the map the first time it is asked for
+	questOf: function (c) {
+		var CS = CityStates, st = CS.state(c.id), q = CS.questType(c.t);
+		if (!q || st.city || !CS.talks(st)) return null;
+		if (st.q) return st.q;
+		var gen = World.hex.gen, field = World.hex.danger;
+		var site = CS.questSite(gen, function (x, y) { return Danger.at(field, gen.cols, x, y, 'normal'); }, c, CS.list());
+		var s = { type: q.type };
+		if (q.type === 'find') s.party = 'waiting';
+		if (q.type === 'meet') s.walked = null;
+		if (site) {
+			s.at = site.at;
+			if (site.site !== undefined) s.site = site.site;
+			var mask = World.state ? World.state.mask : World.hex.mask;
+			mask[s.at[0]][s.at[1]] = true;
+			if (!World.state) World.saveHex(World.worldFlags());
+		}
+		$SM.set('game.citystates.cs["' + c.id + '"].q', s, true);
+		CS._quests = null;
+		return s;
+	},
+
+	// the city-state whose find party or clear fight waits on a hex, or null (the map asks per hex drawn:
+	// a lookup kept by questIndex)
+	questHere: function (x, y) {
+		if (!CityStates._quests) CityStates.questIndex();
+		return CityStates._quests[x + ',' + y] || null;
+	},
+
+	questIndex: function () {
+		var CS = CityStates, map = {};
+		CS.list().forEach(function (c) {
+			var st = CS.state(c.id), q = st.q;
+			if (q && !st.city && !st.quest && q.at && (q.type === 'clear' || (q.type === 'find' && q.party === 'waiting'))) map[q.at[0] + ',' + q.at[1]] = c;
+		});
+		CS._quests = map;
+	},
+
+	// its hover line: the party or the foe the content names
+	questLabel: function (x, y) {
+		var c = CityStates.questHere(x, y);
+		if (!c) return null;
+		var q = CityStates.questType(c.t);
+		return CityStates.nb(_(q.party || q.foe) + '.');
+	},
+
+	// every trek step: quest places, the camp on the move, the walk, the gate. true if a scene started
+	questStep: function (x, y) {
+		var CS = CityStates, started = false;
+		$SM.set('game.citystates.steps', $SM.get('game.citystates.steps', true) + 1, true);
+		CS.list().forEach(function (c) {
+			var st = CS.state(c.id), path = 'game.citystates.cs["' + c.id + '"].q';
+			if (started || st.city || st.quest || !CS.questType(c.t)) return;
+			var q = CS.questOf(c), type = CS.questType(c.t).type, home = c.at[0] === x && c.at[1] === y;
+			if (type === 'meet') {
+				started = CS.meetStep(c, q, home);
+				return;
+			}
+			if (!q) return;
+			var on = q.at && q.at[0] === x && q.at[1] === y;
+			if (type === 'find') {
+				if (on && q.party === 'waiting') {
+					// they walk with you, like lost settlers
+					$SM.set(path + '.party', 'with', true);
+					CS._quests = null;
+					Notifications.notify(World, CS.fill(_('the {party} fall in behind.'), c, { party: _(CS.questType(c.t).party) }));
+				} else if (home && q.party === 'with') {
+					started = CS.questDone(c);
+				}
+			} else if (type === 'clear' && on) {
+				CS._fighting = c.id;
+				Events.startEvent(Events.CityStates.clearFight(c));
+				started = true;
+			} else if (type === 'fetch') {
+				var site = q.site >= 0 && World.siteAt(x, y) === World.hex.gen.sites[q.site];
+				if (site && !(Path.outfit['knowledge fragment'] > 0) && !st.fetched && Path.getFreeSpace() >= Path.getWeight('knowledge fragment')) {
+					Path.outfit['knowledge fragment'] = 1;
+					$SM.set('game.citystates.cs["' + c.id + '"].fetched', true, true);
+					World.updateSupplies();
+				} else if (home && Path.outfit['knowledge fragment'] > 0) {
+					Path.outfit['knowledge fragment']--;
+					World.updateSupplies();
+					started = CS.questDone(c);
+				}
+			}
+		});
+		return started;
+	},
+
+	// the drifters move a hex every DRIFT_STEPS trek steps; caught at their camp, sample scene 6; then the walk
+	meetStep: function (c, q, home) {
+		var CS = CityStates, path = 'game.citystates.cs["' + c.id + '"].q';
+		if (q && typeof q.walked == 'number') {
+			var n = q.walked + 1;
+			$SM.set(path + '.walked', n, true);
+			if (n < CS.QUEST.MEET_STEPS) return false;
+			$SM.set(path + '.walked', null, true);
+			Events.startEvent(Events.CityStates.walkEnd(c));
+			return true;
+		}
+		if ($SM.get('game.citystates.steps', true) % CS.QUEST.DRIFT_STEPS === 0) CS.drift(c);
+		if (!q || !home) return false;
+		Events.startEvent(Events.CityStates.smokeOnSnow(c));
+		return true;
+	},
+
+	drift: function (c) {
+		var CS = CityStates, gen = World.hex.gen, list = CS.list(), to = CS.driftTo(gen, c, list, Math.random());
+		if (!to) return false;
+		var taken = {}, land = [to.slice()];
+		list.forEach(function (o) { if (o !== c) o.land.forEach(function (h) { taken[h[0] + ',' + h[1]] = true; }); });
+		District.neighbours(to).forEach(function (n) { if (CS.freeLand(gen, n[0], n[1], taken)) land.push(n); });
+		var i = list.indexOf(c);
+		$SM.set('game.citystates.list[' + i + '].at', to.slice(), true);
+		$SM.set('game.citystates.list[' + i + '].land', land, true);
+		CS.index();
+		return true;
+	},
+
+	// walk with them: the next MEET_STEPS steps count, if the trek doesn't end first
+	walkWith: function (c) {
+		$SM.set('game.citystates.cs["' + c.id + '"].q.walked', 0, true);
+	},
+
+	// the trek ends without the quest done (died: the wanderer fell): it fails, and stays open
+	questFail: function (died) {
+		var CS = CityStates;
+		CS.list().forEach(function (c) {
+			var st = CS.state(c.id), q = st.q, path = 'game.citystates.cs["' + c.id + '"]';
+			if (!q || st.city || st.quest) return;
+			var t = CS.questType(c.t);
+			if (q.type === 'find' && q.party === 'with' && died) {
+				$SM.set(path + '.q.party', 'waiting', true);
+				CS._quests = null;
+				Notifications.notify(null, CS.fill(_('the lost party is gone. scavengers got there first.'), c));
+			} else if (q.type === 'clear' && died && CS._fighting === c.id) {
+				Notifications.notify(null, CS.fill(_('the {foe} are still there. {name} stay behind their walls.'), c, { foe: _(t.foe) }));
+			} else if (q.type === 'meet' && typeof q.walked == 'number') {
+				$SM.set(path + '.q.walked', null, true);
+				Notifications.notify(null, CS.fill(_('{name} have moved on. the tracks are filling with snow.'), c));
+			} else if (q.type === 'fetch' && died && st.fetched) {
+				// it went into the dropped pack with the rest of the bag; the site gives another
+				$SM.set(path + '.fetched', false, true);
+				Notifications.notify(null, CS.fill(_('the {thing} lies where the trek fell.'), c, { thing: _(t.thing) }));
+			}
+		});
+		CS._fighting = null;
+	},
+
+	// a quest done: its line, then its scene, whose last button joins them (content 3.5)
+	questDone: function (c) {
+		var CS = CityStates, q = CS.questType(c.t), ev = Events.CityStates;
+		$SM.set('game.citystates.cs["' + c.id + '"].quest', true, true);
+		CS._quests = null;
+		var line = {
+			find: _('the lost walk in through the gate. {name} come out to meet them.'),
+			clear: _("the {foe} won't trouble {name} again."),
+			fetch: _('the {thing} is handed over. {name} look at it a long time.')
+		}[q.type];
+		if (line) Notifications.notify(null, CS.fill(line, c, { foe: _(q.foe || ''), thing: _(q.thing || '') }));
+		var scene = { resin_tappers: ev.lostTappers, tar_keepers: ev.tarSwear, archive_clerks: ev.archiveClerks }[c.t];
+		if (scene) Events.startEvent(scene(c));
+		else CS.questJoin(c);
+		return !!scene;
+	},
+
+	// they join at the end of the quest's scene, with the beat's extras
+	questJoin: function (c) {
+		var CS = CityStates;
+		if (c.t === 'resin_tappers') $SM.set('game.citystates.beats["jungle jobs"]', c.id);
+		if (c.t === 'drifters') $SM.set('game.citystates.beats["' + CS.QUEST.CHAIN + '"]', c.id);
+		if (c.t === 'archive_clerks') CS.oldMaps(c);
+		return CS.join(c, 'quest');
+	},
+
+	// the clerks' old maps: the old works and the craters far around show on the map
+	oldMaps: function (c) {
+		var CS = CityStates, gen = World.hex.gen, mask = World.state ? World.state.mask : World.hex.mask, n = 0;
+		gen.sites.forEach(function (s) {
+			if ((s.kind !== 'complex' && s.kind !== 'crater') || WorldGen.distance(s.anchor, c.at) > CS.QUEST.MAPS) return;
+			s.hexes.forEach(function (h) { mask[h[0]][h[1]] = true; });
+			n++;
+		});
+		if (!World.state) World.saveHex(World.worldFlags());
+		return n;
 	}
 });
