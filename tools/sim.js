@@ -299,6 +299,7 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
   const net = {
     cols: gen.cols, rows: gen.rows, danger,
     hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
+    open: (x, y) => G.isPassable(gen.terrain[x][y]) && !G.isWater(gen.terrain[x][y]),
     hearths: [{ at: gen.capital, out: H.out, share: H.share, cap: fuel ? F.FUELS[fuel].cap : Infinity }],
     beacons: [], beacon: F.BEACONS['B' + t.beacon],
   };

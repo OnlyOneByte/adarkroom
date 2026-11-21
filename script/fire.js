@@ -156,6 +156,7 @@ var Fire = {
 	 *   net.cols, net.rows
 	 *   net.danger(x, y)   the hex's danger before any light
 	 *   net.hills(x, y)    true on hills
+	 *   net.open(x, y)     true on open dry ground a line can cross (optional: all of it)
 	 *   net.hearths[]      { at: [x, y], out, share, cap }
 	 *   net.beacons[]      [x, y]
 	 *   net.beacon         the beacon tier in use, one of Fire.BEACONS
@@ -163,7 +164,8 @@ var Fire = {
 	 * up to Fire.HOP hexes away. Sharing hearths whose fire reaches each other pool it, and
 	 * each sends the pool out; every hop keeps `keep` of it, and fire carries on only while it
 	 * is at least Fire.RELAY_MIN. Nothing goes into a hex over the fuel's danger cap: a beacon
-	 * there is dark, and so is everything past it.
+	 * there is dark, and so is everything past it. A line between two nodes needs every hex
+	 * between them open and under the cap.
 	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
 	 */
 	compute: function (net) {
@@ -189,6 +191,25 @@ var Fire = {
 		};
 
 		var B = net.beacon, H = net.hearths.length;
+		// the hexes strictly between two linked nodes: the most danger on them, and whether all are
+		// open dry ground (a line can't jump what it couldn't light, or cross water or mountains)
+		var corridors = {};
+		var between = function (a, b) {
+			var k = Math.min(a, b) + ',' + Math.max(a, b), c = corridors[k];
+			if (c) return c;
+			c = corridors[k] = { danger: 0, open: true };
+			var l = Fire.line(nodes[a].at, nodes[b].at);
+			for (var i = 1; i < l.length - 1; i++) {
+				var p = l[i];
+				if (!inside(p) || (net.open && !net.open(p[0], p[1]))) c.open = false;
+				else c.danger = Math.max(c.danger, net.danger(p[0], p[1]));
+			}
+			return c;
+		};
+		var carries = function (a, b, cap) {
+			var c = between(a, b);
+			return c.open && c.danger <= cap;
+		};
 		// a hearth's fire out along the beacons, keeping each beacon's strongest: { best, links }
 		var spread = function (hi, s0, cap) {
 			var best = {}, links = {}, queue = [[hi, s0]];
@@ -200,6 +221,7 @@ var Fire = {
 					var s = q[1] * B.keep;
 					if (s < Fire.LIT_MIN || best[b] >= s) return;
 					if (net.danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
+					if (!carries(q[0], b, cap)) return;
 					best[b] = s;
 					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
 					// a beacon on hills (where its tier can use them) carries one hop further
@@ -232,7 +254,7 @@ var Fire = {
 				for (var k in wk.w.best) if (wk.w.best[k] >= Fire.RELAY_MIN) from.push(+k);
 				from.forEach(function (f) {
 					adj[f].forEach(function (b) {
-						if (b < H && net.hearths[b].share && find(b) !== find(a)) {
+						if (b < H && net.hearths[b].share && find(b) !== find(a) && carries(f, b, net.hearths[a].cap)) {
 							root[find(b)] = find(a);
 							joined = true;
 						}
