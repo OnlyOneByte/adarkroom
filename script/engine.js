@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.4,
+    VERSION: 2.5,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -244,6 +244,8 @@
       }
       // the fire network: its tiers unlock from the first spark, its hearths burn once the town is open
       Network.init();
+      // the city-states: placed when the hex map opens, their influence ticks with the fire
+      CityStates.init();
       if($SM.get('features.location.spaceShip')) {
         Ship.init();
       }
