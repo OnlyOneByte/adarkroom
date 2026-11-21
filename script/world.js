@@ -1407,6 +1407,7 @@ var World = {
     if(cs) return cs;
     if(typeof World.LANDMARKS[c] != 'undefined' && (c != World.TILE.OUTPOST || !World.outpostUsed(x, y))) return [c, true];
     if(typeof Network != 'undefined' && Network.isCairn(x, y)) return [Network.CAIRN_GLYPH, true];
+    if(typeof Network != 'undefined' && Network.isPits(x, y)) return [Network.PITS_GLYPH, true];
     var site = World.siteAt(x, y);
     if(site && WorldGen.isTerrain(c)) {
       // a site shows its own glyph across all its hexes; the wasteland's towns keep theirs

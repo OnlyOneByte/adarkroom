@@ -37,7 +37,7 @@ test('the hex map opens with 64 city-states: 8 story ones, the guarantees, the Î
   expect(r.near).toBe(0);
   expect(r.spaced).toBe(true);
   expect(r.saved).toBe(64);
-  expect(r.version).toBe(2.6);
+  expect(r.version).toBe(2.7);
 
   const before = await page.evaluate(() => JSON.stringify(CityStates.list()));
   await page.reload();
@@ -256,7 +256,7 @@ test('reavers will not bend; nothing of ours goes on a city-state\'s land', asyn
   expect(errors).toEqual([]);
 });
 
-test('a v2.4 save with a hex map loads (as v2.6) and gets its city-states around what it has built', async ({ page }) => {
+test('a v2.4 save with a hex map loads (as v2.7) and gets its city-states around what it has built', async ({ page }) => {
   const save = load('v2.3-fire');
   const errors = await openGame(page, { save });
   const r = await page.evaluate(() => {
@@ -264,7 +264,7 @@ test('a v2.4 save with a hex map loads (as v2.6) and gets its city-states around
     return { version: $SM.get('version'), n: list.length,
       onCity: list.filter((c) => c.land.some((h) => Network.districtAt(h[0], h[1]))).length };
   });
-  expect(r.version).toBe(2.6);
+  expect(r.version).toBe(2.7);
   expect(r.n).toBe(64);
   expect(r.onCity).toBe(0);
   expect(errors).toEqual([]);

@@ -29,6 +29,20 @@ var Network = {
 	OLD_TYPES: ['huts', 'woods', 'hunting grounds', 'burning pits', 'walls'],
 	// story hooks of resettled fallen cities, in the order the sites are resettled (flame-era chains)
 	RESETTLE_STORIES: ['the charcoal stranger'],
+	PITS_GLYPH: 'o',
+	// provisional (flame era, design/text/flame-build.md)
+	STRANGER_WAIT: 30,   // fire ticks (5 min) from the old chimney to the stranger, and to the stranger's second ask
+	STRANGER_RETURN: 180, // fire ticks (30 min): left be twice or more, the stranger comes back after this, every time
+	CODA_WAIT: 30,       // fire ticks from the burning pits to the coda
+	SECOND_TIER: 64,     // people in a city: its second population tier (H7)
+	BAND2: 4,            // the danger where band 2 starts (Danger.BAND_SIZE * 2): the garrison's hills
+	ROAD_REACH: 12,      // a founded city's road looks this far for a road or a city to join
+	CART: 100,           // what one cart carries along a road (B6)
+	CART_STEP: 1,        // seconds a cart takes a road hex: a trek step's worth of real time (STEP_SECONDS in the sim)
+	BOG_WEAR: 0.004,     // a bog cut dug deep, worn a fire tick by four cutters (spent in ~40 min)
+	BOG_REST: 0.002,     // and rested a tick while it is spent (back in ~80 min)
+	// the beats that come from outside the ladders' own checks (Fire.unlock), and the flag each sets
+	BEATS: { F8: 'garrisonBroken' },
 
 	// what unlocks each ember tier (Fire.TIERS[].when)
 	UNLOCKS: {
@@ -64,7 +78,23 @@ var Network = {
 		},
 		'first district': function () {
 			return Network.anyCity(function (c) { return Object.keys(c.districts || {}).length > 1; });
-		}
+		},
+		// the flame era. Beats from the city-states (Phase 4) are read from game.citystates.beats,
+		// if it is there; without it those tiers stay locked
+		'burning pits': function () { return !!$SM.get('game.network.story.charcoalWay'); },
+		'bog cutters': function () { return Network.csBeat('F6'); },
+		'resin tappers': function () { return Network.csBeat('F7'); },
+		'garrison broken': function () { return Network.flag('garrisonBroken'); },
+		'waystation held': function () { return Network.flag('towerHeld'); },
+		'road joins': function () { return Network.roadJoined(); },
+		'water crossed': function () { return !!Network._facing; },
+		'lantern-keepers': function () { return Network.csBeat('B8'); },
+		'old chimney': function () { return !!$SM.get('game.network.story.oldChimney'); },
+		'potters': function () { return Network.csBeat('H6'); },
+		'second tier': function () {
+			return Network.cities().some(function (c) { return Network.people(c.id) >= Network.SECOND_TIER; });
+		},
+		'coal burned': function () { return Network.flag('coalBurned'); }
 	},
 
 	// one line when a milestone tier arrives (story tiers have their own scenes)
@@ -75,7 +105,13 @@ var Network = {
 		B2: _('the trek came home. torch-posts go up where the braziers stood.'),
 		B4: _('a waystation in the light. watch fires there can see a long way.'),
 		H2: _('the builder digs the fire into a pit, ringed with stones.'),
-		H4: _('the hearth grows with the town. it keeps some fire back.')
+		H4: _('the hearth grows with the town. it keeps some fire back.'),
+		F7: _('the jungle folk cut the bark and wait. the trees weep resin. it burns fierce.'),
+		B5: _('the waystation held through the night. a tower goes up where the fires stood.'),
+		B6: _('a road between two cities. lamps along it, one after another. goods can move now.'),
+		B7: _('a bridge across the water. a light on either bank.'),
+		H7: _('the city is big enough to need bread. the oven is never let go cold.'),
+		H8: _('coal burns clean and hot. the forge hearth roars.')
 	},
 
 	init: function () {
@@ -88,19 +124,43 @@ var Network = {
 			if (pack && pack.settlers) $SM.remove('game.network.settlers', true);
 			else $SM.set('game.network.settlers.out', false, true);
 		}
+		Fire.onUnlock = Network.beat;
 		Network.checkUnlocks();
 		$.Dispatch('stateUpdate').subscribe(Network.handleStateUpdates);
 		Network.refresh();
 		Network.scheduleTick();
+		Network.deliverCarts();
 	},
 
 	flag: function (k) {
 		return !!$SM.get('game.network.story.' + k);
 	},
 
-	setFlag: function (k) {
-		$SM.set('game.network.story.' + k, true);
+	setFlag: function (k, v) {
+		$SM.set('game.network.story.' + k, v === undefined ? true : v);
 		Network.checkUnlocks();
+	},
+
+	// a ladder beat a city-state gave (Phase 4 records game.citystates.beats[tier]); false while
+	// the city-states aren't in the game
+	csBeat: function (id) {
+		var b = $SM.get('game.citystates.beats');
+		return !!b && b[id] !== undefined && b[id] !== null && b[id] !== false;
+	},
+
+	// Fire.unlock: a beat that happened outside the ladders (Network.BEATS); the tier comes in in
+	// ladder order. Returns true if the beat is known.
+	beat: function (id) {
+		var k = Network.BEATS[id];
+		if (!k) return false;
+		Network.setFlag(k);
+		return true;
+	},
+
+	// everyone in a city: the capital's villagers and its town citizens, another city's citizens
+	people: function (cityId) {
+		var c = $SM.get('game.cities["' + cityId + '"]'), n = (c && c.population && c.population.citizens) || 0;
+		return cityId == City.CAPITAL ? n + $SM.get('game.population', true) : n;
 	},
 
 	has: function (id) {
@@ -232,6 +292,7 @@ var Network = {
 	refresh: function () {
 		if (!World.hex) return;
 		Network._districts = null;
+		Network._pits = Network.flag('pitsFound') ? null : $SM.get('game.network.pits') || null;
 		Network.ensureCapital();
 		var gen = World.hex.gen, cs = Network.cities();
 		var hid = Network.hearthTier(), H = Fire.HEARTHS[hid];
@@ -239,19 +300,24 @@ var Network = {
 			return k.split(',').map(Number);
 		});
 		var bt = Network.beaconTier();
-		var result = Fire.compute({
+		var net = {
 			cols: gen.cols, rows: gen.rows,
 			field: World.baseField(),
+			kind: Network.kinds(),
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
 			open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
 			hearths: cs.map(function (c) {
 				var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
-				return { at: c.city.hex, out: h.out || 0, share: Network.shares(c.id), cap: f ? f.cap : 0 };
+				return { at: c.city.hex, out: h.out || 0, share: Network.shares(c.id), cap: f ? f.cap : 0, holds: f ? f.holds || 0 : 0, wet: f ? f.wet : 0 };
 			}),
 			beacons: beacons,
 			beacon: bt ? Fire.BEACONS[bt] : null
-		});
+		};
+		var result = Fire.compute(net);
 		World.hex.fire = result;
+		Network.roads();
+		if (Network.has('B6') && !Network.has('B7')) Network.facing(net, result);
+		if (!Network.flag('smoke')) Network.seeSmoke(result);
 		// lit land can be seen from home
 		if (!World.state) {
 			var mask = World.hex.mask, changed = false;
@@ -293,9 +359,18 @@ var Network = {
 		return Network.hearthOut(cityId) + (Network.shares(cityId) ? Fire.UPKEEP * ((c.hearth && c.hearth.fed) || 0) : 0);
 	},
 
-	// the fire a city's hearth makes when it is fully fed
+	// the fire a city's hearth makes when it is fully fed; from the bread oven (H7) it grows with
+	// the city's people, past the tier's own fire, up to H.grow times it
 	hearthOut: function (cityId) {
-		return Fire.HEARTHS[Network.hearthTier()].out * Network.hearthScale(cityId);
+		var H = Fire.HEARTHS[Network.hearthTier()];
+		if (cityId == City.CAPITAL) return H.out * (H.grow ? Math.max(1, Math.min(H.grow, Network.people(cityId) / Network.HEARTH_PEOPLE)) : 1);
+		return Fire.foundedOut(H, Network.people(cityId), Network.HEARTH_PEOPLE);
+	},
+
+	// the fire a city's hearth can hold over; a kiln of stone holds half (flame-draft H6)
+	hearthStore: function (cityId) {
+		var hid = Network.hearthTier(), store = Fire.HEARTHS[hid].store * Network.hearthScale(cityId);
+		return hid === 'H6' && $SM.get('game.citystates.beats.H6build') === 'stone' ? store / 2 : store;
 	},
 
 	// how much of its tier's fire and store a city's hearth works with: all for the capital,
@@ -314,21 +389,24 @@ var Network = {
 	// then the focused cities govern themselves.
 	tick: function () {
 		if ($SM.get('features.location.city')) {
-			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers(), home = false;
+			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers(), home = false, coal = false;
+			if (Network.has('F6') && $SM.get('game.citystates.beats.F6way') === 'deep') Network.wearBogs();
 			// every write quiet; one update (and one save) for the whole tick below (perf: ticks grow with cities)
 			Network.cities().forEach(function (c) {
 				var h = c.city.hearth || {};
 				var need = Network.hearthNeed(c.id);
 				var r = Fire.burnAll(hid, tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); },
-					need, h.stored || 0, H.store * Network.hearthScale(c.id));
+					need, h.stored || 0, Network.hearthStore(c.id));
 				for (var k in r.burn) {
 					if (!r.burn[k]) continue;
 					$SM.add(City.storePath(c.id, k), -r.burn[k], true);
 					if (c.id == City.CAPITAL) home = true;
+					if (k === 'coal') coal = true;
 				}
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
-				if (Network.shares(c.id)) out = r.out;
+				// a sharing hearth makes its whole fire (the line's upkeep is in what it burned)
+				if (Network.shares(c.id)) out = r.out * Network.hearthOut(c.id) / H.out;
 				// burning only its store, it keeps the last fuel's reach
 				$SM.set(City.path(c.id, 'hearth'), {
 					fuel: out > 0 ? (r.fuel || h.fuel || null) : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
@@ -346,6 +424,8 @@ var Network = {
 			Network.cities().forEach(function (c) { if (c.city.focus) City.govern(c.id); });
 			if (home) $SM.fireUpdate('stores'); // the capital's stores are the top-level ones
 			$SM.fireUpdate('game.cities', true); // the town panel and every city's income, once
+			if (coal && !Network.flag('coalBurned')) Network.setFlag('coalBurned');
+			Network.flameTick();
 			Network.checkStory();
 		}
 		Network.scheduleTick();
@@ -361,7 +441,7 @@ var Network = {
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return false;
 		if (!WorldGen.isPassable(World.hex.map[x][y]) || World.hex.map[x][y] === WorldGen.TERRAIN.ocean) return false;
 		if (WorldGen.isWater(gen.terrain[x][y])) return false; // crossing water is for later beacons (B7, B11)
-		if (Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y)) return false;
+		if (Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y) || Network.isPits(x, y)) return false;
 		// a hearth, lit or cold (a cold one must not lock the player out), or a lit beacon:
 		// a dark beacon is no anchor to build out from
 		return !!World.hex.fire && World.hex.fire.nodes.some(function (n) {
@@ -405,16 +485,31 @@ var Network = {
 
 	// what District.TYPES[].fits sees of a hex
 	ground: function (cityId, x, y) {
-		var f = World.formationAt(x, y);
+		var f = World.formationAt(x, y), bog = cityId && $SM.get(City.path(cityId, 'bogs["' + Network.key(x, y) + '"]'));
 		return {
 			at: [x, y],
 			terrain: Network.terrainKey(x, y),
 			terrainAt: Network.terrainKey,
 			site: !!World.siteAt(x, y),
 			deep: !!f && f.kind === 'forest',
+			coal: Network.coalAt(x, y),
+			spent: bog ? (bog.spent ? 1 : bog.w) : 0,
 			city: $SM.get(City.path(cityId, 'districts')) || {},
 			capital: cityId == City.CAPITAL
 		};
+	},
+
+	// a coal seam: a prologue coal mine's deposit, or once the garrison is broken the hills by its
+	// deep mines ("coal mines district on the site's hills": the site itself takes no district)
+	coalAt: function (x, y) {
+		var gen = World.hex.gen;
+		if (gen.deposits.some(function (d) { return d.kind === 'coal' && d.at[0] === x && d.at[1] === y; })) return true;
+		var g = $SM.get('game.network.garrison');
+		if (!g || !Network.flag('garrisonBroken')) return false;
+		var t = gen.terrain[x][y];
+		if (t !== WorldGen.TERRAIN.hills && t !== WorldGen.TERRAIN.mountains) return false;
+		var site = World.siteAt(g[0], g[1]);
+		return !!site && site.hexes.some(function (h) { return Fire.distance(h, [x, y]) <= 1; });
 	},
 
 	// district types that can go on this hex for a city
@@ -423,7 +518,7 @@ var Network = {
 		if (!World.hex || !c || !c.hex) return [];
 		var gen = World.hex.gen;
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return [];
-		if (Network.districtAt(x, y) || Network.beaconAt(x, y) || Network.isCairn(x, y)) return [];
+		if (Network.districtAt(x, y) || Network.beaconAt(x, y) || Network.isCairn(x, y) || Network.isPits(x, y)) return [];
 		if (World.markedAt(x, y)) return []; // not on a landmark or a site (old-world works will be, later)
 		if (!World.hex.fire || !World.hex.fire.lit[x + y * gen.cols]) return []; // only where the fire reaches
 		if (Fire.distance(c.hex, [x, y]) > District.MAX_RING) return [];
@@ -432,7 +527,7 @@ var Network = {
 		var g = Network.ground(cityId, x, y), out = [];
 		for (var t in District.TYPES) {
 			var T = District.TYPES[t];
-			if (T.stub || t === District.HEARTH) continue;
+			if (T.stub || t === District.HEARTH || !City.tierMet(T.needs)) continue;
 			if (T.fits(g)) out.push(t);
 		}
 		return out;
@@ -572,6 +667,7 @@ var Network = {
 		});
 		$SM.fireUpdate('game.cities["' + next.id + '"]');
 		World.state.map[f.at[0]][f.at[1]] = World.TILE.VILLAGE; // a city of ours: home
+		Network.layRoad(f.at, World.state.map);
 		Notifications.notify(World, f.site ? _('old walls, old hearths. the settlers clear the ash and move in.') :
 			_('the settlers stop. they light a fire from the one they carried.'));
 		Engine.event('progress', f.site ? 'city resettled' : 'city founded');
@@ -614,9 +710,14 @@ var Network = {
 		else if (d) d = District.TYPES[d].name;
 		if (d) return d.replace(/ /g, '&nbsp;');
 		if (Network.isCairn(x, y)) return _('an&nbsp;old&nbsp;cairn');
+		if (Network.isPits(x, y)) return _('the&nbsp;old&nbsp;pits');
+		if (Network.isGarrison(x, y)) {
+			return Network.flag('gateMet') ? _('the&nbsp;garrison&nbsp;of&nbsp;the&nbsp;deep&nbsp;mines.&nbsp;the&nbsp;shafts&nbsp;go&nbsp;down&nbsp;into&nbsp;the&nbsp;dark.') :
+				_('the&nbsp;garrison&nbsp;of&nbsp;the&nbsp;deep&nbsp;mines');
+		}
 		if (Network.beaconAt(x, y)) {
 			var bt = Network.beaconTier(), lit = World.hex.fire && World.hex.fire.lit[x + y * World.hex.gen.cols];
-			var name = bt ? Fire.tier(bt).name : _('beacon');
+			var name = bt ? Fire.BEACONS[bt].name : _('beacon');
 			return (lit ? _('a&nbsp;{0}', name) : _('a&nbsp;dark&nbsp;{0}', name)).replace(/ /g, '&nbsp;');
 		}
 		return '';
@@ -708,6 +809,7 @@ var Network = {
 		if (all) line += ' ' + _('beacons lit: {0} of {1}.', lit, all);
 		$('#fireStatus').text(line);
 		Network.updateSettlers();
+		Network.updateRoads();
 	},
 
 	// the settlers waiting to leave, with a way to call them off
@@ -743,7 +845,7 @@ var Network = {
 			}).appendTo(box);
 		} else if (bt && Network.canBeacon(h[0], h[1])) {
 			new Button.Button({
-				id: 'land_beacon', text: _('raise {0}', Fire.tier(bt).name), width: '80px',
+				id: 'land_beacon', text: _('raise {0}', Fire.BEACONS[bt].name), width: '80px',
 				cost: Fire.BEACONS[bt].cost,
 				click: function () { Network.raiseBeacon(h[0], h[1]); Network.updateActions(); }
 			}).appendTo(box);
@@ -782,6 +884,9 @@ var Network = {
 			start(Events.Story.biggerWorld);
 		} else if (Network.has('B2') && !Network.flag('cairnTold')) {
 			start(Events.Story.wanderer);
+		} else {
+			var e = Network.flameStory();
+			if (e) start(e);
 		}
 	},
 
@@ -802,6 +907,20 @@ var Network = {
 		if (Network.isCairn(x, y) && Network.flag('cairnTold') && !Network.flag('cairnStudied') && !World.state.cairnStudied) {
 			Events.startEvent(Events.Story.cairn);
 		}
+		// the flame era: the old pits, and the garrison's site (seen in passing, then its gate)
+		if (Network.isPits(x, y) && Network.flag('strangerSat') && !World.state.pitsFound) {
+			Events.startEvent(Events.Flame.pits());
+		}
+		var g = $SM.get('game.network.garrison');
+		if (g && Network.flag('smoke')) {
+			var site = World.siteAt(g[0], g[1]);
+			if (!Network.flag('garrisonMarked') && site.hexes.some(function (h) { return Fire.distance(h, [x, y]) <= World.LIGHT_RADIUS; })) {
+				Network.markGarrison();
+			}
+			if (World.siteAt(x, y) === site && !Network.flag('gateMet') && !World.state.gateMet) {
+				Events.startEvent(Events.Flame.gate());
+			}
+		}
 	},
 
 	onHome: function () {
@@ -813,6 +932,16 @@ var Network = {
 		}
 		if (Network.flag('cairnStudied') && !Network.flag('cairnDone')) {
 			Engine.setTimeout(function () { Events.startEvent(Events.Story.cairnFire); }, 1500);
+		}
+		// what this trek found for the flame era, known at home now (lost with it on a death)
+		['pitsFound', 'gateMet', 'towerHeld'].forEach(function (k) {
+			var v = $SM.get('game.world.' + k);
+			if (!v) return;
+			$SM.remove('game.world.' + k, true);
+			Network.setFlag(k, v);
+		});
+		if (Network.flag('pitsFound') && !Network.flag('charcoalWay')) {
+			Engine.setTimeout(function () { if (!Events.activeEvent()) Events.startEvent(Events.Flame.burningPits()); }, 1500);
 		}
 		Network.refresh();
 	},
@@ -841,12 +970,375 @@ var Network = {
 		Network.draw();
 	},
 
+	/*
+	 * The flame era (design/LADDERS.md tiers 5-8, design/text/flame-draft.md). Its fixed events
+	 * are in script/events/flame.js:
+	 *   the charcoal stranger  oldChimney (H5) -> stranger -> pits (on a trek) -> burningPits (F5) -> coda
+	 *   the garrison of the deep mines  smoke -> gate (on a trek); the siege is Phase 6's, which
+	 *                          calls Fire.unlock('F8') when the garrison is broken
+	 * The city-states' beats (F6 peat, B8 marsh lantern, H6 kiln, F7 resin) play in Phase 4's
+	 * scenes; here they are only read.
+	 */
+	// what kind of ground every hex is for a line (Fire.compute's net.kind): the terrain's bits
+	// once per world, the roads (a road, a waystation or a city's hex) again when the map changes
+	kinds: function () {
+		var gen = World.hex.gen, map = World.hex.map, cols = gen.cols, T = WorldGen.TERRAIN;
+		if (Network._kinds && Network._kinds.map === map && Network._kinds.gen === gen) return Network._kinds.bits;
+		var bits = new Uint8Array(cols * gen.rows);
+		for (var x = 0; x < cols; x++) {
+			for (var y = 0; y < gen.rows; y++) {
+				var t = gen.terrain[x][y], c = map[x][y], k = x + y * cols;
+				if (t === T.swamp) bits[k] = Fire.SWAMP;
+				else if (t === T.jungle) bits[k] = Fire.JUNGLE;
+				else if (t === T.lake) bits[k] = Fire.LAKE;
+				if (c === World.TILE.ROAD || c === World.TILE.VILLAGE || c === World.TILE.OUTPOST) bits[k] |= Fire.ROAD;
+			}
+		}
+		Network._kinds = { map: map, gen: gen, bits: bits };
+		Network._roadsFor = null;
+		return bits;
+	},
+
+	// which cities a road joins: { cityId: the road's number }, kept until the map or the cities change
+	roads: function () {
+		var bits = Network.kinds(), cs = Network.cities(), key = cs.map(function (c) { return c.id; }).join();
+		if (Network._roadsFor && Network._roadsFor.bits === bits && Network._roadsFor.key === key) return Network._roadsFor.comp;
+		var gen = World.hex.gen, cols = gen.cols, seen = {}, comp = {}, n = 0;
+		cs.forEach(function (c) {
+			var at = c.city.hex, k0 = at[0] + at[1] * cols;
+			if (seen[k0] === undefined) {
+				var queue = [at];
+				seen[k0] = ++n;
+				for (var qi = 0; qi < queue.length; qi++) {
+					for (var d = 0; d < 6; d++) {
+						var p = WorldGen.neighbour(queue[qi][0], queue[qi][1], d), k = p[0] + p[1] * cols;
+						if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= gen.rows || seen[k] !== undefined || !(bits[k] & Fire.ROAD)) continue;
+						seen[k] = n;
+						queue.push(p);
+					}
+				}
+			}
+			comp[c.id] = seen[k0];
+		});
+		Network._roadsFor = { bits: bits, key: key, comp: comp };
+		return comp;
+	},
+
+	roadJoined: function () {
+		if (!World.hex) return false;
+		var comp = Network.roads(), count = {};
+		for (var id in comp) {
+			if ((count[comp[id]] = (count[comp[id]] || 0) + 1) > 1) return true;
+		}
+		return false;
+	},
+
+	// the other cities a road runs to from this one
+	joinedTo: function (cityId) {
+		var comp = Network.roads();
+		return Object.keys(comp).filter(function (id) { return id != cityId && comp[id] === comp[cityId]; });
+	},
+
+	/*
+	 * A new city's road (provisional, flame-build.md): its settlers' track to the nearest road, waystation
+	 * or city within Network.ROAD_REACH, over open dry ground, as the wanderer's track joins a cleared
+	 * waystation to the roads (World.drawRoad). Not across a site, unless it's one of ours.
+	 */
+	layRoad: function (at, map) {
+		var gen = World.hex.gen, cols = gen.cols, from = {}, start = at[0] + at[1] * cols, queue = [at], end = null;
+		var ok = function (x, y) {
+			var t = gen.terrain[x][y], site = World.siteAt(x, y);
+			if (!WorldGen.isPassable(t) || WorldGen.isWater(t)) return false;
+			return !site || map[site.anchor[0]][site.anchor[1]] === World.TILE.VILLAGE;
+		};
+		from[start] = -1;
+		for (var qi = 0; qi < queue.length && !end; qi++) {
+			var q = queue[qi];
+			if (Fire.distance(q, at) >= Network.ROAD_REACH) continue;
+			for (var d = 0; d < 6 && !end; d++) {
+				var p = WorldGen.neighbour(q[0], q[1], d), k = p[0] + p[1] * cols;
+				if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= gen.rows || from[k] !== undefined || !ok(p[0], p[1])) continue;
+				from[k] = q[0] + q[1] * cols;
+				var c = map[p[0]][p[1]];
+				if (c === World.TILE.ROAD || c === World.TILE.VILLAGE || c === World.TILE.OUTPOST) end = k;
+				else if (World.roadCanCross(c)) queue.push(p); // a road goes round a landmark
+			}
+		}
+		if (end === null) return false;
+		for (var s = from[end]; s !== start; s = from[s]) {
+			var x = s % cols;
+			map[x][(s - x) / cols] = World.TILE.ROAD;
+		}
+		return true;
+	},
+
+	// the ford light's beat (provisional): two lit nodes a hop apart with only lake water between them
+	facing: function (net, result) {
+		var gen = World.hex.gen, cols = gen.cols, bits = net.kind;
+		var lit = result.nodes.filter(function (n) { return n.s >= Fire.LIT_MIN; });
+		for (var i = 0; i < lit.length; i++) {
+			for (var j = i + 1; j < lit.length; j++) {
+				if (Fire.distance(lit[i].at, lit[j].at) > Fire.HOP) continue;
+				var l = Fire.line(lit[i].at, lit[j].at), lake = false, ok = true;
+				for (var m = 1; m < l.length - 1 && ok; m++) {
+					var k = l[m][0] + l[m][1] * cols;
+					if (bits[k] & Fire.LAKE) lake = true;
+					else if (!net.open(l[m][0], l[m][1])) ok = false;
+				}
+				if (ok && lake) {
+					Network._facing = true;
+					return;
+				}
+			}
+		}
+	},
+
+	// "smoke in the hills": a lit hex within two hexes of band 2 hills (seen on this refresh, not saved)
+	seeSmoke: function (result) {
+		var gen = World.hex.gen, cols = gen.cols, rows = gen.rows, field = World.baseField(), T = WorldGen.TERRAIN;
+		Network._smoke = false;
+		for (var k = 0; k < result.lit.length; k++) {
+			// danger changes by about a tenth a hex out there: nothing far under band 2 is two hexes from it
+			if (!result.lit[k] || field[k] < Network.BAND2 - 1) continue;
+			var x = k % cols, y = (k - x) / cols, d = Fire.offsets(y, 2, false); // no arrays made (perf)
+			for (var i = 0; i < d.length; i++) {
+				var px = x + d[i][0], py = y + d[i][1];
+				if (px >= 0 && py >= 0 && px < cols && py < rows && field[px + py * cols] >= Network.BAND2 && gen.terrain[px][py] === T.hills) {
+					Network._smoke = true;
+					return;
+				}
+			}
+		}
+	},
+
+	// the garrison of the deep mines (provisional): the old-world complex nearest the capital, once asked
+	garrison: function () {
+		var g = $SM.get('game.network.garrison');
+		if (g) return g;
+		var gen = World.hex.gen, best = null;
+		gen.sites.forEach(function (s) {
+			if (s.kind !== 'complex') return;
+			if (!best || Fire.distance(s.anchor, gen.capital) < Fire.distance(best, gen.capital)) best = s.anchor;
+		});
+		if (best) $SM.set('game.network.garrison', best.slice());
+		return best;
+	},
+
+	isGarrison: function (x, y) {
+		var g = $SM.get('game.network.garrison');
+		if (!g || !Network.flag('garrisonMarked')) return false;
+		var site = World.siteAt(x, y);
+		return !!site && site === World.siteAt(g[0], g[1]);
+	},
+
+	// the site marked on the map: every hex of it seen, at home or on the trek
+	markGarrison: function () {
+		var g = Network.garrison();
+		if (!g || Network.flag('garrisonMarked')) return;
+		var mask = World.state ? World.state.mask : World.hex.mask;
+		World.siteAt(g[0], g[1]).hexes.forEach(function (h) { World.uncoverMap(h[0], h[1], 0, mask); });
+		if (!World.state) World.saveHex(World.worldFlags());
+		Network.setFlag('garrisonMarked');
+	},
+
+	// the siege's puzzle (flame-draft: "the garrison needs a lit beacon at its gate"), for Phase 6:
+	// a lit beacon on a hex next to the garrison's site
+	gateLit: function () {
+		var g = $SM.get('game.network.garrison'), fire = World.hex && World.hex.fire;
+		if (!g || !fire) return false;
+		var site = World.siteAt(g[0], g[1]), cols = World.hex.gen.cols;
+		return site.hexes.some(function (h) {
+			return District.neighbours(h).some(function (p) {
+				return World.siteAt(p[0], p[1]) !== site && Network.beaconAt(p[0], p[1]) && fire.lit[p[0] + p[1] * cols];
+			});
+		});
+	},
+
+	// the painter asks for every hex (perf): the pits as of the last refresh or placing, null once found
+	isPits: function (x, y) {
+		var p = Network._pits;
+		return !!p && p[0] === x && p[1] === y;
+	},
+
+	// the old pits the stranger tells of: forest 3-6 hexes from their city, nearest first, a hex of its own
+	placePits: function (cityId) {
+		var at = $SM.get(City.path(cityId, 'hex')), gen = World.hex.gen, best = null;
+		if (!at) return;
+		Fire.around(at[0], at[1], 6).forEach(function (p) {
+			var x = p[0], y = p[1], d = Fire.distance(p, at);
+			if (d < 3 || x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !gen.reachable[x + y * gen.cols]) return;
+			if (gen.terrain[x][y] !== WorldGen.TERRAIN.forest || World.hex.map[x][y] !== WorldGen.TERRAIN.forest) return;
+			if (World.siteAt(x, y) || Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y)) return;
+			if (!best || d < Fire.distance(best, at)) best = p;
+		});
+		// no forest near: the nearest open ground will do
+		if (!best) best = [at[0] + 3, at[1]];
+		$SM.set('game.network.pits', best);
+		Network._pits = best;
+		World.uncoverMap(best[0], best[1], 1, World.hex.mask);
+		World.saveHex(World.worldFlags());
+		Network.draw();
+	},
+
+	// the bog cuts of a city dug deep (game.citystates.beats.F6way 'deep') wear out as they are
+	// cut, and rest once spent: { 'x,y': { w: 0-1, spent } } in the city's record
+	wearBogs: function () {
+		Network.cities().forEach(function (c) {
+			var hexes = City.districtHexes(c.id, 'bog cuts');
+			if (!hexes.length) return;
+			var bogs = $.extend({}, c.city.bogs), cutters = (c.city.workers || {})['peat cutter'] || 0, spentNow = false;
+			var open = hexes.filter(function (h) { var b = bogs[h.join(',')]; return !b || !b.spent; });
+			var per = open.length ? cutters / open.length : 0;
+			hexes.forEach(function (h) {
+				var k = h.join(','), b = $.extend({ w: 0, spent: false }, bogs[k]);
+				if (b.spent) {
+					b.w = Math.max(0, b.w - Network.BOG_REST);
+					if (b.w === 0) b.spent = false;
+				} else {
+					b.w = Math.min(1, b.w + Network.BOG_WEAR * per / 4);
+					if (b.w >= 1) b.spent = spentNow = true;
+				}
+				bogs[k] = b;
+			});
+			$SM.set(City.path(c.id, 'bogs'), bogs, true);
+			if (spentNow) {
+				var slots = City.jobSlots(c.id, 'peat cutter');
+				if (cutters > slots) $SM.set(City.path(c.id, 'workers["peat cutter"]'), slots, true);
+			}
+		});
+	},
+
+	// once a fire tick: the chain's waits, and the first resin
+	flameTick: function () {
+		var st = $SM.get('game.network.story') || {};
+		['strangerTicks', 'codaTicks'].forEach(function (k) {
+			if (st[k] > 0) $SM.set('game.network.story.' + k, st[k] - 1, true);
+		});
+		if (st.charcoalWay && !st.coda && st.codaTicks === 1) {
+			Notifications.notify(null, _("the stranger has taken a place at the pits. doesn't say much. doesn't need to."));
+			$SM.set('game.network.story.coda', true, true);
+		}
+		if (Network.has('F7') && !st.resinTraded && Network.anyCity(function (c, id) { return $SM.get(City.storePath(id, 'resin'), true) > 0; })) {
+			Notifications.notify(null, _('they hand it over in leaf cups, still soft.'));
+			$SM.set('game.network.story.resinTraded', true, true);
+		}
+	},
+
+	// the flame era's scenes at home, one at a time (Network.checkStory)
+	flameStory: function () {
+		var st = $SM.get('game.network.story') || {};
+		if (st['the charcoal stranger'] && !st.oldChimney && Network.has('H4')) return Events.Flame.oldChimney();
+		if (st.oldChimney && !st.strangerSat && !(st.strangerTicks > 0)) return Events.Flame.stranger();
+		if (st.pitsFound && !st.charcoalWay) return Events.Flame.burningPits();
+		if (Network._smoke && !st.smoke) return Events.Flame.smoke();
+		return null;
+	},
+
+	// the wanderer won a fight: on or next to a lit waystation, the waystation held (B5, provisional)
+	onFightWon: function () {
+		if (!World.state || !World.hex || !World.hex.fire || Network.flag('towerHeld') || World.state.towerHeld) return;
+		var at = World.curPos, cols = World.hex.gen.cols, map = World.state.map;
+		var held = [at].concat(District.neighbours(at)).some(function (p) {
+			return map[p[0]] && map[p[0]][p[1]] === World.TILE.OUTPOST && World.hex.fire.lit[p[0] + p[1] * cols];
+		});
+		if (held) World.state.towerHeld = true;
+	},
+
+	// goods along a road (B6): what a city can send, the stores its jobs, fuels and settlers deal in
+	goods: function () {
+		if (Network._goods) return Network._goods;
+		var g = {};
+		for (var j in City._INCOME) for (var k in City._INCOME[j].stores) g[k] = true;
+		for (var f in Fire.FUELS) g[f] = true;
+		for (var s in City.SETTLERS.stores) g[s] = true;
+		['leather', 'iron', 'steel', 'sulphur', 'cloth', 'scales', 'teeth'].forEach(function (k) { g[k] = true; });
+		return (Network._goods = Object.keys(g));
+	},
+
+	/*
+	 * Carts (provisional, flame-build.md Q4): they cost nothing, go only along a road whose every
+	 * hex is lit, and take Network.CART_STEP seconds a road hex. On their way they are
+	 * game.network.carts: [{ to, store, n, at }] (at: when they arrive, Date.now()).
+	 */
+	// the road hexes from one city to another along lit road, or -1 when no lit road joins them
+	litRoad: function (from, to) {
+		var a = $SM.get(City.path(from, 'hex')), b = $SM.get(City.path(to, 'hex')), fire = World.hex && World.hex.fire;
+		if (!a || !b || !fire) return -1;
+		var gen = World.hex.gen, cols = gen.cols, bits = Network.kinds(), dist = {}, queue = [a];
+		dist[a[0] + a[1] * cols] = 0;
+		for (var qi = 0; qi < queue.length; qi++) {
+			var q = queue[qi], dq = dist[q[0] + q[1] * cols];
+			if (q[0] === b[0] && q[1] === b[1]) return dq;
+			for (var d = 0; d < 6; d++) {
+				var p = WorldGen.neighbour(q[0], q[1], d), k = p[0] + p[1] * cols;
+				if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= gen.rows || dist[k] !== undefined) continue;
+				if (!(bits[k] & Fire.ROAD) || !fire.lit[k]) continue;
+				dist[k] = dq + 1;
+				queue.push(p);
+			}
+		}
+		return -1;
+	},
+
+	// the cities a cart can go to from this one now
+	cartsTo: function (cityId) {
+		if (!Network.has('B6')) return [];
+		return Network.joinedTo(cityId).filter(function (id) { return Network.litRoad(cityId, id) >= 0; });
+	},
+
+	// a cart of one store sets out; returns what it carries
+	sendCart: function (from, to, store) {
+		var steps = Network.cartsTo(from).indexOf(to) < 0 ? -1 : Network.litRoad(from, to);
+		if (steps < 0) return 0;
+		var have = $SM.get(City.storePath(from, store), true), n = Math.min(Network.CART, Math.floor(have));
+		if (n <= 0) return 0;
+		$SM.add(City.storePath(from, store), -n);
+		var carts = ($SM.get('game.network.carts') || []).concat([{ to: to, store: store, n: n, at: Date.now() + steps * Network.CART_STEP * 1000 }]);
+		$SM.set('game.network.carts', carts);
+		Network.deliverCarts();
+		return n;
+	},
+
+	// carts that have arrived unload (into a city that is still there); the next is waited for
+	deliverCarts: function () {
+		clearTimeout(Network._cartTimeout);
+		var carts = $SM.get('game.network.carts') || [], now = Date.now(), left = [];
+		carts.forEach(function (c) {
+			if (c.at > now) left.push(c);
+			else if ($SM.get('game.cities["' + c.to + '"]')) $SM.add(City.storePath(c.to, c.store), c.n);
+		});
+		if (left.length !== carts.length) $SM.set('game.network.carts', left);
+		if (!left.length) return;
+		var next = Math.min.apply(null, left.map(function (c) { return c.at; }));
+		Network._cartTimeout = Engine.setTimeout(Network.deliverCarts, Math.max(0, next - now) + 10);
+	},
+
+	// the road box under the land: a button to every city a road joins this one to
+	updateRoads: function () {
+		var box = $('#landRoads'), to = Network.cartsTo(City.activeCity);
+		if (!to.length) {
+			box.remove();
+			return;
+		}
+		if (!box.length) box = $('<div>').attr('id', 'landRoads').insertAfter('#fireStatus');
+		var key = City.activeCity + ':' + to.join();
+		if (box.attr('data-key') === key) return;
+		box.attr('data-key', key).empty();
+		to.forEach(function (id) {
+			new Button.Button({
+				id: 'land_road_' + id, text: _('send to {0}', $SM.get('game.cities["' + id + '"].name')), width: '80px',
+				click: function () { Events.startEvent(Events.Flame.carts(City.activeCity, id)); }
+			}).appendTo(box);
+		});
+	},
+
 	handleStateUpdates: function (e) {
 		if (e.category == 'all' || (e.stateName && e.stateName.indexOf('game.cities') === 0)) Network._districts = null;
 		if (e.category == 'stores' || (e.stateName && (e.stateName.indexOf('game.cities') === 0 ||
 			e.stateName.indexOf('game.workers') === 0 || e.stateName.indexOf('game.builder') === 0 ||
 			e.stateName.indexOf('game.temperature') === 0 || e.stateName.indexOf('game.world') === 0 ||
-			e.stateName.indexOf('game.network') === 0))) {
+			e.stateName.indexOf('game.network') === 0 || e.stateName.indexOf('game.citystates') === 0 ||
+			e.stateName.indexOf('game.population') === 0))) {
 			Network.checkUnlocks();
 		}
 	}
