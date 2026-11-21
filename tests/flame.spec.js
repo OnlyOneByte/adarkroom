@@ -333,7 +333,7 @@ test('B5: a fight won by a lit waystation, home alive, raises the watchtower', a
   expect(errors).toEqual([]);
 });
 
-test('B6: a founded city lays a road home; the road joins two cities, and carts carry goods along it', async ({ page }) => {
+test('B6: a founded city lays a road home; the road joins two cities, and carts carry goods along it, lit, in time', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(['B5']) });
   await page.locator('#location_path').click();
   const r = await page.evaluate(() => {
@@ -355,11 +355,23 @@ test('B6: a founded city lays a road home; the road joins two cities, and carts 
   await expect(page.locator('#event')).toContainText('carts stand ready on the road to second town.');
   const before = await page.evaluate(() => ({ cap: $SM.get('stores.wood'), c2: $SM.get('game.cities.city2.stores.wood') || 0 }));
   await choose(page, 'send wood');
-  const after = await page.evaluate(() => ({ cap: $SM.get('stores.wood'), c2: $SM.get('game.cities.city2.stores.wood') }));
-  expect(after.cap).toBe(before.cap - 100);
-  expect(after.c2).toBe(before.c2 + 100);
-  // no road, no carts
-  expect(await page.evaluate(() => Network.sendCart('capital', 'nowhere', 'wood'))).toBe(0);
+  // the cart is on its way: a second a road hex (provisional)
+  const out = await page.evaluate(() => ({ cap: $SM.get('stores.wood'), c2: $SM.get('game.cities.city2.stores.wood') || 0,
+    carts: $SM.get('game.network.carts').length, steps: Network.litRoad('capital', 'city2') }));
+  expect(out.cap).toBe(before.cap - 100);
+  expect(out.c2).toBe(before.c2);
+  expect(out.carts).toBe(1);
+  expect(out.steps).toBeGreaterThan(0);
+  await page.waitForFunction((want) => $SM.get('game.cities.city2.stores.wood') === want, before.c2 + 100, { timeout: out.steps * 1000 + 5000 });
+  expect(await page.evaluate(() => $SM.get('game.network.carts'))).toEqual([]);
+  // no road, no carts; a road gone dark, no carts either
+  const dark = await page.evaluate(() => {
+    const none = Network.sendCart('capital', 'nowhere', 'wood');
+    const g = World.hex.gen, fire = World.hex.fire;
+    for (let x = 0; x < g.cols; x++) for (let y = 0; y < g.rows; y++) if (World.hex.map[x][y] === World.TILE.ROAD) fire.lit[x + y * g.cols] = 0;
+    return { none, to: Network.cartsTo('capital'), sent: Network.sendCart('capital', 'city2', 'wood') };
+  });
+  expect(dark).toEqual({ none: 0, to: [], sent: 0 });
   expect(errors).toEqual([]);
 });
 

@@ -38,6 +38,7 @@ var Network = {
 	BAND2: 4,            // the danger where band 2 starts (Danger.BAND_SIZE * 2): the garrison's hills
 	ROAD_REACH: 12,      // a founded city's road looks this far for a road or a city to join
 	CART: 100,           // what one cart carries along a road (B6)
+	CART_STEP: 1,        // seconds a cart takes a road hex: a trek step's worth of real time (STEP_SECONDS in the sim)
 	BOG_WEAR: 0.004,     // a bog cut dug deep, worn a fire tick by four cutters (spent in ~40 min)
 	BOG_REST: 0.002,     // and rested a tick while it is spent (back in ~80 min)
 	// the beats that come from outside the ladders' own checks (Fire.unlock), and the flag each sets
@@ -128,6 +129,7 @@ var Network = {
 		$.Dispatch('stateUpdate').subscribe(Network.handleStateUpdates);
 		Network.refresh();
 		Network.scheduleTick();
+		Network.deliverCarts();
 	},
 
 	flag: function (k) {
@@ -1254,20 +1256,67 @@ var Network = {
 		return (Network._goods = Object.keys(g));
 	},
 
-	// a cart of one store from a city to one a road joins it to; returns what it carried
-	// shortcut: carts arrive at once, at no cost; give them a road's travel time if the user wants it
+	/*
+	 * Carts (provisional, flame-build.md Q4): they cost nothing, go only along a road whose every
+	 * hex is lit, and take Network.CART_STEP seconds a road hex. On their way they are
+	 * game.network.carts: [{ to, store, n, at }] (at: when they arrive, Date.now()).
+	 */
+	// the road hexes from one city to another along lit road, or -1 when no lit road joins them
+	litRoad: function (from, to) {
+		var a = $SM.get(City.path(from, 'hex')), b = $SM.get(City.path(to, 'hex')), fire = World.hex && World.hex.fire;
+		if (!a || !b || !fire) return -1;
+		var gen = World.hex.gen, cols = gen.cols, bits = Network.kinds(), dist = {}, queue = [a];
+		dist[a[0] + a[1] * cols] = 0;
+		for (var qi = 0; qi < queue.length; qi++) {
+			var q = queue[qi], dq = dist[q[0] + q[1] * cols];
+			if (q[0] === b[0] && q[1] === b[1]) return dq;
+			for (var d = 0; d < 6; d++) {
+				var p = WorldGen.neighbour(q[0], q[1], d), k = p[0] + p[1] * cols;
+				if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= gen.rows || dist[k] !== undefined) continue;
+				if (!(bits[k] & Fire.ROAD) || !fire.lit[k]) continue;
+				dist[k] = dq + 1;
+				queue.push(p);
+			}
+		}
+		return -1;
+	},
+
+	// the cities a cart can go to from this one now
+	cartsTo: function (cityId) {
+		if (!Network.has('B6')) return [];
+		return Network.joinedTo(cityId).filter(function (id) { return Network.litRoad(cityId, id) >= 0; });
+	},
+
+	// a cart of one store sets out; returns what it carries
 	sendCart: function (from, to, store) {
-		if (!Network.has('B6') || Network.joinedTo(from).indexOf(to) < 0) return 0;
+		var steps = Network.cartsTo(from).indexOf(to) < 0 ? -1 : Network.litRoad(from, to);
+		if (steps < 0) return 0;
 		var have = $SM.get(City.storePath(from, store), true), n = Math.min(Network.CART, Math.floor(have));
 		if (n <= 0) return 0;
 		$SM.add(City.storePath(from, store), -n);
-		$SM.add(City.storePath(to, store), n);
+		var carts = ($SM.get('game.network.carts') || []).concat([{ to: to, store: store, n: n, at: Date.now() + steps * Network.CART_STEP * 1000 }]);
+		$SM.set('game.network.carts', carts);
+		Network.deliverCarts();
 		return n;
+	},
+
+	// carts that have arrived unload (into a city that is still there); the next is waited for
+	deliverCarts: function () {
+		clearTimeout(Network._cartTimeout);
+		var carts = $SM.get('game.network.carts') || [], now = Date.now(), left = [];
+		carts.forEach(function (c) {
+			if (c.at > now) left.push(c);
+			else if ($SM.get('game.cities["' + c.to + '"]')) $SM.add(City.storePath(c.to, c.store), c.n);
+		});
+		if (left.length !== carts.length) $SM.set('game.network.carts', left);
+		if (!left.length) return;
+		var next = Math.min.apply(null, left.map(function (c) { return c.at; }));
+		Network._cartTimeout = Engine.setTimeout(Network.deliverCarts, Math.max(0, next - now) + 10);
 	},
 
 	// the road box under the land: a button to every city a road joins this one to
 	updateRoads: function () {
-		var box = $('#landRoads'), to = Network.has('B6') ? Network.joinedTo(City.activeCity) : [];
+		var box = $('#landRoads'), to = Network.cartsTo(City.activeCity);
 		if (!to.length) {
 			box.remove();
 			return;

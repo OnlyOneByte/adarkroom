@@ -271,7 +271,7 @@ Events.Flame = {
 
 	/*
 	 * Carts along a road (B6, provisional; its lines are drafts, design/text/flame-build.md): a
-	 * cart of up to Network.CART of a store at a time, from a city to one a road joins it to.
+	 * cart of up to Network.CART of a store at a time, along lit road (Network.sendCart).
 	 */
 	carts: function (from, to) {
 		var name = $SM.get('game.cities["' + to + '"].name'), buttons = {};
