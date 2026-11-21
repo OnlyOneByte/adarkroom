@@ -72,7 +72,7 @@ test('fresh save: 20 huts and a trading post open the town, which builds and wor
 
   // Everything lands in the save.
   const saved = await page.evaluate(() => JSON.parse(localStorage.gameState));
-  expect(saved.version).toBe(2.4);
+  expect(saved.version).toBe(2.5);
   expect(saved.features.location.city).toBe(true);
   expect(saved.game.cities.capital.buildings).toEqual({ house: 1 });
   expect(errors).toEqual([]);
@@ -106,10 +106,10 @@ test('city-scoped income pays into that city, not the capital', async ({ page })
   expect(errors).toEqual([]);
 });
 
-test('the v1.3 fixture migrates to v2.4 without a town', async ({ page }) => {
+test('the v1.3 fixture migrates to v2.5 without a town', async ({ page }) => {
   const errors = await openGame(page, { save: fixture });
   const state = await getState(page);
-  expect(state.version).toBe(2.4);
+  expect(state.version).toBe(2.5);
   expect(state.features.location.city).toBeUndefined();
   expect(state.game.cities).toBeUndefined();
   expect(state.game.empire).toBeUndefined();
@@ -123,7 +123,7 @@ test('a v1.3 save that already has 20 huts and a trading post opens the town on 
   save.game.buildings.hut = 20;
   const errors = await openGame(page, { save });
   const state = await getState(page);
-  expect(state.version).toBe(2.4);
+  expect(state.version).toBe(2.5);
   expect(state.features.location.city).toBe(true);
   expect(Object.keys(state.game.cities)).toEqual(['capital']);
   // the village's own state is untouched by the unlock

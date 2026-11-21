@@ -38,6 +38,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BUDGETS = {
   incomeTick: { max: 16, unit: 'ms' },
   fireTick: { max: 16, unit: 'ms' },
+  cityStatesTick: { max: 16, unit: 'ms' },
   network: { max: 50, unit: 'ms' },
   networkCut: { max: 50, unit: 'ms' },
   fireCompute: { max: 50, unit: 'ms' },
@@ -99,7 +100,7 @@ var Button = { Button: function () { return __dom; }, setDisabled: function () {
 var Space = {}, AudioEngine = { playSound: function () {} }, AudioLibrary = {};
 var Events = { activeEvent: function () { return null; }, startEvent: function () {}, Story: {} };
 `;
-const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network'];
+const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'citystates', 'events/citystates'];
 
 // Loads the game's scripts as globals of this process, as the page does. (Not a vm context: every
 // global lookup there goes through the context's interceptor, some 250x slower, which would swamp
@@ -123,6 +124,7 @@ export function loadGame({ seed }) {
     $SM.set('game.empire.treasury', {}, true);
     $SM.set('game.network', { tiers: {}, beacons: {}, story: {} }, true);
     World.openHexMap();
+    CityStates.init();
     // the handlers the modules subscribe in their init
     $.Dispatch('stateUpdate').subscribe($SM.handleStateUpdates);
     $.Dispatch('stateUpdate').subscribe(City.handleStateUpdates);
@@ -172,6 +174,12 @@ export function benchNode({ cities = 64, beacons = 500, seed = 7 } = {}) {
   const ft = counted(() => Network.tick());
   row('fireTick', 'fire tick, 10 s (Network.tick), median of 10', fire.median,
     `max ${fire.max.toFixed(1)} ms; ${ft.saves} full saves and ${ft.events} state events a tick`);
+
+  // the 10 s city-state tick, right after the fire's: every city-state's glow, influence, rivals
+  const cst = time(() => CityStates.update(), 10);
+  const cs = counted(() => CityStates.update());
+  row('cityStatesTick', 'city-state tick, 10 s (CityStates.update), median of 10', cst.median,
+    `max ${cst.max.toFixed(1)} ms; ${CityStates.list().length} city-states; ${cs.saves} full saves and ${cs.events} state events a tick`);
 
   // the network from scratch: the refresh a click on the land makes, and Fire.compute inside it
   const refresh = time(() => Network.refresh(), 10);

@@ -96,6 +96,8 @@ export async function onHexTrek(page) {
   const { errors } = await freshToTown(page);
   await page.locator('#location_path').click();
   await page.evaluate(() => {
+    // no first-sighting scenes of city-states mid-test (tests/citystates.spec.js has its own)
+    for (const t in CityStates.TEMPERAMENTS) $SM.set('game.citystates.sighted["' + t + '"]', true, true);
     packMeat();
     Path.embark();
     Math.random = () => 0.99; // no fights

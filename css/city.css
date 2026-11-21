@@ -1,12 +1,5 @@
-/* everything in the town is placed absolutely; a height keeps the next panel from floating over it */
-div#cityPanel {
-	min-height: 1000px;
-}
-
-/* the page grows to fit the town panel while it shows (Engine.travelTo) */
-body.tallTown div#content, body.tallTown div#outerSlider > div#main {
-	height: 1000px;
-}
+/* everything in the town is placed absolutely; City.fitHeight sizes the panel, and the page while the
+   town shows, to what is in it */
 
 div#cityBuildBtns {
 	position: absolute;
@@ -125,4 +118,47 @@ div#landSettlers {
 
 div#landSettlers .button {
 	margin: 4px 0px 0px 0px;
+}
+
+/* the city-states we know, under the land (script/citystates.js) */
+div#cityStates {
+	margin-top: 10px;
+	clear: both;
+	max-height: 320px;
+	overflow-y: auto;
+}
+
+div#cityStates:before {
+	content: attr(data-legend);
+	position: relative;
+	top: -5px;
+}
+
+div#cityStates .csRow {
+	position: relative;
+	cursor: pointer;
+}
+
+div#cityStates .csRow.selected .row_key {
+	font-weight: bold;
+}
+
+div#cityStates .csActions, div#csEnvoy {
+	margin: 4px 0px 8px 10px;
+	font-size: 14px;
+}
+
+div#cityStates .csLine {
+	color: #666;
+	margin-bottom: 4px;
+}
+
+div#cityStates .csActions .button, div#csEnvoy .button {
+	float: left;
+	margin: 4px 8px 4px 0px;
+}
+
+div#csEnvoy .csPack {
+	position: relative;
+	width: 200px;
 }
