@@ -610,6 +610,7 @@ var CityStates = {
 			if (typeof q.walked == 'number') q.walked = null;
 			if (all[id].fetched && !all[id].quest) all[id].fetched = false;
 		}
+		CityStates._well = $SM.get('game.citystates.well') || null;
 		CityStates.onHexMap();
 		CityStates.scheduleTick();
 	},
@@ -709,7 +710,7 @@ var CityStates = {
 	// what a hex of theirs shows: [glyph, bold], or null
 	glyphAt: function (x, y) {
 		// a quest's marked hex: its ground, bold
-		if (CityStates.questHere(x, y)) return [World.hex.gen.terrain[x][y], true];
+		if (CityStates.questHere(x, y) || CityStates.wellAt(x, y)) return [World.hex.gen.terrain[x][y], true];
 		var c = CityStates.landAt(x, y);
 		if (!c) return null;
 		if (c.at[0] === x && c.at[1] === y) return [CityStates.GLYPH, true];
@@ -727,6 +728,7 @@ var CityStates = {
 		if (e && e.fell && e.fell[0] === x && e.fell[1] === y) return CityStates.nb(_('an envoy, waiting.'));
 		var q = CityStates.questLabel(x, y);
 		if (q) return q;
+		if (CityStates.wellAt(x, y)) return CityStates.nb(_('a black stain on the ice.'));
 		var c = CityStates.landAt(x, y);
 		if (!c) return null;
 		if (c.at[0] !== x || c.at[1] !== y) return CityStates.nb(CityStates.fill(_("{name}'s land."), c));
@@ -826,7 +828,7 @@ var CityStates = {
 					notes.push(CS.fill(_('the light has gone from {name}. they stop coming to the gate.'), c));
 					$SM.set(path + '.faded', true, true);
 				} else if (inf === st.floor && st.faded !== 'floor') {
-					notes.push(CS.fill(_('{name} remember the light. they wait.'), c));
+					notes.push(CS.fill(_('the people of {name} remember the light. they wait.'), c));
 					$SM.set(path + '.faded', 'floor', true);
 				}
 			}
@@ -841,7 +843,7 @@ var CityStates = {
 					var pull = CS.RIVAL_PULL(p.band) * perTick * (G > 0 && CS.touched(c) ? 0.5 : 1);
 					inf -= pull;
 					if (!st.pulled) {
-						notes.push(CS.fill(_('{name} have had other visitors. they listen less now.'), c));
+						notes.push(CS.fill(_('the people of {name} have had other visitors. they listen less now.'), c));
 						$SM.set(path + '.pulled', true, true);
 					}
 				});
@@ -852,7 +854,7 @@ var CityStates = {
 			if (c.t === 'walled_holdfast' && st.told && st.told[25] && !st.work && Network.has('B4') && CS.touched(c)) {
 				$SM.set(path + '.work', true, true);
 				inf = Math.min(Math.max(inf, 0) + CS.SIDE_ASK, top);
-				notes.push(CS.fill(_('the {work} is up. {name} come out to look at it.'), c, { work: _('watch fire') }));
+				notes.push(CS.fill(_('the {work} is up. the people of {name} come out to look at it.'), c, { work: _('watch fire') }));
 			}
 			// reavers near a resident envoy
 			if (st.envoy && now % CS.REAVER_EVERY === 0 && CS.reaversNear(c) && Math.random() < CS.REAVER_CHANCE) {
@@ -941,11 +943,11 @@ var CityStates = {
 			if (n === Math.floor(CS.LIGHT_HOLD / 2)) notes.push(CS.fill(_('the fire on {place} still burns.'), c, { place: place }));
 			if (n >= CS.LIGHT_HOLD) {
 				$SM.set(path + '.quest', true, true);
-				notes.push(CS.fill(_('the fire on {place} has burned the night through. {name} have seen it.'), c, { place: place }));
+				notes.push(CS.fill(_('the fire on {place} has burned the night through. the people of {name} have seen it.'), c, { place: place }));
 			}
 		} else if (st.lit) {
 			$SM.set(path + '.lit', 0, true);
-			notes.push(CS.fill(_('the fire on {place} has gone out. {name} turn away from it.'), c, { place: place }));
+			notes.push(CS.fill(_('the fire on {place} has gone out. the people of {name} turn away from it.'), c, { place: place }));
 		}
 	},
 
@@ -982,9 +984,9 @@ var CityStates = {
 			}
 		} else if (t === 50) {
 			if (c.t === 'bog_cutters') Events.startEvent(Events.CityStates.bogCutters(c));
-			else Notifications.notify(null, CS.fill(_('{name} listen when the envoy speaks.'), c));
+			else Notifications.notify(null, CS.fill(_('the people of {name} listen when the envoy speaks.'), c));
 		} else if (t === 75) {
-			Notifications.notify(null, CS.fill(_('{name} lean toward the light.'), c));
+			Notifications.notify(null, CS.fill(_('the people of {name} lean toward the light.'), c));
 		}
 		if (text.flavour && text.flavour[t] && !(c.t === 'bog_cutters' && t === 50)) Notifications.notify(null, text.flavour[t]);
 	},
@@ -1015,21 +1017,21 @@ var CityStates = {
 		// a price first: told at 25, paid in full, they join
 		var price = CS.tribute(c.t, c.band);
 		if (price && st.told && st.told[25] && CS.covers(goods, price)) {
-			lines.push(CS.fill(_('the {goods} are counted at the gate. {name} open it.'), c, { goods: CS.goods(price) }));
+			lines.push(CS.fill(_('the {goods} are counted at the gate. the people of {name} open it.'), c, { goods: CS.goods(price) }));
 			CS.join(c, 'price');
 			return lines;
 		}
 		var inf = st.inf || 0;
-		if (inf >= CS.GIFT_CAP) return [CS.fill(_('{name} thank you. it\'s the light they watch now.'), c)];
+		if (inf >= CS.GIFT_CAP) return [CS.fill(_('the people of {name} thank you. it\'s the light they watch now.'), c)];
 		var now = CS.tick(), g = st.gift || { tick: -Infinity, mult: 1 };
 		var mult = now - g.tick < CS.GIFT_WINDOW ? g.mult / 2 : 1;
 		var w = CS.wantsOf(c.t, st), worth = CS.giftWorth(c.t, st, goods, S) * mult;
 		var any = Object.keys(goods).filter(function (k) { return goods[k] > 0; });
 		var wanted = any.some(function (k) { return CS.want(w, k) === 2; }), scorned = any.every(function (k) { return CS.want(w, k) === 0; });
-		if (scorned) lines.push(CS.fill(_('{name} leave the {goods} at the gate.'), c, { goods: list }));
-		else if (mult < 1) lines.push(CS.fill(_("{name} take it. they've had a great deal lately."), c));
-		else if (wanted) lines.push(CS.fill(_('{name} take the {goods} gladly.'), c, { goods: list }));
-		else lines.push(CS.fill(_('{name} take the {goods}.'), c, { goods: list }));
+		if (scorned) lines.push(CS.fill(_('the people of {name} leave the {goods} at the gate.'), c, { goods: list }));
+		else if (mult < 1) lines.push(CS.fill(_("the people of {name} take it. they've had a great deal lately."), c));
+		else if (wanted) lines.push(CS.fill(_('the people of {name} take the {goods} gladly.'), c, { goods: list }));
+		else lines.push(CS.fill(_('the people of {name} take the {goods}.'), c, { goods: list }));
 		var to = Math.min(CS.GIFT_CAP, inf + worth);
 		$SM.set(path + '.gift', { tick: now, mult: mult }, true);
 		$SM.set(path + '.inf', to);
@@ -1185,7 +1187,7 @@ var CityStates = {
 		$SM.set('game.citystates.cs["' + id + '"].envoy', false);
 		CityStates.backHome({ from: from === true ? City.CAPITAL : from });
 		Notifications.notify(null, CityStates.fill(_('the envoy is called home.'), c));
-		Notifications.notify(null, CityStates.fill(_('{name} watch them go.'), c));
+		Notifications.notify(null, CityStates.fill(_('the people of {name} watch them go.'), c));
 		CityStates.updatePanel();
 		return true;
 	},
@@ -1258,9 +1260,9 @@ var CityStates = {
 	report: function (c) {
 		var CS = CityStates, st = CS.state(c.id), w = CS.wantsOf(c.t, st).wants;
 		CS.tell(c);
-		if (w.length) Notifications.notify(null, CS.fill(_('the envoy sends word. {name} want {goods}.'), c, { goods: w.map(function (g) { return _(g); }).join(', ') }));
+		if (w.length) Notifications.notify(null, CS.fill(_('the envoy sends word. the people of {name} want {goods}.'), c, { goods: w.map(function (g) { return _(g); }).join(', ') }));
 		if (CS.tribute(c.t, c.band)) Notifications.notify(null, CS.fill(_('the envoy sends word. {name} would join, for a price.'), c));
-		if (CS.TEMPERAMENTS[c.t].quest_pool.length) Notifications.notify(null, CS.fill(_('the envoy sends word. {name} have a task, if anyone will do it.'), c));
+		if (CS.TEMPERAMENTS[c.t].quest_pool.length) Notifications.notify(null, CS.fill(_('the envoy sends word. the people of {name} have a task, if anyone will do it.'), c));
 		if (st.pulled) Notifications.notify(null, CS.fill(_("the envoy sends word. riders have been at {name}'s gate."), c));
 	},
 
@@ -1406,7 +1408,8 @@ var CityStates = {
 		MEET_STEPS: 20,          // fixes C21
 		DRIFT_STEPS: 50,         // the drifters move a hex every 50 trek steps (content spawn.moves)
 		CHAIN: 'the black well', // the drifters start this chain (F12)
-		MAPS: 20                 // the clerks' old maps show the Π and Ø this far around
+		MAPS: 20,                // the clerks' old maps show the Π and Ø this far around
+		WELL: 6                  // provisional: the black well, this far north of the drifters' camp
 	},
 
 	// the quest of a temperament, or null (the ash-faithful's light quest has its own rules)
@@ -1542,6 +1545,7 @@ var CityStates = {
 			if (!q) return;
 			var on = q.at && q.at[0] === x && q.at[1] === y;
 			if (type === 'find') {
+				if (q.party === 'with') CS.partySupplies(c, q);
 				if (on && q.party === 'waiting') {
 					// they walk with you, like lost settlers
 					$SM.set(path + '.party', 'with', true);
@@ -1568,6 +1572,88 @@ var CityStates = {
 			}
 		});
 		return started;
+	},
+
+	// the find party eats and drinks from the trek's supplies as the wanderer does, one share each
+	partySupplies: function (c, q) {
+		var CS = CityStates, n = q.people || CS.questType(c.t).size, path = 'game.citystates.cs["' + c.id + '"].q';
+		var food = (q.food || 0) + 1, water = (q.water || 0) + 1;
+		var perFood = World.MOVES_PER_FOOD * ($SM.hasPerk('slow metabolism') ? 2 : 1);
+		var perWater = World.MOVES_PER_WATER * ($SM.hasPerk('desert rat') ? 2 : 1);
+		if (food >= perFood) {
+			food = 0;
+			Path.outfit['cured meat'] = Math.max(0, (Path.outfit['cured meat'] || 0) - n);
+		}
+		if (water >= perWater) {
+			water = 0;
+			World.setWater(Math.max(0, World.water - n));
+		}
+		$SM.set(path + '.food', food, true);
+		$SM.set(path + '.water', water, true);
+		World.updateSupplies();
+	},
+
+	// a fallen party waits with the dropped pack, thinned by the scavengers like lost settlers (3b):
+	// how many still hold out, or null
+	partyLeft: function (pack) {
+		if (!pack || !pack.party) return null;
+		var n = Math.floor(pack.party.people * pack.left);
+		return n > 0 ? n : null;
+	},
+
+	// the party's name, for the pack's hover line
+	partyName: function (pack) {
+		var c = CityStates.byId(pack.party.cs);
+		return c ? _(CityStates.questType(c.t).party) : '';
+	},
+
+	// the corpse run reaches the pack: who held out fall in again; none, and the party is gone
+	partyBack: function (pack) {
+		var CS = CityStates, c = CS.byId(pack.party.cs), n = CS.partyLeft(pack);
+		if (!c) return;
+		if (!n) {
+			CS.partyGone(c);
+			return;
+		}
+		var path = 'game.citystates.cs["' + c.id + '"].q';
+		$SM.set(path + '.party', 'with', true);
+		$SM.set(path + '.people', n, true);
+		$SM.set(path + '.picked', true, true);
+		Notifications.notify(World, CS.fill(_('the {party} fall in behind.'), c, { party: _(CS.questType(c.t).party) }));
+	},
+
+	// the party is lost: the content's fail line; the quest stays open, a new party waits on the marked hex
+	partyGone: function (c) {
+		var CS = CityStates, path = 'game.citystates.cs["' + c.id + '"].q';
+		$SM.set(path + '.party', 'waiting', true);
+		$SM.set(path + '.people', CS.questType(c.t).size, true);
+		$SM.set(path + '.picked', false, true);
+		CS._quests = null;
+		Notifications.notify(null, CS.fill(_('the lost party is gone. scavengers got there first.'), c));
+	},
+
+	// the black well the drifters point to: a hex north of their camp, marked on the map (F12's chain)
+	markWell: function (c) {
+		var CS = CityStates, gen = World.hex.gen, at = c.at.slice(), taken = {};
+		CS.list().forEach(function (o) { o.land.forEach(function (h) { taken[h[0] + ',' + h[1]] = true; }); });
+		for (var i = 0; i < CS.QUEST.WELL; i++) {
+			var n = WorldGen.neighbour(at[0], at[1], i % 2 ? 5 : 4); // north-west, north-east: due north
+			if (n[1] < 0) break;
+			at = n;
+		}
+		var near = Fire.around(at[0], at[1], 3).filter(function (p) { return CS.freeLand(gen, p[0], p[1], taken); })
+			.sort(function (a, b) { return Fire.distance(a, at) - Fire.distance(b, at); })[0] || at;
+		$SM.set('game.citystates.well', near.slice());
+		CS._well = near.slice();
+		var mask = World.state ? World.state.mask : World.hex.mask;
+		mask[near[0]][near[1]] = true;
+		if (!World.state) World.saveHex(World.worldFlags());
+		return near;
+	},
+
+	wellAt: function (x, y) {
+		var w = CityStates._well;
+		return !!w && w[0] === x && w[1] === y;
 	},
 
 	// the drifters move a hex every DRIFT_STEPS trek steps; caught at their camp, sample scene 6; then the walk
@@ -1613,14 +1699,20 @@ var CityStates = {
 			if (!q || st.city || st.quest) return;
 			var t = CS.questType(c.t);
 			if (q.type === 'find' && q.party === 'with' && died) {
-				$SM.set(path + '.q.party', 'waiting', true);
-				CS._quests = null;
-				Notifications.notify(null, CS.fill(_('the lost party is gone. scavengers got there first.'), c));
+				// fallen once, they wait by the pack (World.dropPack has just made it); a second fall loses them
+				if (q.picked) {
+					CS.partyGone(c);
+					return;
+				}
+				var pack = $SM.get('game.world.pack') || { at: World.curPos.slice(), items: {}, left: 1 };
+				pack.party = { cs: c.id, people: q.people || t.size };
+				$SM.set('game.world.pack', pack);
+				$SM.set(path + '.q.party', 'fallen', true);
 			} else if (q.type === 'clear' && died && CS._fighting === c.id) {
-				Notifications.notify(null, CS.fill(_('the {foe} are still there. {name} stay behind their walls.'), c, { foe: _(t.foe) }));
+				Notifications.notify(null, CS.fill(_('the {foe} are still there. the people of {name} stay behind their walls.'), c, { foe: _(t.foe) }));
 			} else if (q.type === 'meet' && typeof q.walked == 'number') {
 				$SM.set(path + '.q.walked', null, true);
-				Notifications.notify(null, CS.fill(_('{name} have moved on. the tracks are filling with snow.'), c));
+				Notifications.notify(null, CS.fill(_('the people of {name} have moved on. the tracks are filling with snow.'), c));
 			} else if (q.type === 'fetch' && died && st.fetched) {
 				// it went into the dropped pack with the rest of the bag; the site gives another
 				$SM.set(path + '.fetched', false, true);
@@ -1636,9 +1728,9 @@ var CityStates = {
 		$SM.set('game.citystates.cs["' + c.id + '"].quest', true, true);
 		CS._quests = null;
 		var line = {
-			find: _('the lost walk in through the gate. {name} come out to meet them.'),
+			find: _('the lost walk in through the gate. the people of {name} come out to meet them.'),
 			clear: _("the {foe} won't trouble {name} again."),
-			fetch: _('the {thing} is handed over. {name} look at it a long time.')
+			fetch: _('the {thing} is handed over. the people of {name} look at it a long time.')
 		}[q.type];
 		if (line) Notifications.notify(null, CS.fill(line, c, { foe: _(q.foe || ''), thing: _(q.thing || '') }));
 		var scene = { resin_tappers: ev.lostTappers, tar_keepers: ev.tarSwear, archive_clerks: ev.archiveClerks }[c.t];
@@ -1651,7 +1743,10 @@ var CityStates = {
 	questJoin: function (c) {
 		var CS = CityStates;
 		if (c.t === 'resin_tappers') $SM.set('game.citystates.beats["jungle jobs"]', c.id);
-		if (c.t === 'drifters') $SM.set('game.citystates.beats["' + CS.QUEST.CHAIN + '"]', c.id);
+		if (c.t === 'drifters') {
+			$SM.set('game.citystates.beats["' + CS.QUEST.CHAIN + '"]', c.id);
+			CS.markWell(c);
+		}
 		if (c.t === 'archive_clerks') CS.oldMaps(c);
 		return CS.join(c, 'quest');
 	},

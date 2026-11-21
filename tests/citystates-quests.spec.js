@@ -60,13 +60,45 @@ test('find: the lost tappers walk home with the trek; the resin-tappers join (F7
   expect(marked.glyph[1]).toBe(true);
   expect(marked.label).toContain('lost&nbsp;tappers');
 
-  // a trek that falls with them: they wait on the marked hex again
-  await page.evaluate((q) => { trek(); stepOnto(q.at); }, q);
-  expect((await state(page)).q.party).toBe('with');
-  await page.evaluate(() => CityStates.questFail(true));
-  expect((await state(page)).q.party).toBe('waiting');
+  // with the trek they drink like the wanderer, one share each
+  const drink = await page.evaluate((q) => {
+    trek();
+    stepOnto(q.at);
+    // the step that is due a drink and a meal: four of them, four shares
+    const st = CityStates.state(cs.id).q;
+    $SM.set('game.citystates.cs["' + cs.id + '"].q.water', World.MOVES_PER_WATER - 1, true);
+    $SM.set('game.citystates.cs["' + cs.id + '"].q.food', World.MOVES_PER_FOOD - 1, true);
+    World.setWater(15);
+    Path.outfit['cured meat'] = 6;
+    CityStates.partySupplies(cs, CityStates.state(cs.id).q);
+    return { party: st.party, water: World.water, meat: Path.outfit['cured meat'] };
+  }, q);
+  expect(drink).toEqual({ party: 'with', water: 11, meat: 2 });
 
-  await page.evaluate((q) => { stepOnto(q.at); stepOnto(cs.at); }, q);
+  // the trek falls: they wait by the dropped pack, and the scavengers thin them like lost settlers
+  await page.evaluate(() => World.die());
+  await page.waitForFunction(() => Engine.activeModule === Room && !Engine.keyLock, null, { timeout: 10000 });
+  let pack = await page.evaluate(() => JSON.parse(JSON.stringify($SM.get('game.world.pack'))));
+  expect(pack.party).toEqual({ cs: c.id, people: 4 });
+  expect((await state(page)).q.party).toBe('fallen');
+  expect(await page.evaluate(() => World.packLabel($SM.get('game.world.pack')))).toContain('lost&nbsp;tappers&nbsp;4');
+  // the corpse run: half of them held out
+  const back = await page.evaluate((p) => {
+    trek();
+    World.state.pack.left = 0.6; // about half held out (the step itself thins them a little)
+    stepOnto(p.at);
+    return JSON.parse(JSON.stringify(CityStates.state(cs.id).q));
+  }, pack);
+  expect(back).toMatchObject({ party: 'with', people: 2, picked: true });
+  // falling again loses them: the content's fail line, and a new party waits on the marked hex
+  await page.evaluate(() => World.die());
+  await page.waitForFunction(() => Engine.activeModule === Room && !Engine.keyLock, null, { timeout: 10000 });
+  const lost = await page.evaluate(() => ({ q: JSON.parse(JSON.stringify(CityStates.state(cs.id).q)), pack: $SM.get('game.world.pack'),
+    notes: $('#notifications .notification').map((i, n) => $(n).text()).get().join(' | ') }));
+  expect(lost.q).toMatchObject({ party: 'waiting', people: 4, picked: false });
+  expect(lost.notes).toContain('the lost party is gone. scavengers got there first.');
+
+  await page.evaluate((q) => { trek(); stepOnto(q.at); stepOnto(cs.at); }, q);
   await expect(page.locator('#event')).toContainText('the tappers come home thin');
   await page.screenshot({ path: 'test-results/quest-find.png' });
   await choose(page, 'go on');
@@ -151,6 +183,17 @@ test('meet: the drifters move every 50 steps; "go on alone" keeps the quest; 20 
   st = await state(page);
   expect(st.city).toBeTruthy();
   expect(await beats(page)).toMatchObject({ F12: c.id, 'the black well': c.id });
+  // the black well is marked north of their camp: its ground, bold, and a hover line
+  const well = await page.evaluate(() => {
+    const w = $SM.get('game.citystates.well'), at = CityStates.byId(cs.id).at;
+    return { w, north: w[1] < at[1], seen: !!World.state.mask[w[0]][w[1]], glyph: World.hexGlyph(w[0], w[1]), label: World.hexLabel(w[0], w[1]) };
+  });
+  expect(well.north).toBe(true);
+  expect(well.seen).toBe(true);
+  expect(well.glyph[1]).toBe(true);
+  expect(well.label).toBe('a&nbsp;black&nbsp;stain&nbsp;on&nbsp;the&nbsp;ice.');
+  // fixes C19: a place name's plural-verb lines speak of its people
+  await expect(page.locator('#notifications')).toContainText(`the people of ${c.name} carry their coals`);
   expect(errors).toEqual([]);
 });
 
