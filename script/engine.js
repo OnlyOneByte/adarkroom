@@ -687,6 +687,11 @@
       }
 
       Engine.activeModule = module;
+      // the town panel, with its land and cities, is taller than the others; the village's stockpile
+      // is the capital's, hidden while the town panel shows another city
+      var town = typeof City != 'undefined' && module == City;
+      $('body').toggleClass('tallTown', town);
+      $('#storesContainer').css('visibility', town && City.activeCity != City.CAPITAL ? 'hidden' : '');
       module.onArrival(diff);
       Notifications.printQueue(module);
     },

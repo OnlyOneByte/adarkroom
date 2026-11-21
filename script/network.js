@@ -523,10 +523,11 @@ var Network = {
 		var f = Network.foundingSite(s.to[0], s.to[1]);
 		if (!f) {
 			Notifications.notify(World, _("the fire doesn't reach here any more. the settlers won't stay."));
-			// they go back to the city they came from
+			// they go back to the city they came from, with what they carried
 			if ($SM.get('game.cities["' + s.from + '"]')) {
 				if (s.from == City.CAPITAL) $SM.add('game.population', s.people);
 				else $SM.add(City.path(s.from, 'population.citizens'), s.people);
+				$SM.addM(City.storesPath(s.from), s.stores);
 			}
 			return null;
 		}
