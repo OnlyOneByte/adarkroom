@@ -10,6 +10,7 @@
     "start": "node dev-server.js",
     "update_pot": "pybabel extract -F lang/babel.cfg -c \"TRANSLATORS\" script -o lang/adarkroom.pot",
     "test": "playwright test",
+    "test:slow": "PW_SLOW=1 playwright test",
     "sim": "node tools/sim.js"
   },
   "dependencies": {
