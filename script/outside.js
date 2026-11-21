@@ -92,6 +92,18 @@ var Outside = {
 				'sulphur': -1,
 				'bullets': 1
 			}
+		},
+		// the blaze era (blaze-draft, power 4 Q): once coke is in (F9), the armoury makes grenades from
+		// sulphur and steel; provisional numbers
+		'grenadier': {
+			name: _('grenadier'),
+			delay: 10,
+			needs: 'F9',
+			stores: {
+				'steel': -2,
+				'sulphur': -2,
+				'grenade': 1
+			}
 		}
 	},
 	TrapDrops: [
@@ -484,14 +496,15 @@ var Outside = {
 			'coal mine': ['coal miner'],
 			'sulphur mine': ['sulphur miner'],
 			'steelworks': ['steelworker'],
-			'armoury' : ['armourer']
+			'armoury' : ['armourer', 'grenadier']
 		};
 		
 		var jobs = jobMap[name];
 		var added = false;
 		if(typeof jobs == 'object') {
 			for(var i = 0, len = jobs.length; i < len; i++) {
-				var job = jobs[i];
+				var job = jobs[i], needs = Outside._INCOME[job].needs;
+				if(needs && !(typeof Network != 'undefined' && Network.has(needs))) continue;
 				if(typeof $SM.get('game.buildings["'+name+'"]') == 'number' && 
 						typeof $SM.get('game.workers["'+job+'"]') != 'number') {
 					Engine.log('adding ' + job + ' to the workers list');

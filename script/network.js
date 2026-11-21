@@ -44,9 +44,9 @@ var Network = {
 	// provisional (blaze era, design/text/blaze-build.md)
 	TOP_TIER: 128,       // people in a city: its top population tier (H10)
 	// the beats that come from outside the ladders' own checks (Fire.unlock), and the flag each sets.
-	// The blaze powers (POWERS §2) only gate their tiers. Pending user: the raiders at the tar pits are the
-	// riders' outriders, so F10 comes on either path, the tar-keepers' oath or the riders broken, whichever
-	// is first. B12 also needs the mirror folk and the lighthouse (Network.blazeStory plays the heliograph's scene)
+	// The blaze powers (POWERS §2) only gate their tiers. The raiders at the tar pits are the riders' outriders,
+	// so F10 comes on either path, the tar-keepers' oath or the riders broken, whichever is first. B12 also needs
+	// both peoples, the mirror folk and the harbour's keepers (Network.blazeStory plays its scene)
 	BEATS: { F8: 'garrisonBroken', F10: 'ridersBroken', B10: 'passHeld', H11: 'foundryTaken', B12: 'fleetBroken' },
 
 	// what unlocks each ember tier (Fire.TIERS[].when)
@@ -102,7 +102,7 @@ var Network = {
 		'coal burned': function () { return Network.flag('coalBurned'); },
 		// the blaze era (script/events/blaze.js has its scenes)
 		'forge-masters': function () { return Network.csBeat('F9'); },
-		'tar oath': function () { return Network.csBeat('F10') || Network.flag('ridersBroken'); }, // pending user
+		'tar oath': function () { return Network.csBeat('F10') || Network.flag('ridersBroken'); },
 		'boats relaunched': function () { return Network.flag('boatsRelaunched'); },
 		'well tapped': function () { return Network.flag('wellTapped'); },
 		'mirrors': function () { return Network.csBeat('B9'); },
@@ -216,6 +216,8 @@ var Network = {
 		// the blaze era's lines are in its one text table (script/events/blaze.js)
 		var line = Network.MESSAGES[id] || (Events.Blaze && Events.Blaze.TEXT.tiers[id]);
 		if (line) Notifications.notify(null, line);
+		// the armoury's grenadier opens with coke (Outside._INCOME)
+		if (id === 'F9' && typeof Outside != 'undefined' && Outside.checkWorker && Outside.checkWorker('armoury')) Outside.updateWorkersView();
 		Engine.event('progress', 'fire tier ' + id);
 		Network.refresh();
 	},
@@ -450,7 +452,6 @@ var Network = {
 			if (home) $SM.fireUpdate('stores'); // the capital's stores are the top-level ones
 			$SM.fireUpdate('game.cities', true); // the town panel and every city's income, once
 			if (coal && !Network.flag('coalBurned')) Network.setFlag('coalBurned');
-			if (oil && !Network.flag('rockOilBurned')) Network.setFlag('rockOilBurned');
 			Network.flameTick();
 			Network.checkStory();
 		}
@@ -714,8 +715,8 @@ var Network = {
 	resettleStory: function (cityId, site) {
 		var n = $SM.get('game.network.story.resettled', true);
 		$SM.set('game.network.story.resettled', n + 1);
-		// the drowned harbour (F11, B11): the first coastal fallen city resettled after the charcoal stranger's
-		if (n > 0 && site && !Network.flag('the drowned harbour') && Network.coastal(site)) {
+		// the drowned harbour (F11, B11): its own site, resettled
+		if (site && !Network.flag('the drowned harbour') && site === Network.harbourSite()) {
 			$SM.set('game.network.story["the drowned harbour"]', cityId);
 			Engine.event('progress', 'story hook the drowned harbour');
 		}
@@ -747,6 +748,7 @@ var Network = {
 		if (d) return d.replace(/ /g, '&nbsp;');
 		if (Network.isCairn(x, y)) return _('an&nbsp;old&nbsp;cairn');
 		if (Network.isPits(x, y)) return _('the&nbsp;old&nbsp;pits');
+		if (Network.isHarbour(x, y) && !Network.flag('the drowned harbour')) return Events.Blaze.TEXT.harbour.hover.replace(/ /g, '&nbsp;');
 		if (Network.isGarrison(x, y)) {
 			return Network.flag('gateMet') ? _('the&nbsp;garrison&nbsp;of&nbsp;the&nbsp;deep&nbsp;mines.&nbsp;the&nbsp;shafts&nbsp;go&nbsp;down&nbsp;into&nbsp;the&nbsp;dark.') :
 				_('the&nbsp;garrison&nbsp;of&nbsp;the&nbsp;deep&nbsp;mines');
@@ -947,8 +949,20 @@ var Network = {
 		if (Network.isPits(x, y) && Network.flag('strangerSat') && !World.state.pitsFound) {
 			Events.startEvent(Events.Flame.pits());
 		}
-		// the blaze era: the black well the drifters pointed to
-		if (Network.wellAt(x, y) && !Network.flag('wellFound') && !World.state.wellFound) Events.startEvent(Events.Blaze.well());
+		// the blaze era: the drowned harbour seen from the shore; the black well the drifters pointed to; the plates
+		var hs = Network.harbourSite();
+		if (hs && !Network.flag('harbourSeen') && hs.hexes.some(function (h) { return Fire.distance(h, [x, y]) <= World.LIGHT_RADIUS; })) {
+			Events.startEvent(Events.Blaze.harbour());
+		}
+		if (Network.wellAt(x, y)) {
+			if (Network.flag('wellTapped')) { /* nothing more here */ }
+			else if (World.state.plates || Network.flag('plates')) Events.startEvent(Events.Blaze.opened());
+			else if (!Network.flag('wellFound') && !World.state.wellFound) Events.startEvent(Events.Blaze.stain());
+		}
+		var ps = Network.flag('platesSent') && !Network.flag('plates') && !World.state.plates && Network.platesSite();
+		if (ps && World.siteAt(x, y) === ps) {
+			World.state.plates = true; // silent, as Phase 4's fetch
+		}
 		var g = $SM.get('game.network.garrison');
 		if (g && Network.flag('smoke')) {
 			var site = World.siteAt(g[0], g[1]);
@@ -972,7 +986,7 @@ var Network = {
 			Engine.setTimeout(function () { Events.startEvent(Events.Story.cairnFire); }, 1500);
 		}
 		// what this trek found for the flame era, known at home now (lost with it on a death)
-		['pitsFound', 'gateMet', 'towerHeld', 'wellFound'].forEach(function (k) {
+		['pitsFound', 'gateMet', 'towerHeld', 'wellFound', 'plates'].forEach(function (k) {
 			var v = $SM.get('game.world.' + k);
 			if (!v) return;
 			$SM.remove('game.world.' + k, true);
@@ -1282,25 +1296,50 @@ var Network = {
 	},
 
 	/*
-	 * The blaze era (design/LADDERS.md tiers 9-12). Its scenes are in script/events/blaze.js, with every
-	 * line in one table (Events.Blaze.TEXT) until design/text/blaze-draft.md is approved:
-	 *   the drowned harbour  a coastal fallen city resettled -> harbour (B11) -> its boats relaunched (F11)
-	 *   the black well       the drifters' well (Phase 4) -> found on a trek -> its pumps pieced together (F12)
-	 *                        -> the first rock oil burned, the drifters joined -> the boiler-wrights (H12)
-	 *   the bloomery         a forge district touching the forge-masters' hearth (H9)
-	 *   the heliograph       the mirror folk, the lighthouse and the fleet broken (B12)
+	 * The blaze era (design/LADDERS.md tiers 9-12, design/text/blaze-draft.md, approved). Its scenes are in
+	 * script/events/blaze.js, every line in one table (Events.Blaze.TEXT):
+	 *   the drowned harbour  harbour (a trek sees its site) -> keepers (resettled: B11) -> sunkenBoats (a harbour
+	 *                        district there) -> whales (F11)
+	 *   the black well       the drifters' well (Phase 4) -> stain (a trek; a rubbing) -> missingPlates (home) ->
+	 *                        the plates fetched from a site 6-20 hexes off -> opened (a trek at the well: F12)
+	 *   single scenes        bloomery (H9), passHeld (B10), twoLights (B12), furnace (H11), wrights (H12)
 	 * The forge-masters' price (F9), the mirror folk (B9) and the tar-keepers' oath (F10) play in Phase 4's
 	 * scenes; the powers that gate F10, B10, H11 and B12 call Fire.unlock (Network.BEATS).
 	 */
-	// a save from before the blaze era (v2.9): the first coastal fallen city it resettled after the first
-	// one, in the order the cities were made, is the drowned harbour
+	// the drowned harbour (blaze-draft): the fallen city nearest the capital on an inland sea's shore; failing
+	// that, the nearest on any water. Picked once and kept, as the garrison's complex is
+	harbourSite: function () {
+		var g = $SM.get('game.network.harbour'), gen = World.hex.gen;
+		if (g) return World.siteAt(g[0], g[1]);
+		var sea = function (site) {
+			return site.hexes.some(function (h) {
+				return District.neighbours(h).some(function (p) {
+					if (p[0] < 0 || p[1] < 0 || p[0] >= gen.cols || p[1] >= gen.rows) return false;
+					var f = gen.formationAt[p[0] + p[1] * gen.cols];
+					return f >= 0 && gen.formations[f].kind === 'sea';
+				});
+			});
+		};
+		var near = function (a, b) { return Fire.distance(a.anchor, gen.capital) - Fire.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
+		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
+		var best = falls.filter(sea).sort(near)[0] || falls.filter(Network.coastal).sort(near)[0];
+		if (!best) return null;
+		$SM.set('game.network.harbour', best.anchor.slice(), true);
+		return best;
+	},
+
+	isHarbour: function (x, y) {
+		var g = $SM.get('game.network.harbour');
+		return !!g && Network.flag('harbourSeen') && World.siteAt(x, y) === World.siteAt(g[0], g[1]);
+	},
+
+	// a save from before the blaze era (v2.9): a city of its own on the drowned harbour's site is the one
 	scanHarbour: function () {
 		$SM.remove('game.network.story.harbourScan', true);
-		if (Network.flag('the drowned harbour')) return;
-		var first = $SM.get('game.network.story["the charcoal stranger"]');
+		var site = Network.harbourSite();
+		if (Network.flag('the drowned harbour') || !site) return;
 		Network.cities().some(function (c) {
-			var site = World.siteAt(c.city.hex[0], c.city.hex[1]);
-			if (c.id == first || !c.city.parent || !site || site.kind !== 'fallenCity' || !Network.coastal(site)) return false;
+			if (!c.city.parent || World.siteAt(c.city.hex[0], c.city.hex[1]) !== site) return false;
 			$SM.set('game.network.story["the drowned harbour"]', c.id, true);
 			return true;
 		});
@@ -1316,6 +1355,38 @@ var Network = {
 		});
 	},
 
+	// the trek falls carrying the plates: they lie where it fell, and the site gives them again
+	onDie: function () {
+		if (World.state && World.state.plates) Notifications.notify(null, Events.Blaze.TEXT.platesLost);
+	},
+
+	// the drowned harbour's site seen: marked on the map, every hex of it
+	markHarbour: function () {
+		var site = Network.harbourSite(), mask = World.state ? World.state.mask : World.hex.mask;
+		if (!site) return;
+		site.hexes.forEach(function (h) { World.uncoverMap(h[0], h[1], 0, mask); });
+		if (!World.state) World.saveHex(World.worldFlags());
+		Network.setFlag('harbourSeen');
+	},
+
+	// the plates (blaze-draft, the black well 3): from the nearest fallen city or crater 6-20 hexes from the
+	// well, band 3 or more if there is one (PHASE4's fetch shape); picked once and kept
+	PLATES: [6, 20],
+	platesSite: function () {
+		var p = $SM.get('game.network.plates'), gen = World.hex.gen, well = $SM.get('game.citystates.well');
+		if (p) return World.siteAt(p[0], p[1]);
+		if (!well) return null;
+		var d = function (s) { return Fire.distance(s.anchor, well); };
+		var band = function (s) { return Danger.band(World.baseField()[s.anchor[0] + s.anchor[1] * gen.cols]); };
+		var near = function (a, b) { return d(a) - d(b) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
+		var all = gen.sites.filter(function (s) { return (s.kind === 'fallenCity' || s.kind === 'crater') && d(s) >= Network.PLATES[0]; }).sort(near);
+		var win = all.filter(function (s) { return d(s) <= Network.PLATES[1]; });
+		var best = win.filter(function (s) { return band(s) >= 3; })[0] || win[0] || all[0];
+		if (!best) return null;
+		$SM.set('game.network.plates', best.anchor.slice(), true);
+		return best;
+	},
+
 	// the black well the drifters pointed to (CityStates.markWell), once their beat started the chain
 	wellAt: function (x, y) {
 		return typeof CityStates != 'undefined' && Network.csBeat('the black well') && CityStates.wellAt(x, y);
@@ -1327,8 +1398,8 @@ var Network = {
 		return cs ? $SM.get('game.citystates.cs["' + cs + '"].city') || null : null;
 	},
 
-	// pending user: the boiler-wrights are the drifters (H12): they must have joined (their quest, or their
-	// craftsmen home after force: both record the black well's beat)
+	// the boiler-wrights are the drifters (H12): they must have joined (their quest, or their craftsmen home
+	// after force: both record the black well's beat)
 	driftersJoined: function () {
 		var cs = $SM.get('game.citystates.beats["the black well"]');
 		return !!cs && !!$SM.get('game.citystates.cs["' + cs + '"].city');
@@ -1343,12 +1414,16 @@ var Network = {
 	// the blaze era's scenes at home, one at a time (Network.checkStory)
 	blazeStory: function () {
 		var st = $SM.get('game.network.story') || {}, harbour = st['the drowned harbour'];
-		if (harbour && !st.lighthouseLit && $SM.get('game.cities["' + harbour + '"]')) return Events.Blaze.harbour(harbour);
-		if (harbour && st.lighthouseLit && !st.boatsRelaunched && City.districtHexes(harbour, 'harbour').length) return Events.Blaze.boats(harbour);
+		var home = harbour && $SM.get('game.cities["' + harbour + '"]');
+		if (home && !st.lighthouseLit) return Events.Blaze.keepers();
+		if (home && st.lighthouseLit && !st.boatsRaised && City.districtHexes(harbour, 'harbour').length) return Events.Blaze.sunkenBoats();
+		if (st.boatsRaised && !st.boatsRelaunched) return Events.Blaze.whales();
 		if (!st.bloomery && Network.forgeByMasters()) return Events.Blaze.bloomery();
-		if (st.wellFound && !st.wellTapped) return Events.Blaze.pumps();
-		if (st.rockOilBurned && !st.boilerWrights && Network.driftersJoined()) return Events.Blaze.boilerWrights();
-		if (!st.heliograph && st.fleetBroken && Network.csBeat('B9') && Network.has('B11')) return Events.Blaze.heliograph();
+		if (st.wellFound && !st.platesSent) return Events.Blaze.missingPlates();
+		if (Network.has('F12') && !st.boilerWrights && Network.driftersJoined()) return Events.Blaze.wrights();
+		if (!st.heliograph && st.fleetBroken && st.lighthouseLit && Network.csBeat('B9')) return Events.Blaze.twoLights();
+		if (st.passHeld && !st.passSeen) return Events.Blaze.passHeld();
+		if (st.foundryTaken && !st.furnaceSeen) return Events.Blaze.furnace();
 		return null;
 	},
 

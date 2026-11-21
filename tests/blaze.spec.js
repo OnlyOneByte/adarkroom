@@ -7,10 +7,10 @@ const FLAME = ['F5', 'F6', 'F7', 'F8', 'B5', 'B6', 'B7', 'B8', 'H5', 'H6', 'H7',
 const closed = (page) => page.waitForFunction(() => !Events.activeEvent());
 const ask = (page) => page.evaluate(() => { Network._nextAsk = 0; Network.checkStory(); });
 
-test('the blaze era is wired: tiers 9-12 of every ladder have a beat, numbers and a line; the old fire is not yet', async ({ page }) => {
+test('the blaze era is wired: tiers 9-12 of every ladder have a beat and numbers; the old fire is not yet', async ({ page }) => {
   const errors = await openGame(page);
   const r = await page.evaluate(() => ({
-    tiers: Fire.TIERS.filter((t) => t.era === 'blaze').map((t) => ({ id: t.id, when: t.when, hook: typeof Network.UNLOCKS[t.when], line: !!Events.Blaze.TEXT.tiers[t.id] })),
+    tiers: Fire.TIERS.filter((t) => t.era === 'blaze').map((t) => ({ id: t.id, when: t.when, hook: typeof Network.UNLOCKS[t.when] })),
     old: Fire.TIERS.filter((t) => t.era === 'old fire').every((t) => t.when === null),
     fuels: Object.keys(Fire.FUELS).map((k) => Fire.FUELS[k].tier).slice(8),
     beacons: Object.keys(Fire.BEACONS).slice(8), hearths: Object.keys(Fire.HEARTHS).slice(8),
@@ -18,7 +18,7 @@ test('the blaze era is wired: tiers 9-12 of every ladder have a beat, numbers an
     hooks: ['F10', 'B10', 'H11', 'B12', 'F13'].map((id) => Fire.unlock(id)),
     flags: ['ridersBroken', 'passHeld', 'foundryTaken', 'fleetBroken'].map((k) => Network.flag(k)),
   }));
-  for (const t of r.tiers) expect(t).toMatchObject({ hook: 'function', line: true });
+  for (const t of r.tiers) expect(t).toMatchObject({ hook: 'function' });
   expect(r.old).toBe(true);
   expect(r.fuels).toEqual(['F9', 'F10', 'F11', 'F12']);
   expect(r.beacons).toEqual(['B9', 'B10', 'B11', 'B12']);
@@ -118,45 +118,55 @@ test('the city-states\' and the powers\' beats: F9 and B9 from Phase 4; F10 from
   expect(errors).toEqual([]);
 });
 
-test('the drowned harbour: a coastal fallen city resettled (not the first), its lighthouse (B11), a harbour and its boats relaunched (F11), whalers and try-works', async ({ page }) => {
+test('the drowned harbour: seen on a trek and marked; resettled, the keepers (B11); a harbour district raises the boats, then the whales (F11)', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'B9', 'B10']) });
   const r = await page.evaluate(() => {
-    const g = World.hex.gen;
-    const site = g.sites.find((s) => s.kind === 'fallenCity' && Network.coastal(s));
-    const other = g.sites.find((s) => s.kind === 'fallenCity' && s !== site);
-    const make = (id, s) => {
-      const d = {};
-      d[s.anchor.join(',')] = 'hearth quarter';
-      City.createCity(id, id, { hex: s.anchor, districts: d, stores: { wood: 2000 }, citizens: 16, parent: 'capital' });
-      Network.resettleStory(id, s);
-    };
-    // the first resettled is the charcoal stranger's, whether or not it is on the water
-    make('city2', site);
-    const first = $SM.get('game.network.story["the drowned harbour"]') || null;
-    $SM.remove('game.network.story["the charcoal stranger"]');
-    make('city3', other);
-    $SM.set('game.network.story.resettled', 1);
-    make('city4', site);
-    Network.refresh();
-    return { first, harbour: $SM.get('game.network.story["the drowned harbour"]'), at: site.anchor };
+    const g = World.hex.gen, site = Network.harbourSite();
+    const sea = site.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
+    // nearer fallen cities on an inland sea's shore: none
+    const nearer = g.sites.filter((s) => s.kind === 'fallenCity' && s !== site && Fire.distance(s.anchor, g.capital) < Fire.distance(site.anchor, g.capital) &&
+      s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; })));
+    return { at: site.anchor, sea, nearer: nearer.length, kind: site.kind };
   });
-  expect(r.first).toBe(null);
-  expect(r.harbour).toBe('city4');
+  expect(r).toMatchObject({ sea: true, nearer: 0, kind: 'fallenCity' });
+  // on a trek, the site comes into sight
+  await page.locator('#location_path').click();
+  await page.evaluate((at) => { embark(); World.curPos = at.slice(); Network.onStep(at[0], at[1]); }, r.at);
+  await expect(page.locator('#event')).toContainText('on the point, a tower. a light at the top of it, small and yellow.');
+  await choose(page, 'go to the tower');
+  await expect(page.locator('#event')).toContainText("when it comes back, it's aimed at you.");
+  await choose(page, 'go back');
+  await closed(page);
+  const seen = await page.evaluate((at) => ({ flag: Network.flag('harbourSeen'), hover: Network.hexNote(at[0], at[1]) }), r.at);
+  expect(seen).toEqual({ flag: true, hover: 'the&nbsp;drowned&nbsp;harbour.&nbsp;a&nbsp;light&nbsp;on&nbsp;the&nbsp;point.' });
+  await page.evaluate(() => World.goHome());
+  // resettled (made here directly; the charcoal stranger's city was the first): the keepers
+  await page.evaluate((at) => {
+    const site = World.siteAt(at[0], at[1]), d = {};
+    $SM.set('game.network.story.resettled', 1);
+    d[at.join(',')] = 'hearth quarter';
+    City.createCity('city4', 'city4', { hex: at, districts: d, stores: { wood: 2000 }, citizens: 16, parent: 'capital' });
+    Network.resettleStory('city4', site);
+    Network.refresh();
+  }, r.at);
+  expect(await page.evaluate(() => $SM.get('game.network.story["the drowned harbour"]'))).toBe('city4');
   await ask(page);
-  await expect(page.locator('#event')).toContainText('a lighthouse stands at the end of the mole');
-  await choose(page, 'light the lamp');
+  await expect(page.locator('#event')).toContainText("says they've kept the light since the water came. for the boats.");
+  await choose(page, 'ask them to teach it');
+  await expect(page.locator('#event')).toContainText('they come down at dawn, smelling of oil.');
   await choose(page, 'good');
   await closed(page);
-  expect(await page.evaluate(() => ({ B11: Network.has('B11'), sea: !!Fire.BEACONS[Network.beaconTier()].sea }))).toEqual({ B11: true, sea: true });
-  // no boats without a harbour district; then the boats, paid from the capital
+  const b11 = await page.evaluate(() => ({ B11: Network.has('B11'), sea: !!Fire.BEACONS[Network.beaconTier()].sea, said: $('#notifications').text() }));
+  expect(b11).toMatchObject({ B11: true, sea: true });
+  expect(b11.said).toContain('the light on the point reaches across the water now.');
+  // no boats without a harbour district; the district is the whole cost
   await ask(page);
   expect(await page.evaluate(() => !!Events.activeEvent())).toBe(false);
   const placed = await page.evaluate(() => {
-    const c = $SM.get('game.cities.city4'), g = World.hex.gen;
+    const c = $SM.get('game.cities.city4');
     for (const p of District.neighbours(c.hex)) {
       if (Network.districtAt(p[0], p[1])) continue;
-      const gr = Network.ground('city4', p[0], p[1]);
-      if (District.TYPES.harbour.fits(gr)) {
+      if (District.TYPES.harbour.fits(Network.ground('city4', p[0], p[1]))) {
         $SM.set('game.cities.city4.districts["' + p.join(',') + '"]', 'harbour');
         return p;
       }
@@ -164,28 +174,31 @@ test('the drowned harbour: a coastal fallen city resettled (not the first), its 
     return null;
   });
   expect(placed).not.toBe(null);
-  await page.evaluate(() => $SM.setM('stores', { wood: 1000, cloth: 50 }));
+  const stores = await page.evaluate(() => JSON.stringify($SM.get('stores')));
   await ask(page);
-  await expect(page.locator('#event')).toContainText('their hulls are sound.');
-  await choose(page, 'relaunch them');
+  await expect(page.locator('#event')).toContainText('divers go down on ropes. one hull, then another.');
+  await choose(page, 'go on');
+  await expect(page.locator('#event')).toContainText('by spring there are three on the water.');
+  await choose(page, 'good');
+  await closed(page);
+  await ask(page);
+  await expect(page.locator('#event')).toContainText('they come back low in the water, towing something huge.');
+  await choose(page, 'render it all');
+  await expect(page.locator('#event')).toContainText("the oil burns clean. it doesn't stink, like tallow.");
   await choose(page, 'good');
   await closed(page);
   const f11 = await page.evaluate(() => ({
-    F11: Network.has('F11'), cloth: $SM.get('stores.cloth'), whalers: City.jobSlots('city4', 'whaler'),
-    tryWorks: City.maximum('try-works', 'city4'), said: $('#notifications').text(),
+    F11: Network.has('F11'), stores: JSON.stringify($SM.get('stores')), whalers: City.jobSlots('city4', 'whaler'), tryWorks: City.maximum('try-works', 'city4'),
   }));
-  expect(f11.F11).toBe(true);
-  expect(f11.cloth).toBe(30);
+  expect(f11).toMatchObject({ F11: true, stores, tryWorks: 1 });
   expect(f11.whalers).toBeGreaterThan(0);
-  expect(f11.tryWorks).toBe(1);
-  expect(f11.said).toContain('whale oil burns long and bright.');
   expect(errors).toEqual([]);
 });
 
-test('the black well: found on a trek, its pumps pieced together at home (F12); a well-hand on the old-world works; the first rock oil, the drifters joined, brings them as the boiler-wrights (H12)', async ({ page }) => {
+test('the black well: the stain on a trek (a rubbing), the missing plates at home, the plates fetched, the well opened (F12); a well-hand on the old-world works; the drifters joined are the wrights (H12)', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'F11', 'B9', 'B10', 'B11', 'H9', 'H10', 'H11']) });
   const well = await page.evaluate(() => {
-    const at = secondCity(), g = World.hex.gen;
+    const at = secondCity();
     // the drifters' well, as CityStates.markWell leaves it: a hex next to the second town
     const w = District.neighbours(at).find((p) => !Network.districtAt(p[0], p[1]) && District.land(Network.ground(null, p[0], p[1])) &&
       WorldGen.isPassable(World.hex.map[p[0]][p[1]]) && !World.siteAt(p[0], p[1]));
@@ -196,35 +209,63 @@ test('the black well: found on a trek, its pumps pieced together at home (F12); 
   });
   await page.locator('#location_path').click();
   await page.evaluate((p) => { embark(); stepOnto(p); }, well);
-  await expect(page.locator('#event')).toContainText('an iron cap sits in the middle of it.');
-  await choose(page, 'look closer');
-  await choose(page, 'go back');
+  await expect(page.locator('#event')).toContainText('plates on the side, stamped with words. half of them sheared away.');
+  await choose(page, 'take a rubbing of the plates');
+  await expect(page.locator('#event')).toContainText('they tell how to open it. not how to keep it shut.');
+  await choose(page, 'go on');
   await closed(page);
   expect(await page.evaluate(() => Network.flag('wellFound'))).toBe(false); // the trek's, until it is home
-  await page.evaluate(() => { $SM.setM('stores', { steel: 60, leather: 30 }); World.goHome(); });
+  await page.evaluate(() => World.goHome());
   await ask(page);
-  await expect(page.locator('#event')).toContainText('a pump, a seal, a way to draw it up.');
-  await choose(page, 'build the pumps');
+  await expect(page.locator('#event')).toContainText('says the rest of the plates went south with the crews.');
+  await choose(page, 'ask what else her mother said');
+  await expect(page.locator('#event')).toContainText('she says they were called wrights. no one now remembers why.');
+  await choose(page, 'go on');
+  await closed(page);
+  const site = await page.evaluate((w) => {
+    const s = Network.platesSite(), d = Fire.distance(s.anchor, w);
+    return { sent: Network.flag('platesSent'), d, kind: s.kind, hover: CityStates.label(w[0], w[1]), hex: s.hexes[0] };
+  }, well);
+  expect(site.sent).toBe(true);
+  expect(site.d).toBeGreaterThanOrEqual(6);
+  expect(['fallenCity', 'crater']).toContain(site.kind);
+  expect(site.hover).toBe('the&nbsp;black&nbsp;well.&nbsp;the&nbsp;ground&nbsp;here&nbsp;burns.');
+  // a trek to the plates' site, then a fall: they lie where it fell
+  await page.locator('#location_path').click();
+  await page.evaluate((h) => { embark(); World.curPos = h.slice(); Network.onStep(h[0], h[1]); }, site.hex);
+  expect(await page.evaluate(() => World.state.plates)).toBe(true);
+  await page.evaluate(() => World.die());
+  await page.waitForFunction(() => !World.state);
+  expect(await page.evaluate(() => ({ said: $('#notifications').text().includes('the plates lie where the trek fell.'), held: Network.flag('plates') })))
+    .toEqual({ said: true, held: false });
+  // again, home with them, and out to the well
+  await page.waitForFunction(() => !Engine.keyLock && Engine.activeModule !== World, null, { timeout: 15000 });
+  await page.locator('#location_path').click();
+  await page.evaluate((h) => { embark(); World.curPos = h.slice(); Network.onStep(h[0], h[1]); World.goHome(); }, site.hex);
+  expect(await page.evaluate(() => Network.flag('plates'))).toBe(true);
+  await page.locator('#location_path').click();
+  await page.evaluate((p) => { embark(); stepOnto(p); }, well);
+  await expect(page.locator('#event')).toContainText('the cap comes off with a sound like breath.');
+  await choose(page, 'cap it again, half way');
+  await expect(page.locator('#event')).toContainText('barrels fill one by one.');
   await choose(page, 'good');
   await closed(page);
+  await page.evaluate(() => World.goHome());
   const f12 = await page.evaluate((w) => {
     const types = Network.districtsFor('city2', w[0], w[1]);
     Network.placeDistrict('city2', w[0], w[1], 'old-world works');
-    return { F12: Network.has('F12'), steel: $SM.get('stores.steel'), types, hands: City.jobSlots('city2', 'well-hand') };
+    return { F12: Network.has('F12'), types, hands: City.jobSlots('city2', 'well-hand'), plates: Network.flag('plates') };
   }, well);
-  expect(f12).toMatchObject({ F12: true, steel: 10, hands: 4 });
+  expect(f12).toMatchObject({ F12: true, hands: 4, plates: false });
   expect(f12.types).toContain('old-world works');
-  // rock oil burned in a hearth: the boiler-wrights
-  await page.evaluate(() => { $SM.set('stores["rock oil"]', 200); burnTick(); });
-  expect(await page.evaluate(() => ({ fuel: $SM.get('game.cities.capital.hearth.fuel'), burned: Network.flag('rockOilBurned') })))
-    .toEqual({ fuel: 'rock oil', burned: true });
-  // the drifters haven't joined: no boiler-wrights yet
+  // F12 in, but the drifters haven't joined: no wrights yet
   await ask(page);
   expect(await page.evaluate(() => !!Events.activeEvent())).toBe(false);
   await page.evaluate(() => $SM.set('game.citystates.cs.cs9', { city: 'city3' }));
   await ask(page);
-  await expect(page.locator('#event')).toContainText('the drifters come in off the ice');
-  await choose(page, 'take them in');
+  await expect(page.locator('#event')).toContainText("says she's a wright. says her mother was. says this is what they did.");
+  await choose(page, 'help');
+  await expect(page.locator('#event')).toContainText("it hums. it doesn't need feeding for a long time.");
   await choose(page, 'good');
   await closed(page);
   expect(await page.evaluate(() => ({ H12: Network.has('H12'), tier: Network.hearthTier() }))).toEqual({ H12: true, tier: 'H12' });
@@ -265,15 +306,16 @@ test('the bloomery (H9): a forge district touching the forge-masters\' hearth; c
   expect(errors).toEqual([]);
 });
 
-test('the heliograph (B12): the mirror folk, the lighthouse and the fleet broken; then beacons link five hexes apart', async ({ page }) => {
+test('the two lights (B12): the mirror folk and the harbour\'s keepers ours, and the fleet broken; then beacons link five hexes apart', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['B9', 'B10', 'B11']) });
-  await page.evaluate(() => { $SM.set('game.citystates.beats.B9', 'cs2'); });
+  await page.evaluate(() => { $SM.set('game.citystates.beats.B9', 'cs2'); Network.setFlag('lighthouseLit'); });
   await ask(page);
   expect(await page.evaluate(() => !!Events.activeEvent())).toBe(false); // the fleet still stands
   await page.evaluate(() => Fire.unlock('B12'));
   await ask(page);
-  await expect(page.locator('#event')).toContainText('they show the keepers the mirrors.');
-  await choose(page, 'go on');
+  await expect(page.locator('#event')).toContainText('the keeper says a light should turn. the woman says it should flash.');
+  await choose(page, 'let them argue it out');
+  await expect(page.locator('#event')).toContainText("on the fourth there's a mirror on the tower, turning, with a shutter.");
   await choose(page, 'good');
   await closed(page);
   const r = await page.evaluate(() => {
@@ -283,6 +325,29 @@ test('the heliograph (B12): the mirror folk, the lighthouse and the fleet broken
   });
   expect(r).toMatchObject({ B12: true, tier: 'B12' });
   expect(r.far).toBeGreaterThan(0);
+  expect(errors).toEqual([]);
+});
+
+test('the powers\' single scenes: the pass held (B10), the furnace (H11); and coke opens the armoury\'s grenadier', async ({ page }) => {
+  const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'B9', 'H9', 'H10']) });
+  await page.evaluate(() => Fire.unlock('B10'));
+  await ask(page);
+  await expect(page.locator('#event')).toContainText('the beacon at the top is still burning. no one let it go out.');
+  await choose(page, 'good');
+  await closed(page);
+  await page.evaluate(() => Fire.unlock('H11'));
+  await ask(page);
+  await expect(page.locator('#event')).toContainText("the crew's foremen show how it's fed: ore and coke and lime, all day, all night.");
+  await choose(page, 'go on');
+  await expect(page.locator('#event')).toContainText('the iron comes out of it running, like water.');
+  await choose(page, 'good');
+  await closed(page);
+  const r = await page.evaluate(() => {
+    $SM.set('game.buildings["armoury"]', 1);
+    Outside.checkWorker('armoury');
+    return { B10: Network.has('B10'), H11: Network.has('H11'), grenadier: $SM.get('game.workers["grenadier"]'), stores: Outside._INCOME.grenadier.stores };
+  });
+  expect(r).toEqual({ B10: true, H11: true, grenadier: 0, stores: { steel: -2, sulphur: -2, grenade: 1 } });
   expect(errors).toEqual([]);
 });
 
@@ -305,16 +370,15 @@ test('tar pits: tar gatherers on desert, pitch boilers turn tar and wood into pi
   expect(errors).toEqual([]);
 });
 
-test('a v2.8 save loads as v2.9: a coastal fallen city it resettled after the first is the drowned harbour', async ({ page }) => {
+test('a v2.8 save loads as v2.9: a city it resettled on the drowned harbour\'s site is the drowned harbour', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME) });
   const saved = await page.evaluate(() => {
-    const g = World.hex.gen;
-    const site = g.sites.find((s) => s.kind === 'fallenCity' && Network.coastal(s));
-    const d = {};
+    const site = Network.harbourSite(), d = {};
     d[site.anchor.join(',')] = 'hearth quarter';
     City.createCity('city2', 'second town', { hex: site.anchor, districts: d, stores: {}, citizens: 8, parent: 'capital' });
     $SM.set('game.network.story.resettled', 2);
     $SM.set('game.network.story["the charcoal stranger"]', 'city9');
+    $SM.remove('game.network.harbour');
     Engine.saveGame();
     const s = JSON.parse(localStorage.gameState);
     s.version = 2.8;
@@ -330,16 +394,15 @@ test('a v2.8 save loads as v2.9: a coastal fallen city it resettled after the fi
   expect(after).toEqual([]);
 });
 
-test('F10 by the other path: the tar-keepers\' oath alone brings pitch, once; the riders broken later changes nothing (pending user)', async ({ page }) => {
+test('F10 by the other path: the tar-keepers\' oath alone brings pitch, once; the riders broken later changes nothing', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME) });
   const r = await page.evaluate(() => {
     $SM.set('game.citystates.beats.F9', 'cs1');
     $SM.set('game.citystates.beats.F10', 'cs3');
     const oath = Network.has('F10');
-    const said = ($('#notifications').text().match(/pitch comes in/g) || []).length;
     Fire.unlock('F10');
-    return { oath, said, again: ($('#notifications').text().match(/pitch comes in/g) || []).length };
+    return { oath, after: Network.has('F10'), riders: Network.flag('ridersBroken') };
   });
-  expect(r).toEqual({ oath: true, said: 1, again: 1 });
+  expect(r).toEqual({ oath: true, after: true, riders: true });
   expect(errors).toEqual([]);
 });

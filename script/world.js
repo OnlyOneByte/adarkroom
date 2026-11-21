@@ -1752,6 +1752,7 @@ var World = {
       Notifications.notify(World, _('the world fades'));
       if(World.hex) World.dropPack();
       if(World.hex && typeof CityStates != 'undefined') CityStates.onDie();
+      if(World.hex && typeof Network != 'undefined') Network.onDie();
       World.state = null;
       Path.outfit = {};
       $SM.remove('outfit');
