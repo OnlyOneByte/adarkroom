@@ -179,8 +179,9 @@ export function benchNode({ cities = 64, beacons = 500, seed = 7 } = {}) {
   const net = run(`(function () {
     var gen = World.hex.gen, H = Fire.HEARTHS[Network.hearthTier()];
     return {
-      cols: gen.cols, rows: gen.rows, danger: World.baseDangerAt,
+      cols: gen.cols, rows: gen.rows, field: World.baseField(),
       hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
+      open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
       hearths: Network.cities().map(function (c) {
         var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
         return { at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0 };
