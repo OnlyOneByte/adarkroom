@@ -3,7 +3,7 @@
 // bugs found (test.fixme, each naming its bug; design/text/qa-phase3a.md has the table).
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState, freshToTown } from './helpers.js';
+import { openGame, getState, freshToTown, freezeClock } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 const EMBER = ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'];
@@ -255,7 +255,7 @@ test('story: put off, the stone hearth asks again later; reloaded mid-chain, it 
   // saved and reloaded before the last button: H3 is kept, the next scene is the bigger world
   await page.evaluate(() => Engine.saveGame());
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   const r = await page.evaluate(() => {
     clearTimeout(Events._eventTimeout);
     Network._nextAsk = 0;
@@ -299,7 +299,7 @@ test('story: the wanderer sent off asks again; the cairn left alone can be studi
 
 test('a v1.3 save with a world loads through every step to v2.4, with a fire network and no errors', async ({ page }) => {
   const save = load('v1.3-world');
-  await page.clock.install(); // no income ticks before the stores are read
+  await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
   expect(s.version).toBe(2.4);
@@ -652,7 +652,7 @@ test('a saved network comes back on reload: beacons, the lit land, the hearth', 
     return { lit: lit(), beacons: Object.keys($SM.get('game.network.beacons')).sort() };
   });
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex && World.hex.fire);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex && World.hex.fire);
   const after = await page.evaluate(() => ({
     lit: World.hex.fire.lit.reduce((a, b) => a + b, 0), beacons: Object.keys($SM.get('game.network.beacons')).sort(),
   }));

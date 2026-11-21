@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState } from './helpers.js';
+import { openGame, getState, freezeClock } from './helpers.js';
 
 const fixture = JSON.parse(fs.readFileSync(new URL('./fixtures/v1.3-village.json', import.meta.url)));
 
@@ -118,7 +118,7 @@ test('the v1.3 fixture migrates to v2.4 without a town', async ({ page }) => {
 });
 
 test('a v1.3 save that already has 20 huts and a trading post opens the town on load', async ({ page }) => {
-  await page.clock.install(); // freeze income ticks so stores compare exactly
+  await freezeClock(page); // no income ticks so stores compare exactly
   const save = structuredClone(fixture);
   save.game.buildings.hut = 20;
   const errors = await openGame(page, { save });

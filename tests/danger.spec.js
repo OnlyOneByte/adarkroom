@@ -440,7 +440,7 @@ test('a v2.1 save migrates to v2.2 at normal difficulty and keeps its hex map', 
   });
   await page.evaluate((s) => { localStorage.gameState = JSON.stringify(s); }, saved.s);
   await page.reload();
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
   const state = await getState(page);
   expect(state.version).toBe(2.4);
   expect(state.game.difficulty).toBe('normal');

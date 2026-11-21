@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 import fs from 'node:fs';
 import { test, expect } from '@playwright/test';
-import { openGame, getState, freshToTown } from './helpers.js';
+import { openGame, getState, freshToTown, freezeClock } from './helpers.js';
 
 const load = (name) => JSON.parse(fs.readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url)));
 
@@ -450,7 +450,7 @@ test('a v2.2 save loads: no happiness, the capital on the map with its hearth qu
   const save = load('v2.2-hex');
   expect(save.version).toBe(2.2);
   expect(save.game.cities.capital.happiness).toBe(50);
-  await page.clock.install();
+  await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
   expect(s.version).toBe(2.4);
