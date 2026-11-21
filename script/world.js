@@ -269,6 +269,7 @@ var World = {
       Engine.event('progress', 'hex map');
     }
     World.pointCompass(map);
+    if(typeof CityStates != 'undefined' && CityStates._ready) CityStates.onHexMap();
     if(typeof Network != 'undefined') Network.refresh();
   },
 
@@ -619,6 +620,7 @@ var World = {
       World.checkBand();
       World.scavengePack();
       if(typeof Network != 'undefined') Network.onStep(World.curPos[0], World.curPos[1]);
+      if(typeof CityStates != 'undefined') CityStates.onStep(World.curPos[0], World.curPos[1]);
     }
     World.drawMap();
     World.doSpace();
@@ -1370,6 +1372,8 @@ var World = {
     // a beacon on a landmark or a site: the landmark's name, then the beacon's
     var under = !!fire && Network.beaconAt(x, y) && World.markedAt(x, y, st.map);
     if(fire && !under) return fire;
+    var cs = typeof CityStates != 'undefined' && CityStates.label(x, y);
+    if(cs) return under ? cs + ',&nbsp;' + fire : cs;
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
     var site = World.siteAt(x, y);
     var mark = World.LANDMARKS[c.charAt(0)] ? World.LANDMARKS[c.charAt(0)].label : (site ? WorldGen.SITES[site.kind].label : null);
@@ -1399,6 +1403,8 @@ var World = {
     var district = typeof Network != 'undefined' && Network.districtAt(x, y);
     if(district && district != District.HEARTH) return [District.TYPES[district].glyph, true];
     if(c == World.TILE.VILLAGE) return [c, true];
+    var cs = typeof CityStates != 'undefined' && CityStates.glyphAt(x, y);
+    if(cs) return cs;
     if(typeof World.LANDMARKS[c] != 'undefined' && (c != World.TILE.OUTPOST || !World.outpostUsed(x, y))) return [c, true];
     if(typeof Network != 'undefined' && Network.isCairn(x, y)) return [Network.CAIRN_GLYPH, true];
     if(typeof Network != 'undefined' && Network.isPits(x, y)) return [Network.PITS_GLYPH, true];
@@ -1473,7 +1479,8 @@ var World = {
       ctx.beginPath();
       for(y = r0; y <= r1; y++) {
         for(x = c0; x <= c1; x++) {
-          if(!mask[x][y] || net.lit[x + y * gen.cols]) hexPath(World.hexCentre(x, y), 1.06);
+          // a city-state's land is clear too: little islands of other people's light
+          if(!mask[x][y] || net.lit[x + y * gen.cols] || (typeof CityStates != 'undefined' && CityStates.clearAt(x, y))) hexPath(World.hexCentre(x, y), 1.06);
         }
       }
       ctx.fill();
@@ -1673,7 +1680,12 @@ var World = {
     var pack = World.state.pack;
     if(!pack) return;
     pack.left *= 1 - Danger.scavengeRate(World.dangerAt(pack.at[0], pack.at[1]));
-    if(!World.packLeft(pack) && !World.settlersLeft(pack)) delete World.state.pack;
+    // a city-state's lost party waiting by the pack is thinned the same way (script/citystates.js)
+    var party = typeof CityStates != 'undefined' && pack.party;
+    if(!World.packLeft(pack) && !World.settlersLeft(pack) && !(party && CityStates.partyLeft(pack))) {
+      delete World.state.pack;
+      if(party) CityStates.partyBack(pack);
+    }
   },
 
   // the settlers still holding out by a pack as the scavengers come: { people, stores }, or null
@@ -1690,6 +1702,7 @@ var World = {
   recoverPack: function() {
     var pack = World.state.pack, left = World.packLeft(pack), rest = null, settlers = World.settlersLeft(pack);
     delete World.state.pack;
+    if(pack.party && typeof CityStates != 'undefined') CityStates.partyBack(pack);
     if(settlers) {
       // the settlers who held out fall in again, with what is left of their supplies
       $SM.set('game.network.settlers', $.extend({}, pack.settlers, settlers, { out: true }));
@@ -1716,6 +1729,8 @@ var World = {
   packLabel: function(pack) {
     var left = World.packLeft(pack), list = [], settlers = World.settlersLeft(pack);
     if(settlers) list.push(_('settlers') + '&nbsp;' + settlers.people);
+    var party = pack.party && typeof CityStates != 'undefined' && CityStates.partyLeft(pack);
+    if(party) list.push(CityStates.partyName(pack).replace(/ /g, '&nbsp;') + '&nbsp;' + party);
     for(var k in left) list.push(_(k) + '&nbsp;' + left[k]);
     return _('the&nbsp;pack:') + '&nbsp;' + list.join(',&nbsp;');
   },
@@ -1729,6 +1744,7 @@ var World = {
       // Dead! Discard any world changes and go home
       Notifications.notify(World, _('the world fades'));
       if(World.hex) World.dropPack();
+      if(World.hex && typeof CityStates != 'undefined') CityStates.onDie();
       World.state = null;
       Path.outfit = {};
       $SM.remove('outfit');
@@ -1793,6 +1809,7 @@ var World = {
       Network.settlersHome();
       Network.onHome();
     }
+    if(hexTrek && typeof CityStates != 'undefined') CityStates.onHome();
     if(World._hexPending) {
       World._hexPending = false;
       World.openHexMap();
@@ -1918,6 +1935,7 @@ var World = {
     // settlers waiting to found a city come along; the trek sets out from their city
     var from = World.hex && typeof Network != 'undefined' ? Network.onEmbark() : null;
     World.curPos = World.copyPos(from || World.VILLAGE_POS);
+    if(World.hex && typeof CityStates != 'undefined') CityStates.onEmbark();
     World.cam = null;
     World.follow = true;
     World.drawMap();

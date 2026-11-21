@@ -496,13 +496,16 @@ test('coal: mines on a coal seam, and once the garrison is broken on the hills b
   expect(errors).toEqual([]);
 });
 
-test('a v2.3 save loads with the flame era in: no flame tier, no errors, the fire tick runs', async ({ page }) => {
+test('a v2.3 save loads as v2.7 with the flame era in: no flame tier, no carts, no errors, the fire tick runs', async ({ page }) => {
   const errors = await openGame(page, { save: load('v2.3-fire') });
   const r = await page.evaluate(() => {
     clearTimeout(Network._tickTimeout);
     Network.tick();
-    return { flame: Object.keys(Network.tiers()).filter((id) => Fire.tier(id).era === 'flame'), lit: World.hex.fire.lit.reduce((a, b) => a + b, 0) };
+    return { flame: Object.keys(Network.tiers()).filter((id) => Fire.tier(id).era === 'flame'), lit: World.hex.fire.lit.reduce((a, b) => a + b, 0),
+      version: $SM.get('version'), carts: $SM.get('game.network.carts') };
   });
+  expect(r.version).toBe(2.7);
+  expect(r.carts).toEqual([]);
   expect(r.flame).toEqual([]);
   expect(r.lit).toBeGreaterThan(0);
   expect(errors).toEqual([]);
