@@ -75,6 +75,7 @@ export function synth({ cities: nCities = 64, beacons: nBeacons = 500, seed = 7 
     d[key(at[0], at[1])] = District.HEARTH;
     $SM.setM('game.cities["' + id + '"]', { hex: at.slice(), districts: d, hearth: { fuel: FUEL, out: 24, stored: 32, fed: 0 } }, true);
     const rec = $SM.get('game.cities["' + id + '"]');
+    Network.refresh(); // its hearth lights the ground its districts go on
     // districts ring by ring, each the most wanted type the ground takes
     const have = {};
     for (let r = 1; r <= 2; r++) {

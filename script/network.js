@@ -414,6 +414,7 @@ var Network = {
 		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return [];
 		if (Network.districtAt(x, y) || Network.beaconAt(x, y) || Network.isCairn(x, y)) return [];
 		if (World.markedAt(x, y)) return []; // not on a landmark or a site (old-world works will be, later)
+		if (!World.hex.fire || !World.hex.fire.lit[x + y * gen.cols]) return []; // only where the fire reaches
 		if (Fire.distance(c.hex, [x, y]) > District.MAX_RING) return [];
 		// a city grows outward: next to one of its own districts
 		if (!District.neighbours([x, y]).some(function (p) { return c.districts[Network.key(p[0], p[1])]; })) return [];

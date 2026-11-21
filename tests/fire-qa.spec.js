@@ -204,6 +204,7 @@ test('a dropped pack on lit land is scavenged at the lit danger (slower)', async
 test('districts: never on water or mountains, never on a beacon, only touching the city, a second hearth quarter never offered', async ({ page }) => {
   const errors = await town(page);
   const r = await page.evaluate(() => {
+    Network.tick(); // the hearth lit: districts go only where its fire reaches
     const cap = World.hex.gen.capital, n = (d) => WorldGen.neighbour(cap[0], cap[1], d);
     const out = {};
     setGround(n(0), 'lake'); out.lake = Network.districtsFor('capital', ...n(0));
@@ -227,6 +228,7 @@ test('tannery row needs hunting grounds beside it, burning pits need barrens or 
   const r = await page.evaluate(() => {
     const cap = World.hex.gen.capital, n = (d) => WorldGen.neighbour(cap[0], cap[1], d);
     for (let d = 0; d < 6; d++) setGround(n(d), 'field');
+    Network.tick();
     const out = { before: Network.districtsFor('capital', ...n(1)) };
     Network.placeDistrict('capital', ...n(0), 'hunting grounds');
     out.after = Network.districtsFor('capital', ...n(1)); // n(1) touches n(0)
@@ -584,6 +586,23 @@ test('QA Q3: a beacon on a landmark leaves its glyph and name in sight; no distr
   expect(r.open).toBeGreaterThan(0);
   expect(r.onLandmark).toEqual([]);
   expect(r.onSite).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+// QA Q4 (provisional, pending user): districts, like founding, only on lit land
+test('QA Q4: a district goes only on a hex the fire reaches', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    const cap = World.hex.gen.capital, n = WorldGen.neighbour(cap[0], cap[1], 0);
+    setGround(n, 'field');
+    $SM.setM('stores', { wood: 100000 });
+    const cold = Network.districtsFor('capital', n[0], n[1]); // no tick yet: the hearth is cold
+    Network.tick();
+    return { cold, lit: isLit(n), warm: Network.districtsFor('capital', n[0], n[1]) };
+  });
+  expect(r.cold).toEqual([]);
+  expect(r.lit).toBe(true);
+  expect(r.warm).toContain('huts');
   expect(errors).toEqual([]);
 });
 

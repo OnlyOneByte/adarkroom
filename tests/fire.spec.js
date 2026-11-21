@@ -213,6 +213,7 @@ test('the hearth burns its fuel every fire tick, and a beacon costs upkeep', asy
 test('districts go next to the city, on the ground their type fits, up to three rings out', async ({ page }) => {
   const errors = await townWithFire(page);
   const r = await page.evaluate(() => {
+    burnTick(); // the hearth lit: districts go only where its fire reaches
     const cap = World.hex.gen.capital, g = World.hex.gen;
     const ringOf = (p) => Fire.distance(cap, p);
     const kinds = {};
@@ -246,6 +247,7 @@ async function laidOut(page) {
     const e1 = WorldGen.neighbour(cap[0], cap[1], 0), e2 = WorldGen.neighbour(e1[0], e1[1], 0);
     const w1 = WorldGen.neighbour(cap[0], cap[1], 3), se = WorldGen.neighbour(cap[0], cap[1], 1);
     set(e1, 'forest'); set(e2, 'forest'); set(w1, 'field'); set(se, 'field');
+    Network.tick(); // the hearth lit: districts go only where its fire reaches
     return { cap, e1, e2, w1, se };
   });
 }
@@ -415,6 +417,7 @@ test('milestones: the woodshed, the axe-head, the tannery and smokehouse, the fi
     World.hex.gen.terrain[e1[0]][e1[1]] = WorldGen.TERRAIN.field;
     World.hex.map[e1[0]][e1[1]] = WorldGen.TERRAIN.field;
     World.hex.mask[e1[0]][e1[1]] = true;
+    burnTick(); // lit ground for the district
     Network.placeDistrict('capital', e1[0], e1[1], 'huts');
     out.H4 = Network.has('H4');
     $SM.setM('game.workers', { tanner: 1, charcutier: 1 });
