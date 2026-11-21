@@ -82,7 +82,7 @@ test('fresh save: the town opens the Huge hex map, built from the same world', a
 
   // the save holds a seed and deltas, not the hex world
   const saved = await page.evaluate(() => JSON.parse(localStorage.gameState));
-  expect(saved.version).toBe(2.2);
+  expect(saved.version).toBe(2.3);
   expect(typeof saved.game.world.seed).toBe('number');
   expect(saved.game.world.hex.gen).toBe(1);
   expect(Object.keys(saved.game.world.hex.delta)).toEqual([]);
@@ -165,7 +165,7 @@ test('a v1.3 save with a full village and a walked map migrates and opens the he
   await page.clock.install();
   const errors = await openGame(page, { save: v13 });
   const state = await getState(page);
-  expect(state.version).toBe(2.2);
+  expect(state.version).toBe(2.3);
   expect(state.features.location.city).toBe(true);
   expect(typeof state.game.world.seed).toBe('number');
   expect(state.game.world.map).toEqual(v13.game.world.map); // the prologue map is kept as is
@@ -182,7 +182,7 @@ test('a v1.3 save without the town keeps the square map until the town opens', a
   save.game.buildings.hut = 10;
   const errors = await openGame(page, { save });
   expect(await page.evaluate(() => !!World.hex)).toBe(false);
-  expect(await page.evaluate(() => $SM.get('version'))).toBe(2.2);
+  expect(await page.evaluate(() => $SM.get('version'))).toBe(2.3);
   await page.evaluate(() => $SM.set('game.buildings["hut"]', 20));
   expect(await page.evaluate(() => !!World.hex)).toBe(true);
   expect(await page.evaluate(revealedKept, v13.game.world)).toBe(true);
@@ -193,8 +193,13 @@ test('a v2.0 save with an open town loads into the hex map', async ({ page }) =>
   await page.clock.install();
   const errors = await openGame(page, { save: v20 });
   const state = await getState(page);
-  expect(state.version).toBe(2.2);
-  expect(state.game.cities).toEqual(v20.game.cities);
+  expect(state.version).toBe(2.3);
+  // v2.3 drops happiness and puts the capital on the map: its hearth quarter on the capital's hex
+  const { happiness, ...capital } = v20.game.cities.capital;
+  expect(happiness).toBe(50);
+  expect(state.game.cities.capital).toMatchObject(capital);
+  expect(state.game.cities.capital.happiness).toBeUndefined();
+  expect(state.game.cities.capital.hex).toEqual(await page.evaluate(() => World.hex.gen.capital));
   expect(state.game.world.hex.gen).toBe(1);
   expect(await page.evaluate(revealedKept, v20.game.world)).toBe(true);
   // the hex map stays the same across reloads

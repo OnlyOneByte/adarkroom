@@ -1,3 +1,8 @@
+/* everything in the town is placed absolutely; a height keeps the next panel from floating over it */
+div#cityPanel {
+	min-height: 700px;
+}
+
 div#cityBuildBtns {
 	position: absolute;
 	top: 0px;
@@ -41,4 +46,54 @@ div#cityWorkers {
 	top: -4px;
 	left: 160px;
 	width: 150px;
+}
+
+/* the land: the hex map seen from the town, where beacons and districts go */
+div#cityLand {
+	position: absolute;
+	top: 340px;
+	left: 0px;
+	width: 462px;
+}
+
+div#cityLand:before {
+	content: attr(data-legend);
+	position: relative;
+	top: -5px;
+}
+
+div#fireStatus {
+	font-size: 14px;
+	margin-bottom: 6px;
+}
+
+#landMap {
+	position: relative;
+	font-family: "Courier New", Courier, monospace;
+	border: 1px solid black;
+	color: #999;
+	display: inline-block;
+	cursor: pointer;
+	user-select: none;
+}
+
+#landMap canvas {
+	display: block;
+}
+
+#landMap .landmark {
+	display: none;
+	color: black;
+}
+
+div#landInfo {
+	height: 20px;
+	margin-top: 4px;
+	font-size: 14px;
+	color: #999;
+}
+
+div#landActions .button {
+	float: left;
+	margin: 0px 8px 8px 0px;
 }
