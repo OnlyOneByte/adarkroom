@@ -39,6 +39,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const BUDGETS = {
   incomeTick: { max: 16, unit: 'ms' },
   fireTick: { max: 16, unit: 'ms' },
+  cityStatesTick: { max: 16, unit: 'ms' },
+  armiesTick: { max: 16, unit: 'ms' },
+  armyRoute: { max: 50, unit: 'ms' },
   network: { max: 50, unit: 'ms' },
   networkCut: { max: 50, unit: 'ms' },
   fireCompute: { max: 50, unit: 'ms' },
@@ -100,7 +103,7 @@ var Button = { Button: function () { return __dom; }, setDisabled: function () {
 var Space = {}, AudioEngine = { playSound: function () {} }, AudioLibrary = {};
 var Events = { activeEvent: function () { return null; }, startEvent: function () {}, Story: {} };
 `;
-const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'events/flame'];
+const SCRIPTS = ['state_manager', 'city', 'danger', 'worldgen', 'world', 'fire', 'districts', 'network', 'events/flame', 'citystates', 'events/citystates', 'armies', 'events/armies'];
 
 // Loads the game's scripts as globals of this process, as the page does. (Not a vm context: every
 // global lookup there goes through the context's interceptor, some 250x slower, which would swamp
@@ -124,6 +127,8 @@ export function loadGame({ seed }) {
     $SM.set('game.empire.treasury', {}, true);
     $SM.set('game.network', { tiers: {}, beacons: {}, story: {} }, true);
     World.openHexMap();
+    CityStates.init();
+    Armies.init();
     // the handlers the modules subscribe in their init
     $.Dispatch('stateUpdate').subscribe($SM.handleStateUpdates);
     $.Dispatch('stateUpdate').subscribe(City.handleStateUpdates);
@@ -173,6 +178,40 @@ export function benchNode({ cities = 64, beacons = 500, seed = 7, era = 'ember' 
   const ft = counted(() => Network.tick());
   row('fireTick', 'fire tick, 10 s (Network.tick), median of 10', fire.median,
     `max ${fire.max.toFixed(1)} ms; ${ft.saves} full saves and ${ft.events} state events a tick`);
+
+  // the 10 s city-state tick, right after the fire's: every city-state's glow, influence, rivals
+  const cst = time(() => CityStates.update(), 10);
+  const cs = counted(() => CityStates.update());
+  row('cityStatesTick', 'city-state tick, 10 s (CityStates.update), median of 10', cst.median,
+    `max ${cst.max.toFixed(1)} ms; ${CityStates.list().length} city-states; ${cs.saves} full saves and ${cs.events} state events a tick`);
+
+  // the 10 s army tick: 16 armies in the field, 8 marching across the map and 8 camped at walls (none ends)
+  const field = run(`(function () {
+    var list = CityStates.list(), gen = World.hex.gen, cap = gen.capital, lit = Armies.lit(), armies = [], far = null;
+    list.slice().sort(function (a, b) { return WorldGen.distance(b.at, cap) - WorldGen.distance(a.at, cap); }).slice(0, 16).forEach(function (c, i) {
+      var camp = Armies.campFor(gen, c, cap, function (x, y) { return lit(x, y) ? 1 : 0; }), path = camp && Armies.route(gen, cap, camp, lit);
+      if (!path) return;
+      far = far || camp;
+      var a = { id: 'b' + i, from: 'capital', to: c.id, squads: { 'iron sword': 30 }, ammo: {}, gear: {}, food: 1e9, water: 1e9,
+        at: cap.slice(), path: path, moves: 0, due: { food: 0, lost: 0 }, state: 'march', home: false, siege: null, loot: {}, warned: false };
+      if (i % 2) {
+        a.state = 'siege'; a.at = camp; a.path = [];
+        a.siege = Armies.newSiege(c.band, 30);
+        a.siege.walls = a.siege.wallsMax = 1e9; a.siege.stores = 1e9; a.siege.stance = 'wait'; a.siege.asked = 0; a.siege.sallies = 99;
+      }
+      armies.push(a);
+    });
+    $SM.set('game.armies.list', armies, true);
+    Armies.CHOICE_EVERY = 1e9; Armies.DESERT = 0; Armies.STRAGGLE = 0; Armies.WAITING = 0;
+    return { n: armies.length, far: far };
+  })()`);
+  const at = time(() => ctx.Armies.update(), 10);
+  const ac = counted(() => ctx.Armies.update());
+  row('armiesTick', 'army tick, 10 s (Armies.update), median of 10', at.median,
+    `max ${at.max.toFixed(1)} ms; ${field.n} armies in the field; ${ac.saves} full saves and ${ac.events} state events a tick`);
+  const route = time(() => ctx.Armies.route(World.hex.gen, World.hex.gen.capital, field.far, ctx.Armies.lit()), 10);
+  row('armyRoute', 'a march order across the map (Armies.route)', route.median, `to the farthest city-state's walls, ${ctx.Armies.route(World.hex.gen, World.hex.gen.capital, field.far, ctx.Armies.lit()).length} hexes`);
+  run(`$SM.set('game.armies.list', [], true)`);
 
   // the network from scratch: the refresh a click on the land makes, and Fire.compute inside it
   const refresh = time(() => Network.refresh(), 10);
