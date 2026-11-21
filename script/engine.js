@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.5,
+    VERSION: 2.6,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -246,6 +246,8 @@
       Network.init();
       // the city-states: placed when the hex map opens, their influence ticks with the fire
       CityStates.init();
+      // armies and sieges: trained in military-focus cities, marched on the 10 s tick
+      Armies.init();
       if($SM.get('features.location.spaceShip')) {
         Ship.init();
       }
