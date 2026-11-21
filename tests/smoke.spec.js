@@ -47,3 +47,17 @@ test('no event opens over the buttons while a test plays', async ({ page }) => {
   await expect(page.locator('#event')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test('the Penrose notice comes only in the room or outside, as every other event of the pool', async ({ page }) => {
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    const p = Events.Marketing[0], was = Engine.activeModule, out = {};
+    out.room = (Engine.activeModule = Room, p.isAvailable());
+    out.path = (Engine.activeModule = Path, p.isAvailable());
+    out.world = (Engine.activeModule = World, p.isAvailable());
+    Engine.activeModule = was;
+    return out;
+  });
+  expect(r).toEqual({ room: true, path: false, world: false });
+  expect(errors).toEqual([]);
+});

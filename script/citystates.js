@@ -1034,6 +1034,8 @@ var CityStates = {
 		else lines.push(CS.fill(_('the people of {name} take the {goods}.'), c, { goods: list }));
 		var to = Math.min(CS.GIFT_CAP, inf + worth);
 		$SM.set(path + '.gift', { tick: now, mult: mult }, true);
+		// out of the glow it fades, but never below the last threshold passed (PHASE4), gifts' as the glow's
+		$SM.set(path + '.floor', Math.max(st.floor || 0, CS.floorOf(to)), true);
 		$SM.set(path + '.inf', to);
 		CS.crossed(c, inf, to);
 		CS.playQueued();
@@ -1106,13 +1108,14 @@ var CityStates = {
 	// to picks up (as Network.resettleStory does for the charcoal stranger)
 	beat: function (c) {
 		var CS = CityStates, gives = CS.TEMPERAMENTS[c.t].gives, ev = Events.CityStates;
+		var f6 = !!(CS.get().beats || {}).F6; // the bog-cutters' F6 came at 50 ("learn the cutting"), its scene with it
 		gives.forEach(function (g) {
 			if (!g.tier || typeof g.at == 'string' && g.at !== 'price' && g.at !== 'quest') return;
 			$SM.set('game.citystates.beats["' + g.tier + '"]', c.id);
 			Engine.event('progress', 'story hook ' + g.tier);
 		});
 		// (the forge-masters' scene is their price: Events.CityStates.coldForges)
-		var scenes = { bog_cutters: [ev.f6, ev.b8], potters: [ev.h6], mirror_folk: [ev.mirrors] }[c.t];
+		var scenes = { bog_cutters: f6 ? [ev.b8] : [ev.f6, ev.b8], potters: [ev.h6], mirror_folk: [ev.mirrors] }[c.t];
 		(scenes || []).forEach(function (s) { CS.queue(function () { Events.startEvent(s(c)); }); });
 	},
 
@@ -1557,7 +1560,7 @@ var CityStates = {
 				} else if (home && q.party === 'with') {
 					started = CS.questDone(c);
 				}
-			} else if (type === 'clear' && on) {
+			} else if (type === 'clear' && on && !Events.activeEvent()) { // (not over a scene this step opened: World.checkFight)
 				CS._fighting = c.id;
 				Events.startEvent(Events.CityStates.clearFight(c));
 				started = true;
