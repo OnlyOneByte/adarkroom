@@ -400,7 +400,7 @@ test('BUG 2: a hearth burning its store keeps its lines lit through a short fuel
 
 // BUG 3: Fire.compute pools sharing hearths by distance alone, so two hearths joined only through
 // a dark beacon (past the fuel's reach, or too weak to be lit) still add their fire together.
-test.fixme('BUG 3: hearths joined only through a dark beacon do not pool their fire', async ({ page }) => {
+test('BUG 3: hearths joined only through a dark beacon do not pool their fire', async ({ page }) => {
   await openGame(page);
   const r = await pure(page, { hearths: [{ at: [5, 10], out: 16, share: true, cap: 1 }, { at: [11, 10], out: 16, share: true, cap: 1 }],
     beacons: [[8, 10]], danger: 'return x === 8 ? 5 : 0' });
