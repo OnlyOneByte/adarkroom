@@ -502,3 +502,21 @@ test('a v2.3 save loads with the flame era in: no flame tier, no errors, the fir
   expect(r.lit).toBeGreaterThan(0);
   expect(errors).toEqual([]);
 });
+
+test('a governor never starves its growth: with no room left it saves for a house, ahead of its focus', async ({ page }) => {
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    const view = (citizens, room, wood) => ({
+      focus: 'fire', citizens, room, jobs: {}, stores: { wood }, fuels: { wood: 1 }, need: 10, cold: false,
+      builds: [{ key: 'tallow vats', cost: { wood: 150 }, have: 0 }, { key: 'house', cost: { wood: 350 }, have: 2 }],
+    });
+    return {
+      full: Governor.plan(view(8, 8, 200)).build,    // can't afford the house: builds nothing else
+      fullRich: Governor.plan(view(8, 8, 400)).build, // a house, past the reserve (30)
+      reserve: Governor.plan(view(8, 8, 360)).build,  // a house would eat the reserve: nothing
+      room: Governor.plan(view(6, 8, 200)).build,     // room left: the focus's order
+    };
+  });
+  expect(r).toEqual({ full: null, fullRich: 'house', reserve: null, room: 'tallow vats' });
+  expect(errors).toEqual([]);
+});

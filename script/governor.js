@@ -15,6 +15,7 @@
  *   view.builds     [{ key, cost: { store: n }, have: n }] buildings it could still build (under their maximum)
  *   view.cold       true if the hearth made no fire last tick
  *   view.spent      true if its bog cuts are all spent (dug deep)
+ *   view.room       people its houses hold: with no room left, any focus builds a house first
  * Returns { workers: { job: n }, build: key or null, notices: [code] }.
  */
 var Governor = {
@@ -96,7 +97,11 @@ var Governor = {
 		var stock = 0;
 		for (var f in view.fuels) stock += (view.stores[f] || 0) * view.fuels[f];
 		var build = null, reserve = view.need * Governor.RESERVE;
-		(Governor.BUILDS[view.focus] || []).some(function (item) {
+		// a governor never starves its own growth: no room left and a house can still go up, it saves
+		// for the house and builds nothing else
+		var order = Governor.BUILDS[view.focus] || [];
+		if (typeof view.room == 'number' && view.citizens >= view.room && view.builds.some(function (x) { return x.key === 'house'; })) order = ['house'];
+		order.some(function (item) {
 			var key = typeof item == 'string' ? item : item[0];
 			var b = view.builds.filter(function (x) { return x.key === key; })[0];
 			if (!b || (typeof item != 'string' && (b.have || 0) >= item[1])) return false;
@@ -110,8 +115,8 @@ var Governor = {
 			return true;
 		});
 		if (view.cold) notices.push('cold');
-		if (view.spent) notices.push('spent');
 		else if (fuelShort && stock < view.need) notices.push('fuel');
+		if (view.spent) notices.push('spent');
 		if (free > 0 && view.focus !== 'military') notices.push('idle');
 		return { workers: workers, build: build, notices: notices };
 	}

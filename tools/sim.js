@@ -682,7 +682,8 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
     city.hearth = { out: need > 0 ? r.out * need / H.out : 0, stored: r.stored };
     if (!(city.hearth.out > 0)) res.cold++;
     // the governor
-    const view = { focus, citizens: city.citizens, jobs: {}, stores: { ...city.stores }, fuels: {}, builds: [], need, cold: !(city.hearth.out > 0) };
+    const view = { focus, citizens: city.citizens, jobs: {}, stores: { ...city.stores }, fuels: {}, builds: [], need, cold: !(city.hearth.out > 0),
+      room: (city.buildings.house || 0) * C.Buildings.house.room };
     for (const j of open()) {
       const inc = C.income(j), s = share(j), per = {};
       for (const k in inc.stores) per[k] = inc.stores[k] * s * 10 / inc.delay;
