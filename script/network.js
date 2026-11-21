@@ -319,8 +319,9 @@ var Network = {
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
 				if (Network.shares(c.id)) out = r.out;
+				// burning only its store, it keeps the last fuel's reach
 				$SM.set(City.path(c.id, 'hearth'), {
-					fuel: out > 0 ? r.fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
+					fuel: out > 0 ? (r.fuel || h.fuel || null) : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
 				}, true);
 			});
 			Network.refresh();
