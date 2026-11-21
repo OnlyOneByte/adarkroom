@@ -1560,15 +1560,22 @@ var World = {
         var a = World.hexCentre(net.nodes[l[0]].at[0], net.nodes[l[0]].at[1]);
         var b = World.hexCentre(net.nodes[l[1]].at[0], net.nodes[l[1]].at[1]);
         if(!inView(a, 4 * w) && !inView(b, 4 * w)) return;
+        // a line stops at the edge of a landmark's hex, so it doesn't cross the glyph
+        var d = Math.sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1])) || 1;
+        var edge = function(p, q, at) {
+          if(!World.markedAt(at[0], at[1], o.map)) return p;
+          return [p[0] + (q[0] - p[0]) * (w / 2) / d, p[1] + (q[1] - p[1]) * (w / 2) / d];
+        };
+        var a1 = edge(a, b, net.nodes[l[0]].at), b1 = edge(b, a, net.nodes[l[1]].at);
         ctx.globalAlpha = Math.min(0.9, 0.3 + l[2] / 20);
         ctx.beginPath();
-        ctx.moveTo(a[0], a[1]);
-        ctx.lineTo(b[0], b[1]);
+        ctx.moveTo(a1[0], a1[1]);
+        ctx.lineTo(b1[0], b1[1]);
         ctx.stroke();
       });
       ctx.globalAlpha = 1;
       // the beacons: a point of light each; a dark one is only a ring. On a landmark or a site
-      // the landmark's glyph shows instead (the hover names the beacon too)
+      // the landmark's glyph shows instead (the hover names the beacon too), and its lines stop at the hex's edge
       net.nodes.forEach(function(n) {
         if(n.hearth || World.markedAt(n.at[0], n.at[1], o.map)) return;
         var c = World.hexCentre(n.at[0], n.at[1]);
