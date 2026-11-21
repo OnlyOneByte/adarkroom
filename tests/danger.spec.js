@@ -32,7 +32,7 @@ function survey(seeds) {
     // a crater's hexes against the ring they sit in
     // against the same world without its sites, below the top of the scale where there's room to stand out
     const flat = Danger.field({ ...g, sites: [] });
-    const spike = g.sites.filter((s) => s.kind === 'crater' || s.kind === 'complex').flatMap((s) => s.hexes)
+    const spike = g.sites.filter((s) => (s.kind === 'crater' || s.kind === 'complex') && !s.garrison).flatMap((s) => s.hexes)
       .filter((h) => flat[h[0] + h[1] * C] < 7.5).map((h) => f[h[0] + h[1] * C] - flat[h[0] + h[1] * C]);
     const ringMean = (h) => { const r = ring[Math.floor(WorldGen.distance(h, g.capital) / 10)]; return r[0] / r[1]; };
     const pocket = g.pockets.map((p) => f[p[0] + p[1] * C] - ringMean(p));
@@ -53,7 +53,7 @@ test('danger: 0 at home, rising with distance to 10 at the heart, with hotspots 
     expect(s.heart).toBeGreaterThan(9.5);
     // every 10-hex ring is more dangerous than the one inside it, out to the heart
     for (let i = 1; i < s.heartRing; i++) expect(s.rings[i]).toBeGreaterThan(s.rings[i - 1]);
-    for (const d of s.spike) expect(d).toBeGreaterThan(2);       // craters and complexes are hotspots
+    for (const d of s.spike) expect(d).toBeGreaterThan(2);       // craters and complexes are hotspots (not the garrison's: POWERS §3)
     expect(s.pocket.filter((d) => d < -1).length).toBeGreaterThan(2); // most pockets are clearly safer
   }
   expect(errors).toEqual([]);
@@ -421,7 +421,7 @@ test('a hex map from another generator version is re-projected, not mis-patched'
   const r = await page.evaluate(() => ({
     gen: $SM.get('game.world.hex.gen'), delta: $SM.get('game.world.hex.delta'), tile: World.hex.map[50][50],
   }));
-  expect(r.gen).toBe(1);
+  expect(r.gen).toBe(2);
   expect(r.delta).toEqual({});
   expect(r.tile).not.toBe('Y!');
   expect(errors).toEqual([]);
@@ -442,7 +442,7 @@ test('a v2.1 save migrates to v2.2 at normal difficulty and keeps its hex map', 
   await page.reload();
   await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
   const state = await getState(page);
-  expect(state.version).toBe(2.7);
+  expect(state.version).toBe(2.8);
   expect(state.game.difficulty).toBe('normal');
   expect(await page.evaluate(() => JSON.stringify(World.hex.map))).toBe(saved.map);
   expect(errors).toEqual([]);

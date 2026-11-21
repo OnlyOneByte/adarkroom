@@ -10,7 +10,8 @@
  * at a production loss that wears off; a story one's craftsmen flee, and its ladder beat waits until a
  * trek brings them home.
  *
- * Boats, fire-ships, the powers and their storms are Phase 6: nothing here assumes there are none.
+ * An army can march on a power too (a.power, script/powers.js): the same march and siege, with the power's
+ * own numbers and puzzle, and a storm the wanderer leads. Boats and fire-ships are later.
  *
  * The rules at the top are pure (no DOM, no state), so the simulator (tools/sim-armies.js) loads this
  * file too. Every number is provisional, tuned with `npm run sim`.
@@ -64,6 +65,8 @@ var Armies = {
 	wallKind: function (band) { return band <= 1 ? 'timber' : 'brick'; },
 	stores: function (band) { return 30 + 15 * band; },        // siege ticks they can eat
 	defMight: function (band) { return 0.3 + 0.15 * band; },  // damage per defender per second
+	// ... or a power's own (POWERS §3), when its siege names one
+	theirMight: function (siege) { return siege.might != null ? siege.might : Armies.defMight(siege.band); },
 
 	// the siege chain (POWERS §1 Option B). provisional
 	WEAR: 0.05,            // share of the army's might that wears the walls a press tick
@@ -300,13 +303,13 @@ var Armies = {
 	siegeTick: function (siege, army, roll) {
 		var A = Armies, out = { lost: 0, worn: 0, sally: null, breach: false, yield: false }, tick = Fire.TICK;
 		siege.ticks++;
-		var fire = siege.garrison * A.defMight(siege.band) * tick / A.HP * A.shield(army);
+		var fire = siege.garrison * A.theirMight(siege) * tick / A.HP * A.shield(army);
 		if (siege.stance === 'press') {
 			var worn = A.WEAR * A.might(army) * tick;
 			A.spend(army);
 			var gear = army.gear || {};
 			if (gear.ram && siege.kind === 'timber') worn += A.RAM_HIT * gear.ram;
-			if (gear['blasting charge'] > 0) {
+			if (gear['blasting charge'] > 0 && !siege.keep) { // (kept back for a power's puzzle: siege.keep)
 				worn += A.CHARGE_HIT;
 				gear['blasting charge']--;
 			}
@@ -316,13 +319,14 @@ var Armies = {
 		} else {
 			out.lost = A.kill(army, fire * A.WAITING);
 		}
-		siege.stores = Math.max(0, siege.stores - 1);
+		// a power still fed from outside (siege.supplied: an adit open) eats nothing of its own
+		if (!siege.supplied) siege.stores = Math.max(0, siege.stores - 1);
 		// a sally: half of them strike out, one round of the storm, then back behind the walls
 		if (siege.sallies < A.SALLIES && siege.walls > 0 && roll < A.SALLY) {
 			siege.sallies++;
 			var half = siege.garrison / 2;
 			var killed = Math.min(half, A.might(army) * A.ROUND / A.HP);
-			out.sally = { lost: A.kill(army, half * A.defMight(siege.band) * A.ROUND / A.HP * A.shield(army)), killed: Math.round(killed) };
+			out.sally = { lost: A.kill(army, half * A.theirMight(siege) * A.ROUND / A.HP * A.shield(army)), killed: Math.round(killed) };
 			siege.garrison -= killed;
 		}
 		out.breach = siege.walls <= 0;
@@ -339,7 +343,7 @@ var Armies = {
 		for (var r = 0; r < A.ROUNDS && siege.garrison > 0 && A.soldiers(army) > 0; r++) {
 			var theirs = Math.min(siege.garrison, A.might(army) * A.ROUND / A.HP);
 			A.spend(army);
-			var ours = A.kill(army, siege.garrison * A.defMight(siege.band) * A.ROUND / A.HP * A.shield(army));
+			var ours = A.kill(army, siege.garrison * A.theirMight(siege) * A.ROUND / A.HP * A.shield(army));
 			siege.garrison -= theirs;
 			if (siege.garrison < 0.5) siege.garrison = 0;
 			rounds.push({ ours: ours, theirs: Math.round(theirs) });
@@ -482,6 +486,17 @@ var Armies = {
 
 	armyOf: function (cityId) {
 		return Armies.list().filter(function (a) { return a.from === cityId; })[0] || null;
+	},
+
+	// what the army marches on: a city-state, or a power (Powers.target: { id, name, at, band }); null when none
+	target: function (a) {
+		return a.power ? Powers.target(a.power) : a.to ? CityStates.byId(a.to) : null;
+	},
+
+	// it is ours (taken) or broken already, or gone
+	taken: function (a) {
+		var t = Armies.target(a);
+		return !t || (a.power ? Powers.broken(a.power) : !!CityStates.state(t.id).city);
 	},
 
 	armyAt: function (x, y) {
@@ -628,9 +643,17 @@ var Armies = {
 			Notifications.notify(City, why);
 			return false;
 		}
-		// lit land, off the beacons' own hexes (where the map shows the beacon, not the army)
+		return A.send(cityId, c, { to: csId });
+	},
+
+	// the march itself, on a target { at, name } (a city-state or a power); extra: the army's own fields
+	send: function (cityId, c, extra) {
+		var A = Armies;
+		// lit land, off the beacons' own hexes (where the map shows the beacon, not the army), and off a site
 		var lit = A.lit(), from = $SM.get(City.path(cityId, 'hex'));
-		var camp = A.campFor(World.hex.gen, c, from, function (x, y) { return lit(x, y) ? (Network.beaconAt(x, y) ? 1 : 2) : 0; });
+		var camp = A.campFor(World.hex.gen, c, from, function (x, y) {
+			return (lit(x, y) ? (Network.beaconAt(x, y) ? 1 : 2) : 0) - (extra.power && World.siteAt(x, y) ? 3 : 0);
+		});
 		var path = camp && A.route(World.hex.gen, from, camp, A.lit());
 		if (!path) {
 			Notifications.notify(City, _('there is no way there on foot.'));
@@ -649,10 +672,11 @@ var Armies = {
 		var id = 'army' + ($SM.get('game.armies.next', true) + 1);
 		$SM.set('game.armies.next', $SM.get('game.armies.next', true) + 1, true);
 		var army = {
-			id: id, from: cityId, to: csId, squads: o.squads, ammo: o.ammo, gear: o.gear, food: food,
+			id: id, from: cityId, to: null, power: null, squads: o.squads, ammo: o.ammo, gear: o.gear, food: food,
 			water: armed * A.WATER_EACH, at: from.slice(), path: path, moves: 0, due: { food: 0, lost: 0 },
 			state: 'march', home: false, siege: null, loot: {}, warned: false
 		};
+		$.extend(army, extra);
 		$SM.set('game.armies.list[' + A.list().length + ']', army, true);
 		Notifications.notify(null, CityStates.fill(_('the army marches on {name}.'), c));
 		Engine.event('progress', 'army marched');
@@ -728,16 +752,16 @@ var Armies = {
 	arrive: function (a) {
 		var A = Armies;
 		if (a.home) return A.disband(a);
-		var c = a.to && CityStates.byId(a.to);
-		if (!c || CityStates.state(c.id).city) {
+		var c = A.target(a);
+		if (A.taken(a)) {
 			a.state = 'camp';
-			a.to = null;
+			a.to = a.power = null;
 			A.set(a);
 			return;
 		}
 		// invest: the camp is pitched, both sides' clocks start
 		a.state = 'siege';
-		a.siege = A.newSiege(c.band, A.soldiers(a));
+		a.siege = a.power ? Powers.newSiege(a.power, A.soldiers(a)) : A.newSiege(c.band, A.soldiers(a));
 		a.siege.asked = 0;
 		A.set(a);
 		Engine.event('progress', 'siege');
@@ -746,18 +770,22 @@ var Armies = {
 
 	// a siege tick at the walls (POWERS §1 Option B 2-4)
 	besiege: function (a) {
-		var A = Armies, c = CityStates.byId(a.to), s = a.siege;
-		if (!c || CityStates.state(c.id).city) {
+		var A = Armies, c = A.target(a), s = a.siege;
+		if (A.taken(a)) {
 			A.fallBack(a, true);
 			return;
 		}
 		if (s.over) return; // the storm's scene is waiting
 		A.supply(a, a.at, 1);
 		if (!A.soldiers(a)) return A.lostArmy(a);
+		if (a.power) Powers.prepare(a);
 		var r = A.siegeTick(s, a, Math.random());
 		if (!A.soldiers(a)) return A.lostArmy(a);
 		if (r.sally) CityStates.queue(function () { Events.startEvent(Events.Armies.sally(c, r.sally)); });
-		if (r.breach) {
+		if (r.breach && a.power) {
+			// a power's storm is a fight the wanderer leads (Powers.onStep): it waits for them
+			s.over = { breach: true };
+		} else if (r.breach) {
 			s.stormed = A.soldiers(a);
 			s.over = { storm: A.storm(s, a) };
 		} else if (r.yield) {
@@ -787,6 +815,7 @@ var Armies = {
 
 	// the siege's end, told by its scene: the storm, they yield, or the army breaks under the walls
 	tellEnd: function (a) {
+		if (a.power) return Powers.tellEnd(a);
 		var o = a.siege.over, id = a.id;
 		CityStates.queue(function () {
 			if (!Armies.byId(id)) return;
@@ -814,7 +843,7 @@ var Armies = {
 			});
 		}
 		a.siege = null;
-		a.to = null;
+		a.to = a.power = null;
 		a.state = 'march';
 		a.path = best ? (A.route(gen, a.at, best, lit) || []) : [];
 		if (!a.path.length) a.state = 'camp';
@@ -1037,7 +1066,7 @@ var Armies = {
 	 * The town panel: the active city's soldiers, its gear, and its army in the field.
 	 */
 	status: function (a) {
-		var c = a.to && CityStates.byId(a.to), n = Armies.soldiers(a);
+		var c = Armies.target(a), n = Armies.soldiers(a);
 		if (a.state === 'siege' && c) {
 			var s = a.siege;
 			return CityStates.fill(_('the army is camped below the walls of {name}. {n}. walls {w}. their stores {s}.'), c,
@@ -1065,7 +1094,7 @@ var Armies = {
 			if ($('#cityStates').length) box.insertBefore('#cityStates');
 			else box.appendTo($('#cityLand').length ? '#cityLand' : City.panel);
 		}
-		var key = JSON.stringify([cityId, military, A.trained(cityId), A.room(cityId), a && [A.status(a), a.state, a.siege && a.siege.stance]]);
+		var key = JSON.stringify([cityId, military, A.trained(cityId), A.room(cityId), a && [A.status(a), a.state, a.siege && a.siege.stance], Powers.key(cityId)]);
 		if (box.attr('data-key') === key) return;
 		box.attr('data-key', key).empty();
 		$('<div>').attr('id', 'armySoldiers').addClass('csLine').text(_('soldiers at home {0}. room for {1}.', A.trained(cityId), A.room(cityId))).appendTo(box);
@@ -1082,6 +1111,7 @@ var Armies = {
 		}
 		if (a) {
 			$('<div>').attr('id', 'armyStatus').addClass('csLine').text(A.status(a)).appendTo(box);
+			if (a.power && a.siege && a.siege.over && a.siege.over.breach) $('<div>').addClass('csLine').text(_('the army waits for the wanderer.')).appendTo(box);
 			if (a.state === 'siege') {
 				new Button.Button({ id: 'army_press', text: _('press the walls'), width: '80px', click: function () { A.stance(a.id, 'press'); } }).appendTo(box);
 				new Button.Button({ id: 'army_wait', text: _('wait them out'), width: '80px', click: function () { A.stance(a.id, 'wait'); } }).appendTo(box);
@@ -1092,6 +1122,8 @@ var Armies = {
 				new Button.Button({ id: 'army_home', text: _('march home'), width: '80px', click: function () { A.goHome(a.id); } }).appendTo(box);
 			}
 		}
+		// the powers it can march on (script/powers.js)
+		Powers.actions(cityId, box);
 		$('<div>').addClass('clear').appendTo(box);
 	},
 
@@ -1114,7 +1146,7 @@ var Armies = {
 			delete Armies._marks;
 			Armies._after = $SM.get('game.armies.after');
 		}
-		if (e.stateName.indexOf('game.armies') === 0 || e.stateName.indexOf('game.cities') === 0 || e.category == 'stores') {
+		if (e.stateName.indexOf('game.armies') === 0 || e.stateName.indexOf('game.cities') === 0 || e.stateName.indexOf('game.powers') === 0 || e.category == 'stores') {
 			Armies.updatePanel();
 		}
 		// the city-state rows carry the march button

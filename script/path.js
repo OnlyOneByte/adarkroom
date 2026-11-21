@@ -176,7 +176,9 @@ var Path = {
 			'bayonet': {type: 'weapon' },
 			'charm': {type: 'tool'},
 			'alien alloy': { type: 'tool' },
-			'medicine': {type: 'tool', desc: _('restores') + ' ' + World.MEDS_HEAL + ' ' + _('hp') }
+			'medicine': {type: 'tool', desc: _('restores') + ' ' + World.MEDS_HEAL + ' ' + _('hp') },
+			// siege gear (script/armies.js): a trek can blow a power's adit with it (script/powers.js)
+			'blasting charge': {type: 'tool'}
 		}, Room.Craftables, Fabricator.Craftables);
 		
 		for(var k in carryable) {
