@@ -432,7 +432,7 @@ test('BUG 4 (fixed in 3b): a second city does not pay the upkeep of the capital\
 
 // BUG 5: a watch fire (B4) on hills keeps all its fire, so a chain of hill beacons never loses
 // strength and carries without end; CITY.md gives B4 "+1 hop on hills".
-test.fixme('BUG 5: watch fires on hills add one hop, not endless reach', async ({ page }) => {
+test('BUG 5: watch fires on hills add one hop, not endless reach', async ({ page }) => {
   await openGame(page);
   const beacons = [];
   for (let i = 1; i <= 12; i++) beacons.push([5 + 3 * i, 10]);
@@ -440,7 +440,7 @@ test.fixme('BUG 5: watch fires on hills add one hop, not endless reach', async (
   const litOf = (r) => r.nodes.slice(1).filter((s) => s >= 1).length;
   const flat = litOf(await pure(page, o)), hills = litOf(await pure(page, { ...o, hills: true }));
   expect(flat).toBe(4);
-  expect(hills).toBe(flat + 1); // today all 12 are lit, at full strength
+  expect(hills).toBe(flat + 1); // before the fix all 12 were lit, at full strength
 });
 
 // BUG 6: Network.canBeacon only refuses ocean and mountains; a lake hex is passable, so an ember
