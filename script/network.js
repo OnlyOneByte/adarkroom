@@ -289,6 +289,7 @@ var Network = {
 	refresh: function () {
 		if (!World.hex) return;
 		Network._districts = null;
+		Network._pits = Network.flag('pitsFound') ? null : $SM.get('game.network.pits') || null;
 		Network.ensureCapital();
 		var gen = World.hex.gen, cs = Network.cities();
 		var hid = Network.hearthTier(), H = Fire.HEARTHS[hid];
@@ -1152,9 +1153,10 @@ var Network = {
 		});
 	},
 
+	// the painter asks for every hex (perf): the pits as of the last refresh or placing, null once found
 	isPits: function (x, y) {
-		var p = $SM.get('game.network.pits');
-		return !!p && p[0] === x && p[1] === y && !Network.flag('pitsFound');
+		var p = Network._pits;
+		return !!p && p[0] === x && p[1] === y;
 	},
 
 	// the old pits the stranger tells of: forest 3-6 hexes from their city, nearest first, a hex of its own
@@ -1171,6 +1173,7 @@ var Network = {
 		// no forest near: the nearest open ground will do
 		if (!best) best = [at[0] + 3, at[1]];
 		$SM.set('game.network.pits', best);
+		Network._pits = best;
 		World.uncoverMap(best[0], best[1], 1, World.hex.mask);
 		World.saveHex(World.worldFlags());
 		Network.draw();
