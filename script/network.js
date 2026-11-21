@@ -241,7 +241,7 @@ var Network = {
 		var bt = Network.beaconTier();
 		var result = Fire.compute({
 			cols: gen.cols, rows: gen.rows,
-			danger: World.baseDangerAt,
+			field: World.baseField(),
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
 			open: function (x, y) { return WorldGen.isPassable(gen.terrain[x][y]) && !WorldGen.isWater(gen.terrain[x][y]); },
 			hearths: cs.map(function (c) {

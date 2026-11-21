@@ -343,7 +343,20 @@ var World = {
 
   // the danger before any light: what a fuel's reach is measured against
   baseDangerAt: function(x, y) {
-    return Danger.at(World.hex.danger, World.hex.gen.cols, x, y, World.difficulty());
+    return World.baseField()[x + y * World.hex.gen.cols];
+  },
+
+  // that danger for every hex, worked out once for the world and its difficulty and kept (perf:
+  // fights, the fire network and the painter read it per hex). Danger.at's values, unrounded.
+  baseField: function() {
+    var hex = World.hex, d = World.difficulty();
+    if(!hex.base || hex.baseFor !== d) {
+      var cols = hex.gen.cols, base = new Float64Array(hex.danger.length);
+      for(var i = 0; i < base.length; i++) base[i] = Danger.at(hex.danger, cols, i % cols, (i - i % cols) / cols, d);
+      hex.base = base;
+      hex.baseFor = d;
+    }
+    return hex.base;
   },
 
   // the distance the prologue's encounters are picked by; on the hex map, danger stands in for it
