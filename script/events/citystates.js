@@ -47,7 +47,7 @@ Events.CityStates = {
 			sighting: [_('tracks in the snow, a great many, all going one way.'), _('a fire pit, still warm.'), _('no camp.')],
 			gate: _('the camp is already moving.'), noGate: true, empty: true,
 			dress: _("in furs, who won't sit"), where: _('the snow'), token: _('a strip of dried meat'),
-			offer: _("{name} don't stay put. walk with them, if you can catch them.")
+			offer: _("the people of {name} don't stay put. walk with them, if you can catch them.")
 		},
 		archive_clerks: {
 			sighting: [_('a low stone house in the shadow of the old works.'), _('inside, shelves. on the shelves, paper.'), _('someone is counting it.')],
@@ -429,7 +429,7 @@ Events.CityStates = {
 				start: {
 					onLoad: function () { $SM.set('game.citystates.cs["' + c.id + '"].quest', true); },
 					text: [_('an old woman points north, at a black stain on the ice.'), _('says the ground there burns.'),
-						CityStates.fill(_('the walk ends. {name} have decided about you.'), c)],
+						CityStates.fill(_('the walk ends. the people of {name} have decided about you.'), c)],
 					buttons: { 'go': { text: _('go on'), onChoose: function () { CityStates.questJoin(c); }, nextScene: 'end' } }
 				}
 			}
