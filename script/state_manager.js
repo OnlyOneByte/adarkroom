@@ -440,6 +440,19 @@ var StateManager = {
 			$SM.set('version', 2.7);
 			version = 2.7;
 		}
+		if(version == 2.7) {
+			// v2.8 has the war-remnant powers (game.powers, script/powers.js): it starts empty on load; a save
+			// that already has F8 (coal) had its garrison broken some other way, so the garrison stays broken
+			if($SM.get('game.network.tiers.F8')) $SM.set('game.powers', { garrison: { broken: true, way: null } }, true);
+			// the generator's version 2 moved only the garrison's complex (WorldGen._garrison): the hex map's
+			// deltas and mask still fit, so it is marked version 2, not re-projected; the garrison is picked
+			// again where it now stands (and seen again, if it was marked: Powers.init)
+			if($SM.get('game.world.hex.gen') === 1) $SM.set('game.world.hex.gen', 2, true);
+			if($SM.get('game.network.garrison')) $SM.remove('game.network.garrison', true);
+			Engine.log('upgraded save to v2.8');
+			$SM.set('version', 2.8);
+			version = 2.8;
+		}
 	},
 
 	/******************************************************************

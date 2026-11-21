@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.7,
+    VERSION: 2.8,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,
@@ -248,6 +248,8 @@
       CityStates.init();
       // armies and sieges: trained in military-focus cities, marched on the 10 s tick
       Armies.init();
+      // the war-remnant powers: marched on and besieged as the armies are, broken by a storm the wanderer leads
+      Powers.init();
       if($SM.get('features.location.spaceShip')) {
         Ship.init();
       }

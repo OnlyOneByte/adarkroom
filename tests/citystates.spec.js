@@ -37,7 +37,7 @@ test('the hex map opens with 64 city-states: 8 story ones, the guarantees, the Î
   expect(r.near).toBe(0);
   expect(r.spaced).toBe(true);
   expect(r.saved).toBe(64);
-  expect(r.version).toBe(2.7);
+  expect(r.version).toBe(2.8);
 
   const before = await page.evaluate(() => JSON.stringify(CityStates.list()));
   await page.reload();
@@ -69,7 +69,7 @@ test('a city-state is won by influence from a fresh save: a beacon line to the h
   expect(r.first).toBeCloseTo(r.rate * r.G * 1.5 / r.S / 6, 5);
   expect(r.title).toBe('A Stranger at the Hearth');
   expect(r.inf).toBeGreaterThanOrEqual(25);
-  expect(r.label).toContain(r.c.name);
+  expect(r.label).toContain(r.c.name.replace(/ /g, '&nbsp;'));
   await expect(page.locator('#event')).toContainText("in herder's wool waits by the hearth");
   await page.screenshot({ path: 'test-results/citystates-stranger.png' });
   await choose(page, 'trade');
@@ -256,7 +256,7 @@ test('reavers will not bend; nothing of ours goes on a city-state\'s land', asyn
   expect(errors).toEqual([]);
 });
 
-test('a v2.4 save with a hex map loads (as v2.7) and gets its city-states around what it has built', async ({ page }) => {
+test('a v2.4 save with a hex map loads (as v2.8) and gets its city-states around what it has built', async ({ page }) => {
   const save = load('v2.3-fire');
   const errors = await openGame(page, { save });
   const r = await page.evaluate(() => {
@@ -264,7 +264,7 @@ test('a v2.4 save with a hex map loads (as v2.7) and gets its city-states around
     return { version: $SM.get('version'), n: list.length,
       onCity: list.filter((c) => c.land.some((h) => Network.districtAt(h[0], h[1]))).length };
   });
-  expect(r.version).toBe(2.7);
+  expect(r.version).toBe(2.8);
   expect(r.n).toBe(64);
   expect(r.onCity).toBe(0);
   expect(errors).toEqual([]);
