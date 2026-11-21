@@ -1306,8 +1306,11 @@ var Network = {
 	 * The forge-masters' price (F9), the mirror folk (B9) and the tar-keepers' oath (F10) play in Phase 4's
 	 * scenes; the powers that gate F10, B10, H11 and B12 call Fire.unlock (Network.BEATS).
 	 */
-	// the drowned harbour (blaze-draft): the fallen city nearest the capital on an inland sea's shore; failing
-	// that, the nearest on any water. Picked once and kept, as the garrison's complex is
+	// the drowned harbour (blaze-draft): the fallen city nearest the capital on an inland sea's shore whose centre a
+	// pitch line can light (F10: the last fuel before the harbour's own whale oil, at the game's difficulty);
+	// failing that, the nearest one on any water a pitch line can light; failing that, the nearest on an inland
+	// sea's shore, then the nearest on any water. Picked once and
+	// kept, as the garrison's complex is. The drowned fleet is put out on its water (Fleet.place)
 	harbourSite: function () {
 		var g = $SM.get('game.network.harbour'), gen = World.hex.gen;
 		if (g) return World.siteAt(g[0], g[1]);
@@ -1322,7 +1325,9 @@ var Network = {
 		};
 		var near = function (a, b) { return Fire.distance(a.anchor, gen.capital) - Fire.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
 		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
-		var best = falls.filter(sea).sort(near)[0] || falls.filter(Network.coastal).sort(near)[0];
+		var lit = function (s) { return World.baseDangerAt(s.anchor[0], s.anchor[1]) <= Fire.FUELS.pitch.cap; };
+		var shore = falls.filter(sea).sort(near), coast = falls.filter(Network.coastal).sort(near);
+		var best = shore.filter(lit)[0] || coast.filter(lit)[0] || shore[0] || coast[0];
 		if (!best) return null;
 		$SM.set('game.network.harbour', best.anchor.slice(), true);
 		return best;

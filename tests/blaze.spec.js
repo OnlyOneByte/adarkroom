@@ -122,13 +122,15 @@ test('the drowned harbour: seen on a trek and marked; resettled, the keepers (B1
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'B9', 'B10']) });
   const r = await page.evaluate(() => {
     const g = World.hex.gen, site = Network.harbourSite();
-    const sea = site.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
-    // nearer fallen cities on an inland sea's shore: none
-    const nearer = g.sites.filter((s) => s.kind === 'fallenCity' && s !== site && Fire.distance(s.anchor, g.capital) < Fire.distance(site.anchor, g.capital) &&
-      s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; })));
-    return { at: site.anchor, sea, nearer: nearer.length, kind: site.kind };
+    const sea = (s) => s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
+    const lit = (s) => World.baseDangerAt(s.anchor[0], s.anchor[1]) <= Fire.FUELS.pitch.cap;
+    const near = (a, b) => Fire.distance(a.anchor, g.capital) - Fire.distance(b.anchor, g.capital) || g.sites.indexOf(a) - g.sites.indexOf(b);
+    // the rule: a pitch-lit city on an inland sea's shore, else the nearest pitch-lit city on any water, ...
+    const falls = g.sites.filter((s) => s.kind === 'fallenCity');
+    const want = falls.filter((s) => sea(s) && lit(s)).sort(near)[0] || falls.filter((s) => Network.coastal(s) && lit(s)).sort(near)[0];
+    return { at: site.anchor, picked: site === want, lit: lit(site), kind: site.kind };
   });
-  expect(r).toMatchObject({ sea: true, nearer: 0, kind: 'fallenCity' });
+  expect(r).toMatchObject({ picked: true, lit: true, kind: 'fallenCity' });
   // on a trek, the site comes into sight
   await page.locator('#location_path').click();
   await page.evaluate((at) => { embark(); World.curPos = at.slice(); Network.onStep(at[0], at[1]); }, r.at);

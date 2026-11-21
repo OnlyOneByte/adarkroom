@@ -118,7 +118,8 @@ test('clear: the raiders at the pits are a fight one band hard; won, the tar-kee
   const d = await page.evaluate((q) => WorldGen.distance(q.at, cs.at), q);
   expect(d).toBeGreaterThanOrEqual(2);
   expect(d).toBeLessThanOrEqual(4);
-  const fight = await page.evaluate((q) => { trek(); stepOnto(q.at); const s = Events.activeEvent().scenes.start; return { combat: s.combat, enemy: s.enemy, health: s.health }; }, q);
+  // (the drowned harbour may be in sight of the pits: its own scene isn't this test's)
+  const fight = await page.evaluate((q) => { $SM.set('game.network.story.harbourSeen', true); trek(); stepOnto(q.at); const s = Events.activeEvent().scenes.start; return { combat: s.combat, enemy: s.enemy, health: s.health }; }, q);
   expect(fight).toMatchObject({ combat: true, enemy: 'raiders at the pits' });
   expect(fight.health).toBeGreaterThan(0);
   await page.waitForTimeout(500);

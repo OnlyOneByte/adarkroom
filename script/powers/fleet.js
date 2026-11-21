@@ -83,6 +83,12 @@ var Fleet = {
 	// to the harbour } or null
 	way: function (gen, from, hb, site, steps, lit, sail) {
 		var camp = Fleet.campOf(gen, site, steps), out = camp && Fleet.row(gen, hb, camp);
+		// a pond too small to lie off them on: the army camps on the harbour's shore beside the hulks
+		var shore = !camp && hb.hexes.filter(function (h) { return site.hexes.some(function (s) { return WorldGen.distance(h, s) === 1; }); })[0];
+		if (shore) {
+			camp = shore;
+			out = { shore: shore, path: [] };
+		}
 		var there = out && Armies.route(gen, from, out.shore, lit, sail);
 		return there ? { path: there.concat(out.path), camp: camp, harbour: there.length } : null;
 	}

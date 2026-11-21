@@ -67,9 +67,10 @@ function siege(ctx, P, kit, fed, roll) {
 }
 
 // the drowned harbour as Network.harbourSite picks it (network.js isn't loaded here): the fallen city nearest
-// home on an inland sea's shore, else the nearest on any water. shortcut: a copy of the game's rule; follow it
+// home on an inland sea's shore whose centre a pitch line can light (danger ≤ pitch's cap), else the nearest
+// on any water a pitch line can light, else the nearest on an inland sea's shore, else the nearest on any water. shortcut: a copy of the game's rule; follow it
 // when harbourSite's rule changes
-function harbourSite(G, gen) {
+function harbourSite(G, gen, danger, cap) {
   const touches = (s, ok) => s.hexes.some((h) => [0, 1, 2, 3, 4, 5].some((d) => {
     const [x, y] = G.neighbour(h[0], h[1], d);
     return x >= 0 && y >= 0 && x < gen.cols && y < gen.rows && ok(x, y);
@@ -78,7 +79,8 @@ function harbourSite(G, gen) {
   const coast = (s) => touches(s, (x, y) => G.isWater(gen.terrain[x][y]));
   const near = (a, b) => G.distance(a.anchor, gen.capital) - G.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b);
   const falls = gen.sites.filter((s) => s.kind === 'fallenCity');
-  return falls.filter(sea).sort(near)[0] || falls.filter(coast).sort(near)[0] || null;
+  const shore = falls.filter(sea).sort(near), water = falls.filter(coast).sort(near), lit = (s) => danger(s.anchor[0], s.anchor[1]) <= cap;
+  return shore.filter(lit)[0] || water.filter(lit)[0] || shore[0] || water[0] || null;
 }
 
 // the land a man walks from home (passable hexes), Uint8Array
@@ -151,7 +153,8 @@ export function simulatePowerFleet({ seeds, firstSeed = 1 }) {
     rand.seed(seed * 7919);
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
     // the game's Fleet.place: put out on the drowned harbour's water
-    const hb = harbourSite(G, gen);
+    const field0 = D.field(gen);
+    const hb = harbourSite(G, gen, (x, y) => D.at(field0, gen.cols, x, y, 'normal'), ctx.Fire.FUELS.pitch.cap);
     gen.fleet = G._fleet(gen, hb);
     if (gen.fleet < 0) { out.push({ seed, none: true }); continue; }
     const field = D.field(gen), danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
@@ -165,6 +168,7 @@ export function simulatePowerFleet({ seeds, firstSeed = 1 }) {
     const lit = reach(ctx, gen, danger, 'whale oil', [gen.capital, hb.anchor]);
     out.push({
       seed, distance: G.distance(site.anchor, gen.capital), harbour: G.distance(hb.anchor, gen.capital),
+      harbourLit: D.at(field0, gen.cols, hb.anchor[0], hb.anchor[1], 'normal') <= ctx.Fire.FUELS.pitch.cap,
       hexes: site.hexes.length, danger: [Math.min(...dz), Math.max(...dz)],
       sea: site.hexes.every((h) => ctx.Fleet.inland(gen, h[0], h[1])),
       deep: site.hexes.every((h) => !G.isPassable(gen.terrain[h[0]][h[1]])),
@@ -195,6 +199,7 @@ export function powerFleetTable({ out, seeds }) {
   lines.push('');
   lines.push('storm: 40 bayonets, 20 riflemen (5 bullets each), 10 boats, 4 fire-ships; fed/starve: the same, no fire-ships; small: 20 iron swords, 4 fire-ships.');
   const m = ok.map((o) => o.march).filter(Boolean), h = ok.map((o) => o.fromHome).filter(Boolean), d = ok.map((o) => o.distance), lo = ok.map((o) => o.danger[0]), hi = ok.map((o) => o.danger[1]);
+  lines.push(`the drowned harbour (Network.harbourSite): ${median(ok.map((o) => o.harbour))} hexes out (median), its centre in a pitch line's reach ${ok.filter((o) => o.harbourLit).length}/${seeds}`);
   lines.push(`the fleet (WorldGen._fleet): ${median(d)} hexes out (median, ${Math.min(...d)}-${Math.max(...d)}), danger ${fmt(Math.min(...lo))}-${fmt(Math.max(...hi))} ` +
     `(POWERS §3: 5-7), on an inland sea ${ok.filter((o) => o.sea).length}/${seeds}, all open sea ${ok.filter((o) => o.deep).length}/${seeds}, ` +
     `reached on foot ${ok.filter((o) => o.onFoot).length}/${seeds}, land lost to it ${ok.reduce((s, o) => s + o.lostLand, 0)} hexes; ` +
