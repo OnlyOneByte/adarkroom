@@ -53,7 +53,8 @@ async function untilScene(page, titles, stance = 'press the walls') {
     if (ev) {
       const camp = page.locator('#event .button', { hasText: stance });
       await choose(page, (await camp.count()) ? stance : 'go on');
-      await page.waitForFunction(() => !$('#event').is(':animated'));
+      // (each of these buttons ends its scene: wait for the panel to fade out before the next tick)
+      await page.waitForFunction(() => !Events.activeEvent());
     } else await page.evaluate(() => tick());
   }
   return null;
@@ -129,6 +130,14 @@ test('a city-state taken by force from a fresh save: soldiers drilled, a ram bui
   expect(r.joined).toBe(true);
   expect(r.after).toEqual({ loss: 0.5, ticks: 60, left: 60 });
   expect(r.share).toBe(0.5);
+  // its jobs run at that share of their pace
+  expect(await page.evaluate((id) => {
+    const a = City.jobShare(id, 'gatherer'), keep = Armies._after;
+    Armies._after = {};
+    const b = City.jobShare(id, 'gatherer');
+    Armies._after = keep;
+    return a / b;
+  }, r.city)).toBeCloseTo(0.5, 5);
   a = await army(page);
   expect(a.state).toBe('camp');
   const lost = 20 - Object.values(a.squads).reduce((s, n) => s + n, 0);
@@ -209,6 +218,17 @@ test('waited out: their stores run down, they yield; -25% for 5 minutes', async 
   expect(await untilScene(page, ['The Gate Opens', 'The Storm'], 'wait them out')).toBe('The Gate Opens');
   const ticks = await page.evaluate(() => Armies.list()[0].siege.ticks);
   expect(ticks).toBe(await page.evaluate(() => Armies.stores(cs.band)));
+  // saved with the scene unanswered and reloaded: it is told again
+  await page.evaluate(() => Engine.saveGame());
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room && World.hex);
+  await page.evaluate((id) => {
+    clearTimeout(Events._eventTimeout); clearTimeout(Network._tickTimeout); clearTimeout(CityStates._tickTimeout); clearTimeout(Armies._tickTimeout);
+    Network._nextAsk = Date.now() + 1e9;
+    window.cs = CityStates.byId(id);
+    CityStates.playQueued();
+  }, c.id);
+  await page.waitForFunction(() => Events.activeEvent() && Events.activeEvent().title === 'The Gate Opens');
   await choose(page, 'go in');
   await choose(page, 'go on');
   const after = await page.evaluate(() => $SM.get('game.armies.after["' + CityStates.state(cs.id).city + '"]'));
