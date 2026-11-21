@@ -63,18 +63,18 @@ var Armies = {
 	walls: function (band) { return 100 * (1 + band); },
 	wallKind: function (band) { return band <= 1 ? 'timber' : 'brick'; },
 	stores: function (band) { return 30 + 15 * band; },        // siege ticks they can eat
-	defMight: function (band) { return 0.5 + 0.25 * band; },  // damage per defender per second
+	defMight: function (band) { return 0.3 + 0.15 * band; },  // damage per defender per second
 
 	// the siege chain (POWERS §1 Option B). provisional
 	WEAR: 0.05,            // share of the army's might that wears the walls a press tick
 	AT_WALLS: 0.2,         // share of their fire that finds the army while it presses
-	WAITING: 0.05,         // ... while it waits them out
+	WAITING: 0.02,         // ... while it waits them out
 	SALLY: 1 / 12,         // chance a tick that they strike out; at most SALLIES a siege
 	SALLIES: 2,
 	CHOICE_EVERY: 6,       // ticks between the camp's choices (press / wait / fall back)
 	ROUND: 5,              // seconds a round of the storm
 	ROUNDS: 20,            // a storm that hasn't broken by then is lost
-	ROUT_AT: 0.5,          // the storm breaks when the army is down to this share of who went in
+	ROUT_AT: 0.5,          // the army breaks (in the storm, or under the walls) when down to this share of who went in
 	LOSS: [0.5, 0.8],      // POWERS §1: a lost storm costs 50-80% of the army, by how badly
 	DESERT: 0.1,           // provisional: share of the army that slips away a step or tick without water or food
 
@@ -84,7 +84,7 @@ var Armies = {
 	WASTES: 7,
 	STRAGGLE: 0.01,
 	LIT_PREF: 1.5,         // provisional: an unlit hex costs this much more when the army picks its way
-	FOOD_TICKS: 30,        // provisional: an army packs food for the way there and back and this many siege ticks
+	FOOD_TICKS: 60,        // provisional: an army packs food for the way there and back and this many siege ticks
 
 	// POWERS §1 / §5 Q8: production loss and how long it takes to wear off (minutes)
 	AFTERMATH: { force: { loss: 0.5, minutes: 10 }, sack: { loss: 0.75, minutes: 20 }, yield: { loss: 0.25, minutes: 5 } },
@@ -253,6 +253,15 @@ var Armies = {
 		return path;
 	},
 
+	// the hex the army camps on (pure): next to their hearth, on lit land if it can be, nearest home
+	campFor: function (gen, c, from, lit) {
+		return [0, 1, 2, 3, 4, 5].map(function (d) { return WorldGen.neighbour(c.at[0], c.at[1], d); }).filter(function (p) {
+			return p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows && WorldGen.isPassable(gen.terrain[p[0]][p[1]]);
+		}).sort(function (a, b) {
+			return (lit(b[0], b[1]) - lit(a[0], a[1])) || WorldGen.distance(a, from) - WorldGen.distance(b, from);
+		})[0] || null;
+	},
+
 	// what entering a hex costs an army of n (POWERS §1 table): { water, food, stragglers }, all fractional
 	stepNeeds: function (n, lit, danger, cost) {
 		var A = Armies, wastes = danger >= A.WASTES ? 2 : 1;
@@ -269,16 +278,16 @@ var Armies = {
 	},
 
 	/*
-	 * The siege (pure). newSiege(band): the walls, garrison and stores they hold. siegeTick: one 10 s tick
-	 * at the walls, stance 'press' or 'wait', roll() in [0, 1). Changes siege and army; returns
-	 * { lost, worn, sally: { lost, killed } | null, breach, yield }
+	 * The siege (pure). newSiege(band, soldiers): the walls, garrison and stores they hold, and the army that
+	 * invested them. siegeTick: one 10 s tick at the walls, stance 'press' or 'wait', roll in [0, 1). Changes
+	 * siege and army; returns { lost, worn, sally: { lost, killed } | null, breach, yield, broken }
 	 */
-	newSiege: function (band) {
+	newSiege: function (band, soldiers) {
 		var A = Armies;
 		return {
 			band: band, walls: A.walls(band), wallsMax: A.walls(band), kind: A.wallKind(band),
 			garrison: A.garrison(band), garrisonMax: A.garrison(band), stores: A.stores(band),
-			sallies: 0, ticks: 0, stance: 'press'
+			sallies: 0, ticks: 0, stance: 'press', invested: soldiers
 		};
 	},
 
@@ -312,6 +321,8 @@ var Armies = {
 		}
 		out.breach = siege.walls <= 0;
 		out.yield = !out.breach && siege.stores <= 0;
+		// worn down under the walls, it breaks as a lost storm does
+		out.broken = !out.breach && !out.yield && A.soldiers(army) < A.ROUT_AT * siege.invested;
 		return out;
 	},
 
@@ -576,13 +587,6 @@ var Armies = {
 		return Object.keys(o.squads).length > 0;
 	},
 
-	// the hex the army camps on: next to their hearth, nearest home
-	campFor: function (c, from) {
-		var gen = World.hex.gen;
-		return District.neighbours(c.at).filter(function (p) {
-			return p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows && WorldGen.isPassable(gen.terrain[p[0]][p[1]]);
-		}).sort(function (a, b) { return WorldGen.distance(a, from) - WorldGen.distance(b, from); })[0] || null;
-	},
 
 	lit: function () {
 		var fire = World.hex.fire, cols = World.hex.gen.cols;
@@ -595,7 +599,7 @@ var Armies = {
 			Notifications.notify(City, why);
 			return false;
 		}
-		var from = $SM.get(City.path(cityId, 'hex')), camp = A.campFor(c, from);
+		var from = $SM.get(City.path(cityId, 'hex')), camp = A.campFor(World.hex.gen, c, from, A.lit());
 		var path = camp && A.route(World.hex.gen, from, camp, A.lit());
 		if (!path) {
 			Notifications.notify(City, _('there is no way there on foot.'));
@@ -702,7 +706,7 @@ var Armies = {
 		}
 		// invest: the camp is pitched, both sides' clocks start
 		a.state = 'siege';
-		a.siege = A.newSiege(c.band);
+		a.siege = A.newSiege(c.band, A.soldiers(a));
 		a.siege.asked = 0;
 		A.set(a);
 		Engine.event('progress', 'siege');
@@ -734,6 +738,13 @@ var Armies = {
 			s.over = true;
 			A.set(a);
 			CityStates.queue(function () { Events.startEvent(Events.Armies.yielded(a.id)); });
+			return;
+		}
+		if (r.broken) {
+			s.over = true;
+			s.stormed = s.invested;
+			A.set(a);
+			CityStates.queue(function () { Events.startEvent(Events.Armies.broken(a.id)); });
 			return;
 		}
 		// the camp's choices, every few ticks
