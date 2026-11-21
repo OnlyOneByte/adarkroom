@@ -92,16 +92,17 @@ test('hearths: the bloomery boosts the low fuels, the furnace burns half again f
   expect(errors).toEqual([]);
 });
 
-test('the city-states\' and the powers\' beats: F9 and B9 from Phase 4; F10 needs the oath and the riders broken; B10, H11 from the powers; H10 at 128 people', async ({ page }) => {
+test('the city-states\' and the powers\' beats: F9 and B9 from Phase 4; F10 from the oath or the riders broken, whichever is first; B10, H11 from the powers; H10 at 128 people', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME) });
   const r = await page.evaluate(() => {
     const has = () => ['F9', 'F10', 'B9', 'B10', 'H9', 'H10', 'H11'].filter((id) => Network.has(id));
     $SM.set('game.citystates.beats.F9', 'cs1');
     $SM.set('game.citystates.beats.B9', 'cs2');
-    $SM.set('game.citystates.beats.F10', 'cs3');
     const phase4 = has();
+    // the riders broken first: pitch; the oath after changes nothing
     Fire.unlock('F10');
     const riders = has();
+    $SM.set('game.citystates.beats.F10', 'cs3');
     Fire.unlock('B10');
     Fire.unlock('H11'); // waits: H9 and H10 aren't in
     const powers = has();
@@ -317,8 +318,24 @@ test('a v2.8 save loads as v2.9: a coastal fallen city it resettled after the fi
   });
   const page2 = await page.context().newPage();
   const after = await openGame(page2, { save: saved });
+  // the hex map comes up after the room: the scan runs on its first refresh
+  await page2.waitForFunction(() => typeof Network != 'undefined' && World.hex && !Network.flag('harbourScan'));
   const r = await page2.evaluate(() => ({ version: $SM.get('version'), harbour: $SM.get('game.network.story["the drowned harbour"]'), scan: Network.flag('harbourScan') }));
   expect(r).toEqual({ version: 2.9, harbour: 'city2', scan: false });
   expect(errors).toEqual([]);
   expect(after).toEqual([]);
+});
+
+test('F10 by the other path: the tar-keepers\' oath alone brings pitch, once; the riders broken later changes nothing (pending user)', async ({ page }) => {
+  const errors = await flameTown(page, { tiers: EMBER.concat(FLAME) });
+  const r = await page.evaluate(() => {
+    $SM.set('game.citystates.beats.F9', 'cs1');
+    $SM.set('game.citystates.beats.F10', 'cs3');
+    const oath = Network.has('F10');
+    const said = ($('#notifications').text().match(/pitch comes in/g) || []).length;
+    Fire.unlock('F10');
+    return { oath, said, again: ($('#notifications').text().match(/pitch comes in/g) || []).length };
+  });
+  expect(r).toEqual({ oath: true, said: 1, again: 1 });
+  expect(errors).toEqual([]);
 });

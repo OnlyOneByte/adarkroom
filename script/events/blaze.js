@@ -18,7 +18,7 @@ Events.Blaze = {
 		// one line as each tier comes in (Network.unlock)
 		tiers: {
 			F9: _('coal baked to coke burns hotter. the fire climbs the hills.'),               // TEXT PENDING blaze-draft
-			F10: _('the riders are gone. pitch comes in from the desert pits.'),               // TEXT PENDING blaze-draft
+			F10: _('the tar pits are safe. pitch comes in from the desert.'),                 // TEXT PENDING blaze-draft
 			F11: _('the boats come home heavy. whale oil burns long and bright.'),             // TEXT PENDING blaze-draft
 			F12: _('rock oil from the black well. it burns like nothing else.'),               // TEXT PENDING blaze-draft
 			B9: _('mirrors on the beacons. by day the light jumps the flats.'),                // TEXT PENDING blaze-draft

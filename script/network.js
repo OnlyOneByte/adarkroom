@@ -44,8 +44,9 @@ var Network = {
 	// provisional (blaze era, design/text/blaze-build.md)
 	TOP_TIER: 128,       // people in a city: its top population tier (H10)
 	// the beats that come from outside the ladders' own checks (Fire.unlock), and the flag each sets.
-	// The blaze powers (POWERS §2) only gate their tiers: F10 also needs the tar-keepers' oath, B12 the
-	// mirror folk and the lighthouse (Network.blazeStory plays the heliograph's scene)
+	// The blaze powers (POWERS §2) only gate their tiers. Pending user: the raiders at the tar pits are the
+	// riders' outriders, so F10 comes on either path, the tar-keepers' oath or the riders broken, whichever
+	// is first. B12 also needs the mirror folk and the lighthouse (Network.blazeStory plays the heliograph's scene)
 	BEATS: { F8: 'garrisonBroken', F10: 'ridersBroken', B10: 'passHeld', H11: 'foundryTaken', B12: 'fleetBroken' },
 
 	// what unlocks each ember tier (Fire.TIERS[].when)
@@ -101,7 +102,7 @@ var Network = {
 		'coal burned': function () { return Network.flag('coalBurned'); },
 		// the blaze era (script/events/blaze.js has its scenes)
 		'forge-masters': function () { return Network.csBeat('F9'); },
-		'tar oath': function () { return Network.csBeat('F10') && Network.flag('ridersBroken'); },
+		'tar oath': function () { return Network.csBeat('F10') || Network.flag('ridersBroken'); }, // pending user
 		'boats relaunched': function () { return Network.flag('boatsRelaunched'); },
 		'well tapped': function () { return Network.flag('wellTapped'); },
 		'mirrors': function () { return Network.csBeat('B9'); },
