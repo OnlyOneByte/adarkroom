@@ -544,7 +544,7 @@ var City = {
 			if ($SM.get(City.path(cityId, 'buildings["' + b + '"]'), true) >= City.maximum(b, cityId)) continue;
 			var cost = City.Buildings[b].cost(cityId);
 			for (var ck in cost) view.stores[ck] = $SM.get(City.storePath(cityId, ck), true);
-			view.builds.push({ key: b, cost: cost });
+			view.builds.push({ key: b, cost: cost, have: $SM.get(City.path(cityId, 'buildings["' + b + '"]'), true) });
 		}
 		['meat', 'fur', 'oak', 'bait'].forEach(function (k) { view.stores[k] = $SM.get(City.storePath(cityId, k), true); });
 		view.need = Network.hearthNeed(cityId);

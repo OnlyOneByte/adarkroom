@@ -12,7 +12,7 @@
  *   view.stores     { store: amount }
  *   view.fuels      { fuel: fire per unit } the unlocked fuels
  *   view.need       fire the hearth wants a tick
- *   view.builds     [{ key, cost: { store: n } }] buildings it could still build (under their maximum)
+ *   view.builds     [{ key, cost: { store: n }, have: n }] buildings it could still build (under their maximum)
  *   view.cold       true if the hearth made no fire last tick
  *   view.spent      true if its bog cuts are all spent (dug deep)
  * Returns { workers: { job: n }, build: key or null, notices: [code] }.
@@ -32,8 +32,8 @@ var Governor = {
 		military: []
 	},
 	BUILDS: {
-		// charcoal pits ahead of the houses, the tallow vats after them: charcoal is made from the wood the city has
-		fire: ['woodshed', 'charcoal pits', 'tallow vats', 'house'],
+		// [key, n]: only while the city has fewer than n of it. A first house, then the fuel buildings, then houses again
+		fire: ['woodshed', ['house', 1], 'charcoal pits', 'tallow vats', 'house'],
 		farming: ['house', 'smokehouse'],
 		industry: ['tannery', 'smokehouse', 'house'],
 		trade: ['house', 'tannery'],
@@ -96,9 +96,10 @@ var Governor = {
 		var stock = 0;
 		for (var f in view.fuels) stock += (view.stores[f] || 0) * view.fuels[f];
 		var build = null, reserve = view.need * Governor.RESERVE;
-		(Governor.BUILDS[view.focus] || []).some(function (key) {
+		(Governor.BUILDS[view.focus] || []).some(function (item) {
+			var key = typeof item == 'string' ? item : item[0];
 			var b = view.builds.filter(function (x) { return x.key === key; })[0];
-			if (!b) return false;
+			if (!b || (typeof item != 'string' && (b.have || 0) >= item[1])) return false;
 			var fireCost = 0;
 			for (var k in b.cost) {
 				if ((view.stores[k] || 0) < b.cost[k]) return false;
