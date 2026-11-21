@@ -6,6 +6,8 @@
  *   beacons   { 'x,y': true } beacons standing on the hex map
  *   story     flags of the ember story chains and milestones
  *   cairn     [x, y] the old cairn the wanderer tells of, once told
+ *   settlers  { from, to: [x, y], people, stores, resettle, out } settlers sent to found a city:
+ *             waiting at home, or out on the trek with the wanderer (out); see Network.sendSettlers
  * Each city record adds:
  *   hex        [x, y] its hearth quarter
  *   districts  { 'x,y': District type }
@@ -19,6 +21,16 @@
 var Network = {
 	CAIRN_GLYPH: '|',
 	DISTRICT_COST: { wood: 50 }, // provisional
+	// founding a city (CITY.md, provisional): people from the parent city, and their supplies
+	SETTLERS: { people: 8, stores: { 'wood': 40, 'cured meat': 20 } },
+	// provisional: a founded city's hearth wants its full fire only once it has this many people
+	HEARTH_PEOPLE: 32,
+	// provisional: old districts a resettled fallen city starts with, by the site's size in hexes
+	OLD_DISTRICTS: function (size) { return size <= 4 ? 1 : size <= 6 ? 2 : 3; },
+	// what an old district can have been, in the order it is tried on each hex of the site
+	OLD_TYPES: ['huts', 'woods', 'hunting grounds', 'burning pits', 'walls'],
+	// story hooks of resettled fallen cities, in the order the sites are resettled (flame-era chains)
+	RESETTLE_STORIES: ['the charcoal stranger'],
 
 	// what unlocks each ember tier (Fire.TIERS[].when)
 	UNLOCKS: {
@@ -70,6 +82,14 @@ var Network = {
 
 	init: function () {
 		if (!$SM.get('game.network')) $SM.set('game.network', { tiers: {}, beacons: {}, story: {} }, true);
+		// a reload mid-trek wakes at home: settlers out with the wanderer are home again, unless
+		// they were lost with a pack that was never picked up (the pack is what the save kept)
+		var s = Network.settlers();
+		if (s && s.out) {
+			var pack = $SM.get('game.world.pack');
+			if (pack && pack.settlers) $SM.remove('game.network.settlers', true);
+			else $SM.set('game.network.settlers.out', false, true);
+		}
 		Network.checkUnlocks();
 		$.Dispatch('stateUpdate').subscribe(Network.handleStateUpdates);
 		Network.refresh();
@@ -219,7 +239,7 @@ var Network = {
 			hills: function (x, y) { return gen.terrain[x][y] === WorldGen.TERRAIN.hills; },
 			hearths: cs.map(function (c) {
 				var h = c.city.hearth || {}, f = h.fuel && Fire.FUELS[h.fuel];
-				return { at: c.city.hex, out: h.out || 0, share: H.share, cap: f ? f.cap : 0 };
+				return { at: c.city.hex, out: h.out || 0, share: Network.shares(c.id), cap: f ? f.cap : 0 };
 			}),
 			beacons: beacons,
 			beacon: bt ? Fire.BEACONS[bt] : null
@@ -243,38 +263,71 @@ var Network = {
 		if (World.state && Engine.activeModule == World) World.drawHexMap();
 	},
 
-	// how many beacons each city's hearth fed (s >= 1), by city index
+	// how many beacons the sharing hearths fed (s >= 1)
 	fed: function (result) {
 		var n = 0;
 		result.nodes.forEach(function (node) { if (!node.hearth && node.s >= Fire.LIT_MIN) n++; });
 		return n;
 	},
 
+	// a hearth feeds the beacon lines from the stone hearth on; before the chimney hearth (H5,
+	// "a second city can feed the line") only the capital's does, and a founded city lights its own ground
+	shares: function (cityId) {
+		return Fire.HEARTHS[Network.hearthTier()].share && (cityId == City.CAPITAL || Network.has('H5'));
+	},
+
+	/*
+	 * Fire a city's hearth wants a tick: its output, plus the upkeep of its share of the beacons
+	 * it fed. A founded city wants its full fire only once it has Network.HEARTH_PEOPLE people,
+	 * so a small town can put some wood by.
+	 */
+	hearthNeed: function (cityId) {
+		var c = $SM.get('game.cities["' + cityId + '"]');
+		return Network.hearthOut(cityId) + (Network.shares(cityId) ? Fire.UPKEEP * ((c.hearth && c.hearth.fed) || 0) : 0);
+	},
+
+	// the fire a city's hearth makes when it is fully fed
+	hearthOut: function (cityId) {
+		var out = Fire.HEARTHS[Network.hearthTier()].out;
+		if (cityId == City.CAPITAL) return out;
+		var c = $SM.get('game.cities["' + cityId + '"]');
+		return out * Math.min(1, (c.population.citizens || 0) / Network.HEARTH_PEOPLE);
+	},
+
 	scheduleTick: function () {
 		Network._tickTimeout = Engine.setTimeout(Network.tick, Fire.TICK * 1000);
 	},
 
-	// The fire tick: every city's hearth burns its fuel, then the network is worked out again.
+	// The fire tick: every city's hearth burns its fuel, then the network is worked out again,
+	// then the focused cities govern themselves.
 	tick: function () {
 		if ($SM.get('features.location.city')) {
 			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers();
 			Network.cities().forEach(function (c) {
 				var h = c.city.hearth || {};
 				var fuel = Fire.pickFuel(tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); });
-				var need = H.out + (H.share ? Fire.UPKEEP * (h.fed || 0) : 0);
+				var need = Network.hearthNeed(c.id);
 				var stock = fuel ? $SM.get(City.storePath(c.id, fuel), true) : 0;
 				var r = Fire.burn(hid, fuel, need, stock, h.stored || 0);
 				if (r.burn) $SM.add(City.storePath(c.id, fuel), -r.burn);
+				// the fire made, as a share of what it wanted
+				var out = need > 0 ? r.out * need / H.out : 0;
+				if (Network.shares(c.id)) out = r.out;
 				$SM.set(City.path(c.id, 'hearth'), {
-					fuel: r.out > 0 ? fuel : null, out: Math.round(r.out * 100) / 100, stored: r.stored, fed: h.fed || 0
+					fuel: out > 0 ? fuel : null, out: Math.round(out * 100) / 100, stored: r.stored, fed: h.fed || 0
 				});
 			});
 			Network.refresh();
 			if (World.hex && World.hex.fire) {
-				var fed = Network.fed(World.hex.fire);
-				Network.cities().forEach(function (c) { $SM.set(City.path(c.id, 'hearth.fed'), fed, true); });
+				// the sharing hearths split the upkeep of the beacons they fed
+				var sharing = Network.cities().filter(function (c) { return Network.shares(c.id); });
+				var fed = Network.fed(World.hex.fire) / Math.max(1, sharing.length);
+				Network.cities().forEach(function (c) {
+					$SM.set(City.path(c.id, 'hearth.fed'), Network.shares(c.id) ? fed : 0, true);
+				});
 			}
 			City.updateIncome();
+			Network.cities().forEach(function (c) { if (c.city.focus) City.govern(c.id); });
 			Network.checkStory();
 		}
 		Network.scheduleTick();
@@ -298,7 +351,7 @@ var Network = {
 	raiseBeacon: function (x, y) {
 		if (!Network.canBeacon(x, y)) return false;
 		var cost = Fire.BEACONS[Network.beaconTier()].cost;
-		if (!Network.pay(City.CAPITAL, cost)) return false;
+		if (!Network.pay(City.activeCity, cost)) return false;
 		var first = !Network.flag('firstBrazier');
 		$SM.set('game.network.beacons["' + Network.key(x, y) + '"]', true);
 		AudioEngine.playSound(AudioLibrary.BUILD);
@@ -338,7 +391,8 @@ var Network = {
 			terrainAt: Network.terrainKey,
 			site: !!World.siteAt(x, y),
 			deep: !!f && f.kind === 'forest',
-			city: $SM.get(City.path(cityId, 'districts')) || {}
+			city: $SM.get(City.path(cityId, 'districts')) || {},
+			capital: cityId == City.CAPITAL
 		};
 	},
 
@@ -370,10 +424,170 @@ var Network = {
 		return true;
 	},
 
+	/*
+	 * Founding (DESIGN.md "Founding cities"): only on lit land, two steps: light the way, then
+	 * settle. Settlers leave a city with Network.SETTLERS and trek to the site with the wanderer;
+	 * on arrival the city is made. A fallen city that is lit can be resettled instead: it starts
+	 * with some of its old districts, and may have a story.
+	 */
+	settlers: function () {
+		return $SM.get('game.network.settlers') || null;
+	},
+
+	// where a city could be founded from this hex: { at, site } (site: the fallen city resettled), or null
+	foundingSite: function (x, y) {
+		if (!World.hex || !World.hex.fire) return null;
+		var gen = World.hex.gen;
+		if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !World.hex.mask[x][y]) return null;
+		var site = World.siteAt(x, y), at = [x, y];
+		if (site && site.kind !== 'fallenCity') return null;
+		if (site) at = site.anchor.slice(); // a fallen city is resettled from its old centre
+		if (!World.hex.fire.lit[at[0] + at[1] * gen.cols] || !gen.reachable[at[0] + at[1] * gen.cols]) return null;
+		if (!District.land(Network.ground(null, at[0], at[1])) || Network.beaconAt(at[0], at[1])) return null;
+		// not next to another city
+		var near = [at].concat(District.neighbours(at));
+		if (near.some(function (p) { return Network.districtAt(p[0], p[1]); })) return null;
+		return { at: at, site: site };
+	},
+
+	// why a city can't send settlers now, or null
+	cantSend: function (cityId) {
+		var s = Network.settlers(), pack = $SM.get('game.world.pack');
+		if (s || (pack && pack.settlers)) return _('settlers are already on their way');
+		if (City.people(cityId) < Network.SETTLERS.people) return _('not enough people');
+		var st = Network.SETTLERS.stores;
+		for (var k in st) {
+			if ($SM.get(City.storePath(cityId, k), true) < st[k]) return _('not enough ' + k);
+		}
+		return null;
+	},
+
+	sendSettlers: function (cityId, x, y) {
+		var f = Network.foundingSite(x, y), why = Network.cantSend(cityId);
+		if (!f || why) {
+			if (why) Notifications.notify(City, why);
+			return false;
+		}
+		Network.pay(cityId, Network.SETTLERS.stores);
+		City.removePeople(cityId, Network.SETTLERS.people);
+		$SM.set('game.network.settlers', {
+			from: cityId, to: f.at, people: Network.SETTLERS.people,
+			stores: $.extend({}, Network.SETTLERS.stores), resettle: !!f.site, out: false
+		});
+		Notifications.notify(null, _('eight settlers wait at the edge of town, packs on their backs.'));
+		Network.draw();
+		return true;
+	},
+
+	// settlers who have not left yet unpack, back into their city
+	callOff: function () {
+		var s = Network.settlers();
+		if (!s || s.out) return false;
+		$SM.remove('game.network.settlers');
+		if ($SM.get('game.cities["' + s.from + '"]')) {
+			$SM.addM(City.storesPath(s.from), s.stores);
+			if (s.from == City.CAPITAL) $SM.add('game.population', s.people);
+			else $SM.add(City.path(s.from, 'population.citizens'), s.people);
+		}
+		Notifications.notify(null, _('the settlers unpack.'));
+		Network.draw();
+		return true;
+	},
+
+	// the trek begins: waiting settlers fall in behind the wanderer; it sets out from their city
+	onEmbark: function () {
+		var s = Network.settlers();
+		if (!s || !World.hex) return null;
+		$SM.set('game.network.settlers.out', true, true);
+		Notifications.notify(World, _('the settlers fall in behind.'));
+		var from = $SM.get(City.path(s.from, 'hex'));
+		return from ? from.slice() : null;
+	},
+
+	// home without reaching the site: they wait for the next trek
+	settlersHome: function () {
+		if (!Network.settlers()) return;
+		$SM.set('game.network.settlers.out', false, true);
+		Notifications.notify(null, _('the settlers wait at home for the next trek.'));
+	},
+
+	// the settlers reach their site: if the fire still reaches it, the city is made there
+	settle: function () {
+		var s = Network.settlers();
+		$SM.remove('game.network.settlers', true);
+		var f = Network.foundingSite(s.to[0], s.to[1]);
+		if (!f) {
+			Notifications.notify(World, _("the fire doesn't reach here any more. the settlers won't stay."));
+			// they go back to the city they came from
+			if ($SM.get('game.cities["' + s.from + '"]')) {
+				if (s.from == City.CAPITAL) $SM.add('game.population', s.people);
+				else $SM.add(City.path(s.from, 'population.citizens'), s.people);
+			}
+			return null;
+		}
+		var next = City.nextCity(), d = {};
+		d[Network.key(f.at[0], f.at[1])] = District.HEARTH;
+		if (f.site) {
+			// the old districts closest to the old centre, where something still fits
+			var hexes = f.site.hexes.filter(function (h) { return !(h[0] === f.at[0] && h[1] === f.at[1]); })
+				.sort(function (a, b) { return Fire.distance(a, f.at) - Fire.distance(b, f.at); });
+			var n = Network.OLD_DISTRICTS(f.site.hexes.length);
+			hexes.forEach(function (h) {
+				if (n <= 0 || Fire.distance(h, f.at) > District.MAX_RING || Network.districtAt(h[0], h[1])) return;
+				if (!District.neighbours(h).some(function (p) { return d[Network.key(p[0], p[1])]; })) return;
+				var g = Network.ground(null, h[0], h[1]);
+				g.city = d;
+				var t = Network.OLD_TYPES.filter(function (t) { return District.TYPES[t].fits(g); })[0];
+				if (!t) return;
+				d[Network.key(h[0], h[1])] = t;
+				n--;
+			});
+		}
+		City.createCity(next.id, next.name, {
+			hex: f.at, districts: d, stores: s.stores, citizens: s.people, parent: s.from
+		});
+		World.state.map[f.at[0]][f.at[1]] = World.TILE.VILLAGE; // a city of ours: home
+		Notifications.notify(World, f.site ? _('old walls, old hearths. the settlers clear the ash and move in.') :
+			_('the settlers stop. they light a fire from the one they carried.'));
+		Engine.event('progress', f.site ? 'city resettled' : 'city founded');
+		if (f.site) Network.resettleStory(next.id);
+		Network.refresh();
+		return next.id;
+	},
+
+	/*
+	 * A resettled fallen city's story hook. The first is the charcoal stranger (F5), a
+	 * flame-era chain: only its trigger is here, as a flag the flame era picks up.
+	 */
+	resettleStory: function (cityId) {
+		var n = $SM.get('game.network.story.resettled', true);
+		$SM.set('game.network.story.resettled', n + 1);
+		var story = Network.RESETTLE_STORIES[n];
+		if (!story) return;
+		$SM.set('game.network.story["' + story + '"]', cityId);
+		Engine.event('progress', 'story hook ' + story);
+	},
+
+	// the land view follows the town panel's city
+	focusCity: function (cityId) {
+		var at = $SM.get(City.path(cityId, 'hex'));
+		if (!at || !Network.cam) return;
+		Network.cam = World.hexCentre(at[0], at[1]);
+		Network.selected = null;
+		Network.draw();
+		Network.updateActions();
+	},
+
 	// one line about a hex's fire, for the hover label
 	hexNote: function (x, y) {
+		var s = Network.settlers();
+		if (s && s.to[0] === x && s.to[1] === y) return _('where&nbsp;the&nbsp;settlers&nbsp;are&nbsp;bound');
 		var d = Network.districtAt(x, y);
-		if (d) return District.TYPES[d].name.replace(/ /g, '&nbsp;');
+		// a founded city's centre is the city itself
+		var ci = Network.cityIndexAt(x, y), city = ci >= 0 ? Network.cities()[ci] : null;
+		if (d === District.HEARTH && city.id != City.CAPITAL) d = city.city.name;
+		else if (d) d = District.TYPES[d].name;
+		if (d) return d.replace(/ /g, '&nbsp;');
 		if (Network.isCairn(x, y)) return _('an&nbsp;old&nbsp;cairn');
 		if (Network.beaconAt(x, y)) {
 			var bt = Network.beaconTier(), lit = World.hex.fire && World.hex.fire.lit[x + y * World.hex.gen.cols];
@@ -451,7 +665,7 @@ var Network = {
 	},
 
 	updateStatus: function () {
-		var c = $SM.get('game.cities["' + City.CAPITAL + '"]');
+		var c = $SM.get('game.cities["' + City.activeCity + '"]');
 		if (!c || !c.hearth) return;
 		var h = c.hearth, hearth = Fire.tier(Network.hearthTier()).name;
 		var line = h.fuel ? _('the {0} burns {1}. fire {2}.', hearth, _(h.fuel), Math.round(h.out)) : _('the {0} is cold.', hearth);
@@ -465,10 +679,33 @@ var Network = {
 		}
 		if (all) line += ' ' + _('beacons lit: {0} of {1}.', lit, all);
 		$('#fireStatus').text(line);
+		Network.updateSettlers();
+	},
+
+	// the settlers waiting to leave, with a way to call them off
+	updateSettlers: function () {
+		var s = Network.settlers(), box = $('#landSettlers');
+		if (!s) {
+			box.remove();
+			return;
+		}
+		if (!box.length) box = $('<div>').attr('id', 'landSettlers').insertAfter('#fireStatus');
+		var key = s.from + s.to + s.out;
+		if (box.attr('data-key') === key) return;
+		box.attr('data-key', key).empty();
+		var from = $SM.get('game.cities["' + s.from + '"]');
+		$('<div>').addClass('settlersLine').text(s.out ? _('the settlers are out on the trek.') :
+			_('settlers wait to leave {0}. they go with the next trek.', from ? from.name : '')).appendTo(box);
+		if (!s.out) {
+			new Button.Button({
+				id: 'land_calloff', text: _('call off'), width: '80px',
+				click: function () { Network.callOff(); }
+			}).appendTo(box);
+		}
 	},
 
 	updateActions: function () {
-		var box = $('#landActions').empty(), h = Network.selected;
+		var box = $('#landActions').empty(), h = Network.selected, cityId = City.activeCity;
 		if (!h) return;
 		var bt = Network.beaconTier();
 		if (Network.beaconAt(h[0], h[1])) {
@@ -483,13 +720,21 @@ var Network = {
 				click: function () { Network.raiseBeacon(h[0], h[1]); Network.updateActions(); }
 			}).appendTo(box);
 		}
-		Network.districtsFor(City.CAPITAL, h[0], h[1]).forEach(function (t) {
+		Network.districtsFor(cityId, h[0], h[1]).forEach(function (t) {
 			new Button.Button({
 				id: 'land_district_' + t.replace(/ /g, '-'), text: District.TYPES[t].name, width: '80px',
 				cost: Network.DISTRICT_COST,
-				click: function () { Network.placeDistrict(City.CAPITAL, h[0], h[1], t); Network.updateActions(); }
+				click: function () { Network.placeDistrict(cityId, h[0], h[1], t); Network.updateActions(); }
 			}).appendTo(box);
 		});
+		var f = Network.foundingSite(h[0], h[1]);
+		if (f && !Network.settlers()) {
+			var cost = $.extend({ 'settlers': Network.SETTLERS.people }, Network.SETTLERS.stores);
+			new Button.Button({
+				id: 'land_found', text: f.site ? _('resettle') : _('found a town'), width: '80px', cost: cost,
+				click: function () { Network.sendSettlers(cityId, h[0], h[1]); Network.updateActions(); }
+			}).appendTo(box);
+		}
 	},
 
 	/*
@@ -518,6 +763,8 @@ var Network = {
 	},
 
 	onStep: function (x, y) {
+		var s = Network.settlers();
+		if (s && s.out && s.to[0] === x && s.to[1] === y) Network.settle();
 		// F3: the first forest walked after the woodshed turns up the old axe-head
 		if (Network.has('F2') && !$SM.get('game.world.axeHead') && !World.state.axeHead &&
 			World.state.map[x][y].charAt(0) === WorldGen.TERRAIN.forest) {

@@ -1613,8 +1613,17 @@ var World = {
         items[k] = Path.outfit[k];
       }
     }
-    if(items) {
-      $SM.set('game.world.pack', { at: World.curPos.slice(), items: items, left: 1 });
+    // settlers on the trek stay with the pack: it is their supplies (Network.settlers)
+    var settlers = typeof Network != 'undefined' && Network.settlers();
+    if(settlers && settlers.out) {
+      $SM.remove('game.network.settlers', true);
+    } else {
+      settlers = null;
+    }
+    if(items || settlers) {
+      var pack = { at: World.curPos.slice(), items: items || {}, left: 1 };
+      if(settlers) pack.settlers = settlers;
+      $SM.set('game.world.pack', pack);
     } else {
       $SM.remove('game.world.pack');
     }
@@ -1624,12 +1633,28 @@ var World = {
     var pack = World.state.pack;
     if(!pack) return;
     pack.left *= 1 - Danger.scavengeRate(World.dangerAt(pack.at[0], pack.at[1]));
-    if(!World.packLeft(pack)) delete World.state.pack;
+    if(!World.packLeft(pack) && !World.settlersLeft(pack)) delete World.state.pack;
+  },
+
+  // the settlers still holding out by a pack as the scavengers come: { people, stores }, or null
+  settlersLeft: function(pack) {
+    var s = pack.settlers;
+    if(!s) return null;
+    var people = Math.floor(s.people * pack.left);
+    if(people <= 0) return null;
+    var stores = {};
+    for(var k in s.stores) stores[k] = Math.floor(s.stores[k] * pack.left);
+    return { people: people, stores: stores };
   },
 
   recoverPack: function() {
-    var left = World.packLeft(World.state.pack), rest = null;
+    var pack = World.state.pack, left = World.packLeft(pack), rest = null, settlers = World.settlersLeft(pack);
     delete World.state.pack;
+    if(settlers) {
+      // the settlers who held out fall in again, with what is left of their supplies
+      $SM.set('game.network.settlers', $.extend({}, pack.settlers, settlers, { out: true }));
+      Notifications.notify(World, _('the settlers are still here, huddled by the pack.'));
+    }
     if(!left) return;
     for(var k in left) {
       var n = Math.max(0, Math.min(left[k], Math.floor(Path.getFreeSpace() / Path.getWeight(k))));
@@ -1649,7 +1674,8 @@ var World = {
   },
 
   packLabel: function(pack) {
-    var left = World.packLeft(pack), list = [];
+    var left = World.packLeft(pack), list = [], settlers = World.settlersLeft(pack);
+    if(settlers) list.push(_('settlers') + '&nbsp;' + settlers.people);
     for(var k in left) list.push(_(k) + '&nbsp;' + left[k]);
     return _('the&nbsp;pack:') + '&nbsp;' + list.join(',&nbsp;');
   },
@@ -1723,7 +1749,10 @@ var World = {
     World.redeemBlueprints();
     var hexTrek = !!World.hex;
     World.state = null;
-    if(hexTrek && typeof Network != 'undefined') Network.onHome();
+    if(hexTrek && typeof Network != 'undefined') {
+      Network.settlersHome();
+      Network.onHome();
+    }
     if(World._hexPending) {
       World._hexPending = false;
       World.openHexMap();
@@ -1846,7 +1875,9 @@ var World = {
     World.starvation = false;
     World.thirst = false;
     World.usedOutposts = {};
-    World.curPos = World.copyPos(World.VILLAGE_POS);
+    // settlers waiting to found a city come along; the trek sets out from their city
+    var from = World.hex && typeof Network != 'undefined' ? Network.onEmbark() : null;
+    World.curPos = World.copyPos(from || World.VILLAGE_POS);
     World.cam = null;
     World.follow = true;
     World.drawMap();
