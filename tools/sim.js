@@ -774,8 +774,13 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
     list.forEach((c) => { by[c.t] = (by[c.t] || 0) + 1; });
     const reach = (c) => danger(c.at[0], c.at[1]) <= CS.REACH.danger && G.distance(c.at, gen.capital) <= CS.REACH.hexes;
     const nearest = (t) => list.filter((c) => c.t === t).sort((a, b) => G.distance(a.at, gen.capital) - G.distance(b.at, gen.capital))[0];
+    // the capital's own hearth (H4, tallow), no beacons: no city-state should glow from it alone
+    const { Fire: F } = ctx, H = F.HEARTHS.H4;
+    const home = F.compute({ cols: gen.cols, rows: gen.rows, danger, hills: () => false,
+      hearths: [{ at: gen.capital, out: H.out, share: true, cap: F.FUELS.tallow.cap }], beacons: [], beacon: F.BEACONS.B4 });
     out.push({
       seed, n: list.length, by, fallen: list.filter((c) => c.site >= 0).length,
+      glowFromHome: list.filter((c) => CS.glow(home.fire, gen.cols, gen.rows, c.at, null) > 0).length,
       herdersInReach: list.filter((c) => c.t === 'herders' && reach(c)).length,
       pottersInReach: list.filter((c) => c.t === 'potters' && reach(c)).length,
       herders: lineToward(ctx, gen, field, CS, nearest('herders'), list),
@@ -824,6 +829,7 @@ export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
     if (o.n !== 64) fails.push(`seed ${o.seed}: ${o.n} city-states placed, want 64`);
     for (const t in CS.TEMPERAMENTS) if (CS.TEMPERAMENTS[t].kind === 'story' && o.by[t] !== 1) fails.push(`seed ${o.seed}: ${o.by[t] || 0} ${t}`);
     if (o.herdersInReach < 2) fails.push(`seed ${o.seed}: ${o.herdersInReach} herders inside the ember reach, want 2`);
+    if (o.glowFromHome) fails.push(`seed ${o.seed}: ${o.glowFromHome} city-states glow from the capital's hearth alone, want a beacon line to each`);
     if (o.pottersInReach !== 1) fails.push(`seed ${o.seed}: the potters are not inside the ember reach`);
     if (!o.herders) fails.push(`seed ${o.seed}: no beacon line reaches the nearest herders`);
     else if (!Number.isFinite(o.herders.minutes)) fails.push(`seed ${o.seed}: the nearest herders can't be won by influence (rate ${o.herders.rate.toFixed(2)}, pull ${o.herders.pull.toFixed(2)})`);
