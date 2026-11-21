@@ -115,9 +115,10 @@ var Fire = {
 		return [q, y, -q - y];
 	},
 
+	// Fire.cube's distance, worked out without making the cubes (perf: the network asks it a lot)
 	distance: function (a, b) {
-		var A = Fire.cube(a[0], a[1]), B = Fire.cube(b[0], b[1]);
-		return (Math.abs(A[0] - B[0]) + Math.abs(A[1] - B[1]) + Math.abs(A[2] - B[2])) / 2;
+		var dq = a[0] - (a[1] - (a[1] & 1)) / 2 - b[0] + (b[1] - (b[1] & 1)) / 2, dr = a[1] - b[1];
+		return (Math.abs(dq) + Math.abs(dr) + Math.abs(dq + dr)) / 2;
 	},
 
 	// the hexes on the straight line from a to b, both ends included
@@ -137,15 +138,25 @@ var Fire = {
 
 	// every hex exactly r from [x, y]
 	ring: function (x, y, r) {
-		return Fire.around(x, y, r).filter(function (p) { return Fire.distance([x, y], p) === r; });
+		return Fire.offsets(y, r, true).map(function (d) { return [x + d[0], y + d[1]]; });
 	},
 
 	// every hex within r of [x, y]
 	around: function (x, y, r) {
-		var out = [];
+		return Fire.offsets(y, r, false).map(function (d) { return [x + d[0], y + d[1]]; });
+	},
+
+	// the steps from a hex on row y to every hex within r (exactly r: ring), row by row; they only
+	// differ between even and odd rows, so each set is worked out once (perf)
+	_offsets: {},
+	offsets: function (y, r, ring) {
+		var k = (y & 1) + ',' + r + ',' + !!ring, out = Fire._offsets[k];
+		if (out) return out;
+		out = Fire._offsets[k] = [];
 		for (var dy = -r; dy <= r; dy++) {
 			for (var dx = -r - 1; dx <= r + 1; dx++) {
-				if (Fire.distance([x, y], [x + dx, y + dy]) <= r) out.push([x + dx, y + dy]);
+				var d = Fire.distance([0, y & 1], [dx, (y & 1) + dy]);
+				if (ring ? d === r : d <= r) out.push([dx, dy]);
 			}
 		}
 		return out;
@@ -175,14 +186,24 @@ var Fire = {
 		var fire = new Float32Array(n), lit = new Uint8Array(n);
 		var nodes = net.hearths.map(function (h) { return { at: h.at, s: 0, hearth: h }; })
 			.concat(net.beacons.map(function (b) { return { at: b, s: 0, hearth: null }; }));
-		var adj = nodes.map(function () { return []; });
+		// links: every pair of nodes up to Fire.HOP apart. Nodes are bucketed in cells a hop wide
+		// (a hop can be one column more across), so only neighbouring cells are compared (perf)
+		var adj = nodes.map(function () { return []; }), cells = {}, CX = Fire.HOP + 1, CY = Fire.HOP;
+		var cell = function (cx, cy) { return cx + ',' + cy; };
+		nodes.forEach(function (node, i) {
+			var k = cell(Math.floor(node.at[0] / CX), Math.floor(node.at[1] / CY));
+			(cells[k] = cells[k] || []).push(i);
+		});
 		for (var i = 0; i < nodes.length; i++) {
-			for (var j = i + 1; j < nodes.length; j++) {
-				if (Fire.distance(nodes[i].at, nodes[j].at) <= Fire.HOP) {
-					adj[i].push(j);
-					adj[j].push(i);
+			var cx = Math.floor(nodes[i].at[0] / CX), cy = Math.floor(nodes[i].at[1] / CY);
+			for (var dx = -1; dx <= 1; dx++) {
+				for (var dy = -1; dy <= 1; dy++) {
+					(cells[cell(cx + dx, cy + dy)] || []).forEach(function (j) {
+						if (j !== i && Fire.distance(nodes[i].at, nodes[j].at) <= Fire.HOP) adj[i].push(j);
+					});
 				}
 			}
+			adj[i].sort(function (a, b) { return a - b; }); // in node order, as the walks expect
 		}
 		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
 		// fire reaching a hex from a line with this fuel cap
