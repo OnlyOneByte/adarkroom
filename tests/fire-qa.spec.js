@@ -445,7 +445,7 @@ test('BUG 5: watch fires on hills add one hop, not endless reach', async ({ page
 
 // BUG 6: Network.canBeacon only refuses ocean and mountains; a lake hex is passable, so an ember
 // beacon stands on open water (crossing water is B7 ford light / B11 lighthouse).
-test.fixme('BUG 6: no ember beacon on a lake', async ({ page }) => {
+test('BUG 6: no ember beacon on a lake', async ({ page }) => {
   const errors = await town(page);
   const ok = await page.evaluate(() => {
     const cap = World.hex.gen.capital, p = [cap[0] + 2, cap[1]];
