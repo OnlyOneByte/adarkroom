@@ -788,13 +788,18 @@ var Network = {
 			World.state.axeHead = true;
 			Notifications.notify(World, _('half buried in the leaf litter, an old axe-head. still keen.'));
 		}
-		if (Network.isCairn(x, y) && Network.flag('cairnTold') && !Network.flag('cairnStudied')) {
+		if (Network.isCairn(x, y) && Network.flag('cairnTold') && !Network.flag('cairnStudied') && !World.state.cairnStudied) {
 			Events.startEvent(Events.Story.cairn);
 		}
 	},
 
 	onHome: function () {
 		if (Network.has('B1')) Network.setFlag('trekHome');
+		// the cairn studied on this trek (committed with the trek's other finds) is known at home now
+		if ($SM.get('game.world.cairnStudied')) {
+			$SM.remove('game.world.cairnStudied', true);
+			Network.setFlag('cairnStudied');
+		}
 		if (Network.flag('cairnStudied') && !Network.flag('cairnDone')) {
 			Engine.setTimeout(function () { Events.startEvent(Events.Story.cairnFire); }, 1500);
 		}

@@ -606,6 +606,40 @@ test('QA Q4: a district goes only on a hex the fire reaches', async ({ page }) =
   expect(errors).toEqual([]);
 });
 
+// QA Q8 (provisional, pending user): the cairn studied is lost on a death, like the axe-head
+test('QA Q8: the cairn studied is known only once the trek comes home alive; a death loses it', async ({ page }) => {
+  const errors = await town(page, { tiers: ['F1', 'B1', 'B2', 'H1', 'H2', 'H3'] });
+  await page.evaluate(() => {
+    $SM.setM('game.network.story', { cairnTold: true, cairnDone: false });
+    Network.placeCairn();
+  });
+  const c = await page.evaluate(() => $SM.get('game.network.cairn'));
+  const trek = async () => {
+    await page.evaluate(() => { Engine.travelTo(Path); });
+    await page.waitForFunction(() => !$('#outerSlider').is(':animated'));
+    await page.evaluate((c) => {
+      packMeat();
+      Path.embark();
+      Math.random = () => 0.99;
+      Network.onStep(c[0], c[1]);
+    }, c);
+    await page.locator('#event .button', { hasText: 'study the stacking' }).click();
+    await page.locator('#event .button', { hasText: 'go on' }).click();
+    await expect(page.locator('#event')).toHaveCount(0);
+  };
+  await trek();
+  const out = await page.evaluate(() => Network.flag('cairnStudied'));
+  await page.evaluate(() => World.die());
+  await page.waitForFunction(() => Engine.activeModule === Room && !Engine.keyLock);
+  const dead = await page.evaluate(() => Network.flag('cairnStudied'));
+  await trek();
+  await page.evaluate(() => World.goHome());
+  await expect(page.locator('#event')).toContainText('it carries further.', { timeout: 5000 });
+  expect([out, dead]).toEqual([false, false]);
+  expect(await page.evaluate(() => [Network.flag('cairnStudied'), $SM.get('game.world.cairnStudied')])).toEqual([true, undefined]);
+  expect(errors).toEqual([]);
+});
+
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {
   const errors = await town(page);
   const before = await page.evaluate(() => {
