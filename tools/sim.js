@@ -1146,6 +1146,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const powers = simulatePowers({ seeds });
   console.log(`\nThe powers, ${seeds} seeds: an army camped at the garrison of the deep mines\n`);
   console.log(powersTable(powers));
+  (await import('./sim-power-riders.js')).run({ seeds, ci, loadGame, seeded }); // power 2, the cinder riders (exits 1 on a --ci fail)
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
     const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers));

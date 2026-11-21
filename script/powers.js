@@ -388,7 +388,7 @@ var Powers = {
 			$SM.set('game.armies.after["' + to + '"]', { loss: M.loss, ticks: ticks, left: ticks }, true);
 		} else {
 			// the old miners' notes: a head start on the coal (provisional: a store of it in the army's city)
-			$SM.add(City.storePath(home, 'coal'), Powers.HEAD_START);
+			$SM.add(City.storePath(home, P.headStart || 'coal'), Powers.HEAD_START);
 		}
 		Powers.waver(id);
 		a.siege = null;
