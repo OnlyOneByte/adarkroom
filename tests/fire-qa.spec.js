@@ -552,6 +552,41 @@ test('QA Q2: a new beacon goes within 3 of a lit node, not of a dark beacon or a
   expect(errors).toEqual([]);
 });
 
+// QA Q3 (provisional, pending user): beacons may stand on landmarks and sites, which stay in sight; districts may not
+test('QA Q3: a beacon on a landmark leaves its glyph and name in sight; no district goes on a landmark or a site', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    $SM.setM('stores', { tallow: 1000 });
+    Network.tick();
+    const g = World.hex.gen, cap = g.capital;
+    const mark = Fire.around(cap[0], cap[1], 3).find((p) => World.LANDMARKS[World.hex.map[p[0]][p[1]].charAt(0)] && World.hex.map[p[0]][p[1]] !== 'A');
+    World.hex.mask[mark[0]][mark[1]] = true;
+    const canBeacon = Network.canBeacon(mark[0], mark[1]);
+    $SM.set('game.network.beacons["' + mark.join(',') + '"]', true);
+    Network.refresh();
+    const label = World.hexLabel(mark[0], mark[1], { map: World.hex.map, mask: World.hex.mask });
+    $SM.remove('game.network.beacons["' + mark.join(',') + '"]');
+    // a district beside the capital on a landmark, and on a site
+    const n = WorldGen.neighbour(cap[0], cap[1], 0);
+    setGround(n, 'field');
+    const open = Network.districtsFor('capital', n[0], n[1]).length;
+    World.hex.map[n[0]][n[1]] = World.TILE.CAVE;
+    const onLandmark = Network.districtsFor('capital', n[0], n[1]);
+    World.hex.map[n[0]][n[1]] = WorldGen.TERRAIN.field;
+    const site = g.siteAt[n[0] + n[1] * g.cols];
+    g.siteAt[n[0] + n[1] * g.cols] = 0;
+    const onSite = Network.districtsFor('capital', n[0], n[1]);
+    g.siteAt[n[0] + n[1] * g.cols] = site;
+    return { canBeacon, label, name: World.LANDMARKS[World.hex.map[mark[0]][mark[1]].charAt(0)].label, open, onLandmark, onSite };
+  });
+  expect(r.canBeacon).toBe(true);
+  expect(r.label).toBe(r.name + ',&nbsp;a&nbsp;watch&nbsp;fire');
+  expect(r.open).toBeGreaterThan(0);
+  expect(r.onLandmark).toEqual([]);
+  expect(r.onSite).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {
   const errors = await town(page);
   const before = await page.evaluate(() => {
