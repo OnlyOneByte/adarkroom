@@ -22,10 +22,10 @@
  * Then the powers (tools/sim-powers.js): the garrison of the deep mines stormed, starved, fed, and a storm lost.
  *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
- * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
- * ember and flame tier of each ladder; it reports the land lit and how far out, by danger band
- * and on the damp ground (swamp, jungle) the flame fuels open, and how many lines a steady supply
- * of each fuel keeps burning.
+ * capital in all six directions, a hop apart, until the next beacon would stay dark, for each
+ * ember, flame and blaze tier of each ladder; it reports the land lit and how far out, by danger band
+ * and on the ground the flame and blaze fuels hold (swamp, jungle, hills, desert, coast, tundra), and
+ * how many lines a steady supply of each fuel keeps burning.
  *
  * The bot: each trek it walks the cheapest way toward a target (a random hex in the
  * outer half of what its water can reach there and back, or its dropped pack) and turns home when
@@ -297,22 +297,18 @@ export function simulate({ seeds, treks, difficulties = ['gentle', 'normal', 'ha
 
 const TIERS = ['1', '2', '3', '4'];
 const FLAME = ['4', '5', '6', '7', '8'];
+const BLAZE = ['8', '9', '10', '11', '12'];
+// the ground a fuel may hold (Fire.FUELS[].holds), as the table names it
+const HELD = { swamp: 'SWAMP', jungle: 'JUNGLE', hills: 'HILLS', desert: 'DESERT', coast: 'COAST', tundra: 'TUNDRA' };
 const ID = { fuel: 'F', beacon: 'B', hearth: 'H' };
 
 // Fire.compute's net.kind for a world, as Network.kinds builds it (no roads: the bot lays none)
 function kindsOf(ctx, gen) {
-  const { Fire: F, WorldGen: G } = ctx, T = G.TERRAIN, bits = new Uint8Array(gen.cols * gen.rows);
-  for (let x = 0; x < gen.cols; x++) {
-    for (let y = 0; y < gen.rows; y++) {
-      const t = gen.terrain[x][y];
-      bits[x + y * gen.cols] = t === T.swamp ? F.SWAMP : t === T.jungle ? F.JUNGLE : t === T.lake ? F.LAKE : 0;
-    }
-  }
-  return bits;
+  return ctx.Fire.groundBits(gen);
 }
 
-// The bot's network for one set of ember tiers ({ fuel: n, beacon: n, hearth: n }) on one world:
-// six straight lines out from the capital, a beacon every Fire.HOP hexes while it still catches.
+// The bot's network for one set of tiers ({ fuel: n, beacon: n, hearth: n }) on one world:
+// six straight lines out from the capital, a beacon every hop (Fire.hop) while it still catches.
 function fireNetwork(ctx, gen, field, t, opts = {}) {
   const { Fire: F, WorldGen: G, Danger: D } = ctx;
   // fuel 0: no fuel cap, to see what the beacons and hearths alone allow
@@ -329,18 +325,60 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
     hearths: [{ at: gen.capital, out, share: H.share, cap: fuel ? F.FUELS[fuel].cap : Infinity, holds: fuel ? F.FUELS[fuel].holds || 0 : 0, wet: fuel ? F.FUELS[fuel].wet : 0 }],
     beacons: [], beacon: F.BEACONS['B' + t.beacon],
   };
+  // a beacon stands on open dry ground; from the lighthouse in an inland sea's shallows too (Network.canBeacon)
+  const sea = net.beacon && net.beacon.sea, HOP = F.hop(net.beacon);
   const open = (p) => p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows &&
-    G.isPassable(gen.map[p[0]][p[1]]) && gen.map[p[0]][p[1]] !== G.TERRAIN.ocean;
+    G.isPassable(gen.map[p[0]][p[1]]) && gen.map[p[0]][p[1]] !== G.TERRAIN.ocean &&
+    (!opts.detour || gen.terrain[p[0]][p[1]] !== G.TERRAIN.lake || sea);
+  // a hop the line can make: every hex between open (lake from the ford light, an inland sea from the lighthouse)
+  const clear = (a, b) => {
+    const l = F.line(a, b), bits = opts.kind;
+    for (let i = 1; i < l.length - 1; i++) {
+      const [x, y] = l[i];
+      if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows) return false;
+      if (net.open(x, y)) continue;
+      const k = bits ? bits[x + y * gen.cols] : 0;
+      if (!((net.beacon.water && k & F.LAKE) || (net.beacon.sea && k & F.SEA))) return false;
+    }
+    return true;
+  };
+  const taken = (q) => net.beacons.some((b) => b[0] === q[0] && b[1] === q[1]);
+  const wet = (q) => (gen.terrain[q[0]][q[1]] === G.TERRAIN.lake ? 2 : 0);
+  // where the next beacon of a line could go, best first (at most 4 tried)
+  const detours = (at, target) => {
+    const out = F.distance(at, gen.capital);
+    return F.around(at[0], at[1], HOP).filter((q) => F.distance(q, at) >= 2 && open(q) && !taken(q) &&
+      F.distance(q, gen.capital) > out && clear(at, q))
+      // land before the shallows (a beacon on the water carries no further than one on its shore)
+      .sort((a, b) => F.distance(a, target) + wet(a) - F.distance(b, target) - wet(b) || F.distance(b, at) - F.distance(a, at))
+      .slice(0, 4);
+  };
   const lines = [];
   for (let d = 0; d < (opts.dirs || 6); d++) {
     let at = gen.capital;
     const line = [];
-    for (let i = 0; i < 20; i++) {
-      // 3 hexes on in this direction; or the nearest open hex to it still within a hop
+    for (let i = 0; i < (opts.detour ? 30 : 20); i++) {
+      // a hop on in this direction; or the nearest open hex to it still within a hop
       let p = at;
-      for (let k = 0; k < F.HOP; k++) p = G.neighbour(p[0], p[1], d);
+      for (let k = 0; k < HOP; k++) p = G.neighbour(p[0], p[1], d);
+      if (opts.detour) {
+        // the blaze era's bot goes round what blocks it: the furthest open hex toward the line's
+        // heading whose hop is clear, moving out from the capital, the first of them that catches
+        const tries = detours(at, p, d);
+        let ok = false;
+        for (const q of tries) {
+          net.beacons.push(q);
+          const r = F.compute(net);
+          if (r.nodes[r.nodes.length - 1].s >= F.LIT_MIN) { p = q; ok = true; break; }
+          net.beacons.pop();
+        }
+        if (!ok) break;
+        line.push(p);
+        at = p;
+        continue;
+      }
       if (!open(p)) {
-        const alt = F.around(p[0], p[1], 1).filter((q) => open(q) && F.distance(q, at) <= F.HOP && F.distance(q, at) >= 2);
+        const alt = F.around(p[0], p[1], 1).filter((q) => open(q) && F.distance(q, at) <= HOP && F.distance(q, at) >= 2);
         if (!alt.length) break;
         p = alt[0];
       }
@@ -354,7 +392,9 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
   }
   const r = F.compute(net);
   let lit = 0, far = 0;
-  const bands = [0, 0, 0, 0, 0], damp = { swamp: 0, jungle: 0 };
+  const bands = [0, 0, 0, 0, 0], damp = { swamp: 0, jungle: 0 }, kind = opts.kind;
+  const held = {};
+  for (const h in HELD) held[h] = 0;
   for (let k = 0; k < r.lit.length; k++) {
     if (!r.lit[k]) continue;
     lit++;
@@ -363,25 +403,29 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
     bands[Math.min(4, Math.floor(danger(x, y) / D.BAND_SIZE))]++;
     if (gen.terrain[x][y] === G.TERRAIN.swamp) damp.swamp++;
     if (gen.terrain[x][y] === G.TERRAIN.jungle) damp.jungle++;
+    if (kind) for (const h in HELD) if (kind[k] & F[HELD[h]]) held[h]++;
   }
-  return { net, lines, lit, far, bands, damp, beacons: r.nodes.filter((n) => !n.hearth && n.s >= F.LIT_MIN).length, result: r, fuel };
+  return { net, lines, lit, far, bands, damp, held, beacons: r.nodes.filter((n) => !n.hearth && n.s >= F.LIT_MIN).length, result: r, fuel };
 }
 
-// Damp ground a fuel can light at all, wherever a line takes it: swamp and jungle hexes the
+// The held ground a fuel can light at all, wherever a line takes it: hexes of each kind (HELD) the
 // wanderer can walk to, within 60 hexes of the capital, under the fuel's cap (its `wet` cap on the
-// ground it holds). Six straight lines seldom meet a swamp, so this is what shows peat and resin.
+// ground it holds), and band 3 hexes. Six straight lines seldom meet a swamp, so this is what shows
+// peat, resin, coke, pitch, whale oil and rock oil.
 function dampReach(ctx, gen, field, kind, n) {
-  const { Fire: F, Danger: D } = ctx, out = { swamp: 0, jungle: 0 };
+  const { Fire: F, Danger: D } = ctx, out = { band3: 0, band3dry: 0 };
+  for (const h in HELD) out[h] = 0;
   const fuel = Object.keys(F.FUELS).find((k) => F.FUELS[k].tier === 'F' + n);
   if (!fuel) return out;
   const f = F.FUELS[fuel], holds = f.holds || 0;
   for (const p of F.around(gen.capital[0], gen.capital[1], 60)) {
     const [x, y] = p;
     if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !gen.reachable[x + y * gen.cols]) continue;
-    const b = kind[x + y * gen.cols] & 3;
-    if (!b) continue;
-    if (D.at(field, gen.cols, x, y, 'normal') > (b & holds ? f.wet : f.cap)) continue;
-    out[b & F.SWAMP ? 'swamp' : 'jungle']++;
+    const b = kind[x + y * gen.cols] & F.HOLDS, d = D.at(field, gen.cols, x, y, 'normal');
+    if (d > (b & holds ? f.wet : f.cap)) continue;
+    if (Math.floor(d / D.BAND_SIZE) === 3) out.band3++;
+    if (Math.floor(d / D.BAND_SIZE) === 3 && !b) out.band3dry++;
+    for (const h in HELD) if (b & F[HELD[h]]) out[h]++;
   }
   return out;
 }
@@ -392,7 +436,7 @@ export function simulateFire({ seeds, firstSeed = 1 }) {
   const { World: W, WorldGen: G, Danger: D, Fire: F } = ctx;
   const max = { fuel: 4, beacon: 4, hearth: 4 };
   const rows = [];
-  const add = (label, ladder, t) => rows.push({ label, ladder, t, lit: [], far: [], beacons: [], bands: [], damp: [], reach: [] });
+  const add = (label, ladder, t) => rows.push({ label, ladder, t, lit: [], far: [], beacons: [], bands: [], damp: [], held: [], reach: [] });
   // each ladder on its own: the others at the top of the ember era, except that past tallow's
   // reach (danger 2.5) the fuel is what binds, so beacons and hearths are measured without a fuel cap
   for (const ladder of ['fuel', 'beacon', 'hearth']) {
@@ -410,6 +454,14 @@ export function simulateFire({ seeds, firstSeed = 1 }) {
     for (const n of FLAME) add(`${ID[ladder]}${n} (${rest})`, 'flame ' + ladder, { ...others, [ladder]: +n });
   }
   for (const n of FLAME) add(`F${n} B${n} H${n} together`, 'flame all', { fuel: +n, beacon: +n, hearth: +n });
+  // the blaze era, from the top of the flame era: each ladder with the others at the blaze's top (F12 B12 H12)
+  const blaze = { fuel: 12, beacon: 12, hearth: 12 };
+  for (const ladder of ['fuel', 'beacon', 'hearth']) {
+    const others = ladder === 'fuel' ? { ...blaze } : { ...blaze, fuel: 0 };
+    const rest = Object.keys(blaze).filter((l) => l !== ladder).map((l) => (others[l] ? ID[l] + others[l] : 'no fuel cap')).join(', ');
+    for (const n of BLAZE) add(`${ID[ladder]}${n} (${rest}), going round`, 'blaze ' + ladder, { ...others, [ladder]: +n });
+  }
+  for (const n of BLAZE) add(`F${n} B${n} H${n} together, going round`, 'blaze all', { fuel: +n, beacon: +n, hearth: +n });
   const cut = { checked: 0, fails: [] };
   const sustain = {};
   for (const k in F.FUELS) sustain[k] = { beaconsPerLine: [] };
@@ -417,19 +469,20 @@ export function simulateFire({ seeds, firstSeed = 1 }) {
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
     const field = D.field(gen), kind = kindsOf(ctx, gen);
     for (const row of rows) {
-      const n = fireNetwork(ctx, gen, field, row.t, { kind });
+      const n = fireNetwork(ctx, gen, field, row.t, { kind, detour: row.ladder.startsWith('blaze') });
       row.lit.push(n.lit);
       row.far.push(n.far);
       row.beacons.push(n.beacons);
       row.bands.push(n.bands);
       row.damp.push(n.damp);
+      row.held.push(n.held);
       row.reach.push(dampReach(ctx, gen, field, kind, row.t.fuel));
     }
-    // lines sustained: how long one line burning each fuel is, at B4 H4 (B8 H8 for the flame fuels)
+    // lines sustained: how long one line burning each fuel is, at its era's top (B4 H4, B8 H8, B12 H12)
     for (const k in F.FUELS) {
-      const flame = F.tier(F.FUELS[k].tier).n > 4;
-      const t = { fuel: F.tier(F.FUELS[k].tier).n, beacon: flame ? 8 : 4, hearth: flame ? 8 : 4 };
-      const n = fireNetwork(ctx, gen, field, t, { kind });
+      const tn = F.tier(F.FUELS[k].tier).n, top = Math.ceil(tn / 4) * 4;
+      const t = { fuel: tn, beacon: top, hearth: top };
+      const n = fireNetwork(ctx, gen, field, t, { kind, detour: top > 8 });
       sustain[k].beaconsPerLine.push(n.beacons / 6);
     }
     // a cut line: put out the first beacon of the longest line; everything past it goes dark
@@ -457,23 +510,27 @@ const SUPPLY = 40;
 export function fireTable({ rows, cut, sustain, F }) {
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   const lines = [];
-  lines.push('| tiers | hexes lit | furthest lit (hexes from the capital) | beacons lit | lit in band 0 / 1 / 2 | lit swamp / jungle | swamp / jungle its fuel can light |');
+  const H = Object.keys(HELD);
+  lines.push(`| tiers | hexes lit | furthest lit (hexes from the capital) | beacons lit | lit in band 0 / 1 / 2 / 3 | lit ${H.join(' / ')} | ${H.join(' / ')} / band 3 its fuel can light |`);
   lines.push('|---|---|---|---|---|---|---|');
   for (const r of rows) {
     const band = (b) => mean(r.bands.map((x) => x[b])).toFixed(0);
-    lines.push(`| ${r.label} | ${mean(r.lit).toFixed(0)} | ${mean(r.far).toFixed(1)} | ${mean(r.beacons).toFixed(1)} | ${band(0)} / ${band(1)} / ${band(2)} | ${mean(r.damp.map((d) => d.swamp)).toFixed(1)} / ${mean(r.damp.map((d) => d.jungle)).toFixed(1)} | ${r.t.fuel ? mean(r.reach.map((d) => d.swamp)).toFixed(0) + ' / ' + mean(r.reach.map((d) => d.jungle)).toFixed(0) : '-'} |`);
+    const held = H.map((h) => mean(r.held.map((d) => d[h])).toFixed(0)).join(' / ');
+    const reach = H.concat(['band3']).map((h) => mean(r.reach.map((d) => d[h])).toFixed(0)).join(' / ');
+    lines.push(`| ${r.label} | ${mean(r.lit).toFixed(0)} | ${mean(r.far).toFixed(1)} | ${mean(r.beacons).toFixed(1)} | ${band(0)} / ${band(1)} / ${band(2)} / ${band(3)} | ${held} | ${r.t.fuel ? reach : '-'} |`);
   }
   lines.push('');
-  lines.push(`| fuel (B4 H4; flame: B8 H8) | fire per unit | danger cap | beacons per line | units / tick for the hearth | units / tick per line | lines kept by ${SUPPLY} units / tick |`);
+  lines.push(`| fuel (B4 H4; flame: B8 H8; blaze: B12 H12) | fire per unit | danger cap | beacons per line | units / tick for the hearth | units / tick per line | lines kept by ${SUPPLY} units / tick |`);
   lines.push('|---|---|---|---|---|---|---|');
   for (const k in sustain) {
     const f = F.FUELS[k], per = f.fire * f.burn, b = mean(sustain[k].beaconsPerLine);
-    const H = F.tier(f.tier).n > 4 ? F.HEARTHS.H5 : F.HEARTHS.H4; // the hearth's own fire at its plainest
+    const n = F.tier(f.tier).n, H = n > 8 ? F.HEARTHS.H9 : n > 4 ? F.HEARTHS.H5 : F.HEARTHS.H4; // the hearth's own fire at its plainest
     const lineCost = b * F.UPKEEP / per;
     const kept = lineCost > 0 ? Math.max(0, Math.floor((SUPPLY - H.out / per) / lineCost)) : 0;
     lines.push(`| ${k} | ${per} | ${f.cap} | ${b.toFixed(1)} | ${(H.out / per).toFixed(1)} | ${lineCost.toFixed(1)} | ${kept} |`);
   }
   lines.push('');
+  lines.push("'going round': the blaze era's bot steps round what blocks a straight line (water, mountains, a hop too far), and keeps beacons off the water until the lighthouse");
   lines.push(`cut lines checked: ${cut.checked}, past the cut still lit: ${cut.fails.length}`);
   return lines.join('\n');
 }
@@ -482,19 +539,23 @@ export function fireTable({ rows, cut, sustain, F }) {
 // and a cut line goes dark past the cut. The flame era opens the ground LADDERS.md says: charcoal
 // lights more of band 1, peat more swamp, resin more jungle, coal band 2; the watchtower carries
 // further; the lamp-post, ford light and marsh lantern (roads, lakes, swamps) never light less;
-// every flame hearth lights more than the one before it.
+// every flame hearth lights more than the one before it. The blaze era likewise: coke more hills,
+// pitch more desert, whale oil more coast, rock oil band 3 and tundra; the signal mirror and the
+// heliograph carry further, the pass beacon and the lighthouse (passes, seas) never light less; every
+// blaze hearth lights more than the one before it.
 export function checkFire({ rows, cut }) {
   const fails = [];
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   const more = (rs, i, what, of) => {
     if (!(mean(rs[i][of]) > mean(rs[i - 1][of]))) fails.push(`${rs[i].label} lights ${mean(rs[i][of]).toFixed(1)} ${what}, not more than ${rs[i - 1].label} (${mean(rs[i - 1][of]).toFixed(1)})`);
   };
-  for (const ladder of ['fuel', 'beacon', 'hearth', 'all', 'flame fuel', 'flame beacon', 'flame hearth', 'flame all']) {
+  for (const ladder of ['fuel', 'beacon', 'hearth', 'all', 'flame fuel', 'flame beacon', 'flame hearth', 'flame all',
+    'blaze fuel', 'blaze beacon', 'blaze hearth', 'blaze all']) {
     const rs = rows.filter((r) => r.ladder === ladder);
     if (!rs.length) fails.push(`no rows for ${ladder}`);
     for (let i = 1; i < rs.length; i++) {
-      // roads, lakes and swamps are what B6-B8 add: a straight line may meet none of them
-      if (ladder === 'flame beacon' && i > 1) {
+      // roads, lakes and swamps are what B6-B8 add, passes and seas what B10-B11 add: a straight line may meet none of them
+      if ((ladder === 'flame beacon' && i > 1) || (ladder === 'blaze beacon' && (i === 2 || i === 3))) {
         if (mean(rs[i].lit) < mean(rs[i - 1].lit)) fails.push(`${rs[i].label} lights less than ${rs[i - 1].label}`);
       } else more(rs, i, 'hexes', 'lit');
     }
@@ -512,6 +573,19 @@ export function checkFire({ rows, cut }) {
   step(7, 'jungle', 'jungle hexes in reach');
   step(8, 'band2', 'band 2 hexes');
   if (mean(at(7).band2) > 0.05 * mean(at(8).band2)) fails.push(`resin (F7) already lights ${mean(at(7).band2).toFixed(1)} band 2 hexes; coal (F8) is what opens band 2`);
+  const bz = rows.filter((r) => r.ladder === 'blaze fuel'), bat = (n) => bz.find((r) => r.t.fuel === n);
+  const reach = (r, h) => r.reach.map((d) => d[h]);
+  const bstep = (n, h, what) => {
+    const a = mean(reach(bat(n - 1), h)), b = mean(reach(bat(n), h));
+    if (!(b > a)) fails.push(`${bat(n).label} can light ${b.toFixed(1)} ${what}, not more than ${bat(n - 1).label} (${a.toFixed(1)})`);
+  };
+  bstep(9, 'hills', 'hills hexes');
+  bstep(10, 'desert', 'desert hexes');
+  bstep(11, 'coast', 'coast hexes');
+  bstep(12, 'band3', 'band 3 hexes');
+  bstep(12, 'tundra', 'tundra hexes');
+  // band 3 is rock oil's (LADDERS: F12 band 3): on ground no fuel holds, the earlier blaze fuels reach only its edge
+  if (mean(reach(bat(11), 'band3dry')) > 0.5 * mean(reach(bat(12), 'band3dry'))) fails.push(`whale oil (F11) can already light ${mean(reach(bat(11), 'band3dry')).toFixed(1)} band 3 hexes of open ground; rock oil (F12) is what opens band 3`);
   if (!cut.checked) fails.push('no line long enough to cut');
   fails.push(...cut.fails);
   return fails;
@@ -635,9 +709,13 @@ function foundCities(ctx, gen, field, home, max) {
 // The flame era's first tiers for a governed city (the ones a city's own land can reach: charcoal,
 // the watchtower, the chimney hearth to the bread oven); its collier works the stranger's way
 const FLAME_CITY = ['F5', 'B5', 'H5', 'H6', 'H7'];
+// the blaze era's hearths over them, up to the furnace (the hungriest: Fire.HEARTHS.H11.use); a 2nd city's
+// own land holds no blaze fuel, so it burns what the flame city does, boosted (Fire.perUnit)
+const BLAZE_CITY = ['H8', 'H9', 'H10', 'H11'];
 
 // One founded city under a focus for GOVERN_TICKS fire ticks; returns how its hearth fared.
-// flame: with FLAME_CITY's tiers too, a burning pits district, and the bread oven's hearth
+// flame: with FLAME_CITY's tiers too, a burning pits district, and the bread oven's hearth; 'blaze': BLAZE_CITY's
+// as well, and the furnace's hearth
 function governCity(ctx, store, gen, at, focus, rand, flame = false) {
   const { Fire: F, District: Di, City: C, Governor: Gv } = ctx;
   const id = 'sim', districts = { [at.join(',')]: Di.HEARTH };
@@ -648,8 +726,9 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
   }
   const city = { citizens: C.SETTLERS.people, stores: { ...C.SETTLERS.stores }, buildings: {}, workers: {}, hearth: { out: 0, stored: 0 } };
   const tiers = {};
-  ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].concat(flame ? FLAME_CITY : []).forEach((k) => { tiers[k] = true; });
-  const hid = flame ? 'H7' : 'H4', H = F.HEARTHS[hid];
+  ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].concat(flame ? FLAME_CITY : [], flame === 'blaze' ? BLAZE_CITY : [])
+    .forEach((k) => { tiers[k] = true; });
+  const hid = flame === 'blaze' ? 'H11' : flame ? 'H7' : 'H4', H = F.HEARTHS[hid];
   store['game.network.story.charcoalWay'] = flame ? 'their' : undefined;
   const hexesOf = (type) => Object.keys(districts).filter((k) => districts[k] === type).map((k) => k.split(',').map(Number));
   const max = (b) => (C.Buildings[b].later || (C.Buildings[b].needs && !tiers[C.Buildings[b].needs]) ? 0 : C.Buildings[b].maximum * hexesOf(C.Buildings[b].district).length);
@@ -681,7 +760,8 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
     for (const j in C._INCOME) if (C._INCOME[j].raw) jobs.add(j);
     return [...jobs].filter((j) => slots(j) > 0);
   };
-  const res = { focus: flame ? focus + ' (flame: ' + FLAME_CITY.join(' ') + ')' : focus, cold: 0, lowest: Infinity, built: 0, citizens: 0 };
+  const res = { focus: flame === 'blaze' ? focus + ' (blaze: ' + FLAME_CITY.concat(BLAZE_CITY).join(' ') + ')' :
+    flame ? focus + ' (flame: ' + FLAME_CITY.join(' ') + ')' : focus, cold: 0, lowest: Infinity, built: 0, citizens: 0 };
   let nextPeople = 3 + Math.floor(rand.next() * 15);
   for (let tick = 0; tick < GOVERN_TICKS; tick++) {
     // the hearth
@@ -698,7 +778,7 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
       for (const k in inc.stores) per[k] = inc.stores[k] * s * 10 / inc.delay;
       view.jobs[j] = { slots: slots(j), stores: per };
     }
-    for (const f in F.FUELS) if (tiers[F.FUELS[f].tier]) view.fuels[f] = F.FUELS[f].fire * F.FUELS[f].burn;
+    for (const f in F.FUELS) if (tiers[F.FUELS[f].tier]) view.fuels[f] = F.perUnit(H, f); // City.govern
     for (const b in C.Buildings) {
       if ((city.buildings[b] || 0) >= max(b)) continue;
       store[`game.cities["${id}"].buildings["${b}"]`] = city.buildings[b] || 0;
@@ -754,6 +834,7 @@ export function simulateCities({ seeds, firstSeed = 1 }) {
     if (cities[0]) {
       for (const focus of ctx.Governor.FOCUSES) governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, focus, rand) });
       governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, 'fire', rand, true) });
+      governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, 'fire', rand, 'blaze') });
     }
   }
   return { founding, governors, seeds };
@@ -806,6 +887,11 @@ export function checkCities({ founding, governors, seeds }) {
   const flame = governors.filter((g) => g.focus.startsWith('fire (flame'));
   const fp = flame.length ? median(flame.map((g) => g.citizens)) : 0;
   if (!(fp >= 20)) fails.push(`the flame-era fire city has ${fp} people after 2 h (median), want 20 or more`);
+  // and a blaze-era one under the furnace, the hungriest hearth: never cold, and it grows as well
+  const blaze = governors.filter((g) => g.focus.startsWith('fire (blaze'));
+  const bp = blaze.length ? median(blaze.map((g) => g.citizens)) : 0;
+  if (!blaze.length) fails.push('no blaze-era fire city');
+  if (!(bp >= 20)) fails.push(`the blaze-era fire city has ${bp} people after 2 h (median), want 20 or more`);
   return fails;
 }
 

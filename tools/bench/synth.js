@@ -8,7 +8,7 @@
  *
  *   cities    city-states held, the capital included, at least MIN_GAP hexes apart
  *   beacons   beacons raised, each Fire.HOP from a hearth or beacon, only where the fuel's fire reaches
- *   era       'ember' (default) or 'flame': which eras' tiers are in
+ *   era       'ember' (default), 'flame' or 'blaze': which eras' tiers are in
  * Every hex is seen, every tier of the era is in, each city has up to 14 districts with their buildings
  * filled, its citizens housed and at work, and a hearth burning a stand-in late fuel.
  */
@@ -36,8 +36,8 @@ export function synth({ cities: nCities = 64, beacons: nBeacons = 500, seed = 7,
 
   // every tier of the era and every story beat behind them
   const tiers = {};
-  Fire.TIERS.forEach((t) => { if (t.n <= (era === 'flame' ? 8 : 4)) tiers[t.id] = true; });
-  // shortcut: only the ember and flame fuels have numbers yet, and their lines stop at danger 6 at
+  Fire.TIERS.forEach((t) => { if (t.n <= ({ flame: 8, blaze: 12 }[era] || 4)) tiers[t.id] = true; });
+  // shortcut: only the ember, flame and blaze fuels have numbers yet, and their lines stop at danger 9 at
   // most. A late-game empire burns the old fire (F16), so it gets stand-in numbers here that reach
   // every danger; drop this once the later fuels are in Fire.FUELS.
   if (!Fire.FUELS['the old fire']) Fire.FUELS['the old fire'] = { tier: 'F16', fire: 4, burn: 2, cap: Danger.MAX };
