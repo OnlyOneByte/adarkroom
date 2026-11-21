@@ -4,9 +4,9 @@ import { townWithCityStates, choose, getState } from './helpers.js';
 
 // A fresh game with the town open (seed 4242), the capital on military focus with walls, soldiers drilled
 // on the tick, iron swords in its stores; the ticks run by hand (the fire, the city-states, the armies)
-async function garrisonTown(page, { walls = 2, swords = 20 } = {}) {
+async function garrisonTown(page, { walls = 2, swords = 20, focus = true } = {}) {
   const errors = await townWithCityStates(page);
-  await page.evaluate(({ walls, swords }) => {
+  await page.evaluate(({ walls, swords, focus }) => {
     clearTimeout(Armies._tickTimeout);
     for (const t in CityStates.TEMPERAMENTS) $SM.set('game.citystates.sighted["' + t + '"]', true, true); // no first sightings
     window.tick = (n = 1) => {
@@ -23,9 +23,9 @@ async function garrisonTown(page, { walls = 2, swords = 20 } = {}) {
       if (placed < walls && Network.districtsFor('capital', p[0], p[1]).includes('walls') && Network.placeDistrict('capital', p[0], p[1], 'walls')) placed++;
     }
     $SM.set('game.cities["capital"].population.citizens', 30);
-    City.setFocus('capital', 'military');
+    if (focus) City.setFocus('capital', 'military');
     $SM.setM('stores', { 'iron sword': swords, oak: 200, steel: 100, leather: 100 });
-  }, { walls, swords });
+  }, { walls, swords, focus });
   return errors;
 }
 
@@ -76,7 +76,12 @@ async function marchOn(page, c) {
 const army = (page) => page.evaluate(() => JSON.parse(JSON.stringify(Armies.list()[0] || null)));
 
 test('a city-state taken by force from a fresh save: soldiers drilled, a ram built, the march, the siege, the storm', async ({ page }) => {
-  const errors = await garrisonTown(page);
+  const errors = await garrisonTown(page, { focus: false });
+  // the capital, the only city, is set to military focus in the town panel
+  await page.locator('#location_city').click();
+  await page.waitForFunction(() => !$('#locationSlider').is(':animated'));
+  await page.locator('#city_focus_military').click();
+  expect(await page.evaluate(() => $SM.get('game.cities["capital"].focus'))).toBe('military');
   // the military capital drills a soldier every 3 ticks (30 s), up to 10 a walls district
   await page.evaluate(() => tick(3));
   expect(await page.evaluate(() => Armies.trained('capital'))).toBe(1);
@@ -85,8 +90,6 @@ test('a city-state taken by force from a fresh save: soldiers drilled, a ram bui
   expect(drilled).toEqual({ n: 20, room: 20, citizens: 10 });
 
   // the town panel: the army box, a ram built from the capital's stores
-  await page.locator('#location_city').click();
-  await page.waitForFunction(() => !$('#locationSlider').is(':animated'));
   await expect(page.locator('#armySoldiers')).toContainText('soldiers at home 20');
   await page.locator('#army_gear_ram').click();
   expect(await page.evaluate(() => $SM.get('stores.ram'))).toBe(1);

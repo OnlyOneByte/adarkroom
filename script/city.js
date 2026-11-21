@@ -727,9 +727,10 @@ var City = {
 	 */
 	updateSwitcher: function () {
 		var cities = $SM.get('game.cities') || {}, ids = Object.keys(cities), box = $('#citySwitch');
+		// the focus row shows from the first city on: the capital alone can go military (Phase 5)
+		City.updateFocusView();
 		if (ids.length < 2) {
 			box.hide();
-			$('#cityFocus').hide();
 			return;
 		}
 		box.show();
@@ -743,7 +744,6 @@ var City = {
 			});
 		}
 		ids.forEach(function (id) { Button.setDisabled($('#city_switch_' + id), id === City.activeCity); });
-		City.updateFocusView();
 	},
 
 	switchTo: function (cityId) {
