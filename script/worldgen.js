@@ -124,6 +124,7 @@ var WorldGen = {
 	 *   coreOffset     [dx, dy] from square to hex coordinates
 	 *   deposits[]     { kind: 'iron'|'coal'|'sulphur', at:[x,y], cleared } the prologue's mines
  *   garrison       the index in sites[] of the garrison of the deep mines' complex (-1: none)
+	 *   fleet          the index in sites[] of the drowned fleet's complex, out on the water (-1: none)
 	 *   pockets[]      [x,y] centres of the safer pockets (Danger)
 	 */
 	generate: function (seed, squareMap, cleared) {
@@ -511,7 +512,132 @@ var WorldGen = {
 		// 8. The garrison of the deep mines (POWERS §2, the first power): the complex nearest home moves to the
 		// old wasteland's edge, where a charcoal line can reach it, on its own rng (nothing else moves)
 		out.garrison = G._garrison(out);
+		// 9. The drowned fleet (POWERS §2, #5): a complex moves out onto the drowned harbour's water (WorldGen._fleet)
+		out.fleet = G._fleet(out);
 		return out;
+	},
+
+	// the drowned harbour (blaze-draft): the fallen city nearest the capital on an inland sea's shore; failing
+	// that, the nearest on any water. null: none (Network.harbourSite keeps the game's pick)
+	harbour: function (gen) {
+		var G = WorldGen, cols = gen.cols, rows = gen.rows;
+		var touches = function (site, ok) {
+			return site.hexes.some(function (h) {
+				for (var d = 0; d < 6; d++) {
+					var p = G.neighbour(h[0], h[1], d);
+					if (p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows && ok(p[0], p[1])) return true;
+				}
+				return false;
+			});
+		};
+		var sea = function (s) { return touches(s, function (x, y) { var f = gen.formationAt[x + y * cols]; return f >= 0 && gen.formations[f].kind === 'sea'; }); };
+		var coast = function (s) { return touches(s, function (x, y) { return G.isWater(gen.terrain[x][y]); }); };
+		var near = function (a, b) { return G.distance(a.anchor, gen.capital) - G.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b); };
+		var falls = gen.sites.filter(function (s) { return s.kind === 'fallenCity'; });
+		return falls.filter(sea).sort(near)[0] || falls.filter(coast).sort(near)[0] || null;
+	},
+
+	// the water joined to a site's shore: Int32Array(cols*rows), the steps out from the shore (1 on the water
+	// beside it), -1 off it
+	waterFrom: function (gen, site) {
+		var G = WorldGen, cols = gen.cols, rows = gen.rows, steps = new Int32Array(cols * rows).fill(-1), queue = [];
+		var visit = function (p, n) {
+			var k = p[0] + p[1] * cols;
+			if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= rows || steps[k] >= 0 || !G.isWater(gen.terrain[p[0]][p[1]])) return;
+			steps[k] = n;
+			queue.push(p);
+		};
+		site.hexes.forEach(function (h) { for (var d = 0; d < 6; d++) visit(G.neighbour(h[0], h[1], d), 1); });
+		for (var q = 0; q < queue.length; q++) {
+			for (var d = 0; d < 6; d++) visit(G.neighbour(queue[q][0], queue[q][1], d), steps[queue[q][0] + queue[q][1] * cols] + 1);
+		}
+		return steps;
+	},
+
+	FLEET_SIZE: 4,          // provisional: the hulks, chained hull to hull
+	FLEET_DANGER: [5, 7],   // POWERS §3: the fleet's band 3
+
+	// moves the complex nearest the drowned harbour (one no power has taken) out onto open water joined to
+	// the harbour's shore: at FLEET_DANGER, an inland sea's first, nearest the harbour by water. Its hexes are
+	// open sea (no one walks to it) and it has no danger spike of its own (site.fleet, Danger.field).
+	// Returns its index, or -1
+	_fleet: function (gen) {
+		var G = WorldGen, T = G.TERRAIN, cols = gen.cols, rows = gen.rows, hb = G.harbour(gen);
+		if (!hb) return -1;
+		// (a complex another power has moved carries a flag of its own: garrison, ...)
+		var taken = function (s) { return Object.keys(s).some(function (k) { return k !== 'kind' && k !== 'anchor' && k !== 'hexes'; }); };
+		var i = -1;
+		gen.sites.forEach(function (s, j) {
+			if (s.kind !== 'complex' || taken(s)) return;
+			if (i < 0 || G.distance(s.anchor, hb.anchor) < G.distance(gen.sites[i].anchor, hb.anchor)) i = j;
+		});
+		if (i < 0) return -1;
+		var old = gen.sites[i], steps = G.waterFrom(gen, hb), lo = G.FLEET_DANGER[0], hi = G.FLEET_DANGER[1];
+		// the danger read with the complex gone from where it stood (its spike goes with it)
+		old.fleet = true;
+		var field = Danger.field(gen);
+		delete old.fleet;
+		var sea = function (k) { var f = gen.formationAt[k]; return f >= 0 && gen.formations[f].kind === 'sea'; };
+		var open = function (x, y) {
+			var k = x + y * cols;
+			return x >= 0 && y >= 0 && x < cols && y < rows && steps[k] > 0 && gen.terrain[x][y] === T.ocean && (gen.siteAt[k] < 0 || gen.siteAt[k] === i);
+		};
+		// a shallows hex is made deep only where the ground round it stays joined (one run of passable hexes in
+		// its ring): no one is cut off by it
+		var passable = function (h) { return h[0] >= 0 && h[1] >= 0 && h[0] < cols && h[1] < rows && G.isPassable(gen.terrain[h[0]][h[1]]); };
+		var deepens = function (x, y) {
+			var runs = 0;
+			for (var dd = 0; dd < 6; dd++) {
+				if (passable(G.neighbour(x, y, dd)) && !passable(G.neighbour(x, y, (dd + 5) % 6))) runs++;
+			}
+			return runs <= 1;
+		};
+		// in the window, then on an inland sea, then open sea (a shallows hex is made deep), then nearest by water
+		var spots = [];
+		for (var k = 0; k < cols * rows; k++) {
+			if (steps[k] <= 0 || (gen.siteAt[k] >= 0 && gen.siteAt[k] !== i)) continue;
+			var x = k % cols, y = (k - x) / cols, d = field[k];
+			if (gen.terrain[x][y] !== T.ocean && !deepens(x, y)) continue;
+			spots.push([x, y, Math.ceil(Math.max(0, lo - d, d - hi) * 4) * 4 + (sea(k) ? 0 : 2) + (gen.terrain[x][y] === T.ocean ? 0 : 1), steps[k]]);
+		}
+		if (!spots.length) return -1;
+		spots.sort(function (a, b) { return a[2] - b[2] || a[3] - b[3] || a[0] - b[0] || a[1] - b[1]; });
+		var at = [spots[0][0], spots[0][1]], rand = G.rng(gen.seed ^ 0xF1EE7), dirs = [0, 1, 2, 3, 4, 5];
+		for (var di = dirs.length - 1; di > 0; di--) {
+			var dj = Math.floor(rand() * (di + 1)), dt = dirs[di];
+			dirs[di] = dirs[dj];
+			dirs[dj] = dt;
+		}
+		gen.terrain[at[0]][at[1]] = gen.map[at[0]][at[1]] = T.ocean;
+		gen.reachable[at[0] + at[1] * cols] = 0;
+		var hexes = [at], has = {};
+		has[at[0] + at[1] * cols] = true;
+		for (var j = 0; j < hexes.length && hexes.length < G.FLEET_SIZE; j++) {
+			dirs.forEach(function (dd) {
+				var nb = G.neighbour(hexes[j][0], hexes[j][1], dd);
+				if (hexes.length >= G.FLEET_SIZE || has[nb[0] + nb[1] * cols] || !open(nb[0], nb[1])) return;
+				has[nb[0] + nb[1] * cols] = true;
+				hexes.push(nb);
+			});
+		}
+		// water left beside it for the boats to lie on (a small pond holds a small fleet)
+		var lies = function () {
+			return hexes.some(function (h) {
+				for (var dd = 0; dd < 6; dd++) {
+					var p = G.neighbour(h[0], h[1], dd), pk = p[0] + p[1] * cols;
+					if (p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows && steps[pk] > 0 && !has[pk] && (gen.siteAt[pk] < 0 || gen.siteAt[pk] === i)) return true;
+				}
+				return false;
+			});
+		};
+		while (hexes.length > 1 && !lies()) {
+			var last = hexes.pop();
+			delete has[last[0] + last[1] * cols];
+		}
+		old.hexes.forEach(function (h) { gen.siteAt[h[0] + h[1] * cols] = -1; });
+		hexes.forEach(function (h) { gen.siteAt[h[0] + h[1] * cols] = i; });
+		gen.sites[i] = { kind: 'complex', anchor: at, hexes: hexes, fleet: true, power: 'fleet' };
+		return i;
 	},
 
 	GARRISON_SIZE: 4,      // provisional: its gate and three adits (POWERS §2)

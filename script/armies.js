@@ -11,7 +11,8 @@
  * trek brings them home.
  *
  * An army can march on a power too (a.power, script/powers.js): the same march and siege, with the power's
- * own numbers and puzzle, and a storm the wanderer leads. Boats and fire-ships are later.
+ * own numbers and puzzle, and a storm the wanderer leads. Boats (script/powers/fleet.js) carry an army over
+ * water: Armies.sails and Armies.afloat are its hooks.
  *
  * The rules at the top are pure (no DOM, no state), so the simulator (tools/sim-armies.js) loads this
  * file too. Every number is provisional, tuned with `npm run sim`.
@@ -204,14 +205,15 @@ var Armies = {
 	/*
 	 * The march (pure). cost of entering a hex: 2 on rough ground, as the wanderer's; route: the cheapest
 	 * way from one hex to another, an unlit hex counted LIT_PREF times (lit land first). gen: the world;
-	 * lit(x, y). Returns [[x, y]] (the hexes after `from`, ending on `to`) or null.
+	 * lit(x, y); sail(x, y): water it may cross too (Armies.sails), optional. Returns [[x, y]] (the hexes
+	 * after `from`, ending on `to`) or null.
 	 */
 	moveCost: function (gen, x, y) {
 		var t = gen.terrain[x][y];
 		return World.ROUGH.some(function (k) { return WorldGen.TERRAIN[k] === t; }) ? 2 : 1;
 	},
 
-	route: function (gen, from, to, lit) {
+	route: function (gen, from, to, lit, sail) {
 		var cols = gen.cols, rows = gen.rows, n = cols * rows;
 		var dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1);
 		var heap = [], push = function (d, i) {
@@ -246,7 +248,7 @@ var Armies = {
 			var x = i % cols, y = (i - x) / cols;
 			for (var d = 0; d < 6; d++) {
 				var nb = WorldGen.neighbour(x, y, d), nx = nb[0], ny = nb[1];
-				if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || !WorldGen.isPassable(gen.terrain[nx][ny])) continue;
+				if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || !(WorldGen.isPassable(gen.terrain[nx][ny]) || (sail && sail(nx, ny)))) continue;
 				var j = nx + ny * cols, w = Armies.moveCost(gen, nx, ny) * (lit(nx, ny) ? 1 : Armies.LIT_PREF);
 				if (dist[i] + w < dist[j]) {
 					dist[j] = dist[i] + w;
@@ -637,6 +639,11 @@ var Armies = {
 		return function (x, y) { return !!(fire && fire.lit[x + y * cols]); };
 	},
 
+	// hooks for boats (script/powers/fleet.js): the water army a (null: one not yet out) may cross, as
+	// sail(x, y), or null; and whether it is afloat on this hex (its boats carry it: no thirst, no stragglers)
+	sails: function (a) { return null; },
+	afloat: function (a, at) { return false; },
+
 	marchOn: function (cityId, csId) {
 		var A = Armies, c = CityStates.byId(csId), why = A.cantMarch(cityId, c);
 		if (why) {
@@ -646,15 +653,16 @@ var Armies = {
 		return A.send(cityId, c, { to: csId });
 	},
 
-	// the march itself, on a target { at, name } (a city-state or a power); extra: the army's own fields
-	send: function (cityId, c, extra) {
+	// the march itself, on a target { at, name } (a city-state or a power); extra: the army's own fields;
+	// way: { path } a power's own way there (the fleet's, by the harbour's boats), optional
+	send: function (cityId, c, extra, way) {
 		var A = Armies;
 		// lit land, off the beacons' own hexes (where the map shows the beacon, not the army), and off a site
 		var lit = A.lit(), from = $SM.get(City.path(cityId, 'hex'));
-		var camp = A.campFor(World.hex.gen, c, from, function (x, y) {
+		var camp = !way && A.campFor(World.hex.gen, c, from, function (x, y) {
 			return (lit(x, y) ? (Network.beaconAt(x, y) ? 1 : 2) : 0) - (extra.power && World.siteAt(x, y) ? 3 : 0);
 		});
-		var path = camp && A.route(World.hex.gen, from, camp, A.lit());
+		var path = way ? way.path : camp && A.route(World.hex.gen, from, camp, A.lit(), A.sails(null));
 		if (!path) {
 			Notifications.notify(City, _('there is no way there on foot.'));
 			return false;
@@ -705,7 +713,7 @@ var Armies = {
 
 	// what a hex costs the army (POWERS §1 table); without water or food, soldiers slip away
 	supply: function (a, at, cost) {
-		var A = Armies, n = A.soldiers(a), lit = A.lit()(at[0], at[1]);
+		var A = Armies, n = A.soldiers(a), lit = A.lit()(at[0], at[1]) || A.afloat(a, at);
 		var need = A.stepNeeds(n, lit, World.dangerAt(at[0], at[1]), cost);
 		a.due.food += need.food;
 		var food = Math.floor(a.due.food);
@@ -845,7 +853,7 @@ var Armies = {
 		a.siege = null;
 		a.to = a.power = null;
 		a.state = 'march';
-		a.path = best ? (A.route(gen, a.at, best, lit) || []) : [];
+		a.path = best ? (A.route(gen, a.at, best, lit, A.sails(a)) || []) : [];
 		if (!a.path.length) a.state = 'camp';
 		A.set(a);
 		if (!quiet) Notifications.notify(null, _('the army falls back to the light.'));
@@ -857,7 +865,7 @@ var Armies = {
 		var A = Armies, a = A.byId(id);
 		if (!a || a.state === 'siege') return false;
 		var home = $SM.get(City.path(a.from, 'hex')) || $SM.get(City.path(City.CAPITAL, 'hex'));
-		a.path = A.route(World.hex.gen, a.at, home, A.lit()) || [];
+		a.path = A.route(World.hex.gen, a.at, home, A.lit(), A.sails(a)) || [];
 		a.home = true;
 		a.state = 'march';
 		A.set(a);
