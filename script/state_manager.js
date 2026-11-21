@@ -74,21 +74,14 @@ var StateManager = {
 	//set single state
 	//if noEvent is true, the update event won't trigger, useful for setting multiple states first
 	set: function(stateName, value, noEvent) {
-		var fullPath = $SM.buildPath(stateName);
-
 		//make sure the value isn't over the engine maximum
 		if(typeof value == 'number' && value > $SM.MAX_STORE) value = $SM.MAX_STORE;
 
-		try{
-			eval('('+fullPath+') = value');
-		} catch (e) {
-			//parent doesn't exist, so make parent
-			$SM.createState(stateName, value);
-		}
+		$SM.assign(stateName, value);
 
 		//stores values can not be negative
 		if(stateName.indexOf('stores') === 0 && $SM.get(stateName, true) < 0) {
-			eval('('+fullPath+') = 0');
+			$SM.assign(stateName, 0);
 			Engine.log('WARNING: state:' + stateName + ' can not be a negative value. Set to 0 instead.');
 		}
 
@@ -159,13 +152,20 @@ var StateManager = {
 	//return state, undefined or 0
 	get: function(stateName, requestZero) {
 		var whichState = null;
-		var fullPath = $SM.buildPath(stateName);
+		var k = $SM.keys(stateName);
 
-		//catch errors if parent of state doesn't exist
-		try{
-			eval('whichState = ('+fullPath+')');
-		} catch (e) {
-			whichState = undefined;
+		if(k) {
+			//walk the path; a missing parent reads as undefined
+			whichState = State;
+			for(var i = 0; i < k.length && whichState != null; i++) whichState = whichState[k[i]];
+			if(i < k.length) whichState = undefined;
+		} else {
+			//catch errors if parent of state doesn't exist
+			try{
+				eval('whichState = ('+$SM.buildPath(stateName)+')');
+			} catch (e) {
+				whichState = undefined;
+			}
 		}
 
 		//prevents repeated if undefined, null, false or {}, then x = 0 situations
@@ -177,16 +177,21 @@ var StateManager = {
 	//since set does not fail, we know state exists and can simply return the object
 	setget: function(stateName, value, noEvent){
 		$SM.set(stateName, value, noEvent);
-		return eval('('+$SM.buildPath(stateName)+')');
+		return $SM.keys(stateName) ? $SM.get(stateName) : eval('('+$SM.buildPath(stateName)+')');
 	},
 
 	remove: function(stateName, noEvent) {
-		var whichState = $SM.buildPath(stateName);
-		try{
-			eval('(delete '+whichState+')');
-		} catch (e) {
-			//it didn't exist in the first place
-			Engine.log('WARNING: Tried to remove non-existant state \''+stateName+'\'.');
+		var k = $SM.keys(stateName), parent = k ? $SM.parentOf(k) : null;
+		if(k && parent != null) {
+			delete parent[k[k.length - 1]];
+		} else {
+			try{
+				if(k) throw 'no parent';
+				eval('(delete '+$SM.buildPath(stateName)+')');
+			} catch (e) {
+				//it didn't exist in the first place
+				Engine.log('WARNING: Tried to remove non-existant state \''+stateName+'\'.');
+			}
 		}
 		if(!noEvent){
 			Engine.saveGame();
@@ -206,6 +211,56 @@ var StateManager = {
 		if(!noEvent){
 			Engine.saveGame();
 			$SM.fireUpdate(stateName);
+		}
+	},
+
+	/*
+	 * A state name as the keys it walks: 'game.cities["x"].stores[\'wood\']' -> ['game', 'cities',
+	 * 'x', 'stores', 'wood']. Split once per name and kept, so a read is a walk, not an eval (perf).
+	 * null when the name isn't a plain path; then eval reads and writes it, as it always did.
+	 */
+	_keys: {},
+	_nKeys: 0,
+	KEY: /(\.)?([A-Za-z_$][\w$]*)|\["([^"\\]*)"\]|\['([^'\\]*)'\]|\[(\d+)\]/g,
+	keys: function(stateName) {
+		var k = $SM._keys[stateName];
+		if(k !== undefined) return k;
+		k = stateName ? [] : null;
+		for(var pos = 0, re = $SM.KEY, m; k && pos < stateName.length; pos = re.lastIndex) {
+			re.lastIndex = pos;
+			m = re.exec(stateName);
+			// a name after a dot, the first one without; or a quoted or numbered key in brackets
+			if(!m || m.index !== pos || (m[2] !== undefined && !m[1] !== (pos === 0))) k = null;
+			else k.push(m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[4] !== undefined ? m[4] : m[5]);
+		}
+		// shortcut: the cache only grows with distinct names (stores x cities, hexes); dropped past a bound
+		if(++$SM._nKeys > 50000) {
+			$SM._keys = {};
+			$SM._nKeys = 0;
+		}
+		return ($SM._keys[stateName] = k);
+	},
+
+	//the object holding the last key, or undefined/null if a parent is missing
+	parentOf: function(k) {
+		var o = State;
+		for(var i = 0; i < k.length - 1 && o != null; i++) o = o[k[i]];
+		return i < k.length - 1 ? undefined : o;
+	},
+
+	//State[path] = value, making any missing parents
+	assign: function(stateName, value) {
+		var k = $SM.keys(stateName), parent = k ? $SM.parentOf(k) : null;
+		if(k && parent != null) {
+			parent[k[k.length - 1]] = value;
+			return;
+		}
+		try{
+			if(k) throw 'no parent';
+			eval('('+$SM.buildPath(stateName)+') = value');
+		} catch (e) {
+			//parent doesn't exist, so make parent
+			$SM.createState(stateName, value);
 		}
 	},
 
