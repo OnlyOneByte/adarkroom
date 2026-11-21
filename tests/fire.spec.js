@@ -30,9 +30,9 @@ async function townWithFire(page, { tiers = ['F1', 'F2', 'F3', 'F4', 'B1', 'B2',
         }
         if (!at) break;
         $SM.set('game.network.beacons["' + at[0] + ',' + at[1] + '"]', true);
+        Network.refresh(); // the next one builds out from this one, once it is lit
         out.push(at);
       }
-      Network.refresh();
       return out;
     };
     window.litCount = () => World.hex.fire.lit.reduce((a, b) => a + b, 0);
@@ -107,6 +107,8 @@ test('with a stone hearth the lines carry the hops of the CITY.md table; a town 
 test('a line burning wood goes dark past danger 1; tallow reaches danger 2.5', async ({ page }) => {
   const errors = await townWithFire(page);
   const r = await page.evaluate(() => {
+    $SM.set('stores.tallow', 1000);
+    burnTick(); // built out while tallow lights the way: a new beacon goes by a lit one
     const line = lineEast(6);
     const cols = World.hex.gen.cols;
     const maxLitDanger = () => {
@@ -120,7 +122,7 @@ test('a line burning wood goes dark past danger 1; tallow reaches danger 2.5', a
     $SM.set('stores.tallow', 1000);
     burnTick();
     const tallow = { fuel: $SM.get('game.cities.capital.hearth.fuel'), lit: litCount(), max: maxLitDanger() };
-    return { wood, tallow, beyond: World.baseDangerAt(line[5][0], line[5][1]) };
+    return { wood, tallow, n: line.length };
   });
   expect(r.wood.fuel).toBe('wood');
   expect(r.wood.max).toBeLessThanOrEqual(1);
@@ -339,6 +341,7 @@ test('the world is bigger: the stone hearth, the braziers and the first one lit,
   await page.locator('#location_city').click();
   await expect(page.locator('#cityLand')).toBeVisible();
   const spot = await page.evaluate(() => {
+    Network.tick(); // the hearth has been burning since the town opened
     const cap = World.hex.gen.capital;
     for (const p of Fire.ring(cap[0], cap[1], 2)) if (Network.canBeacon(p[0], p[1])) return p;
     return null;
