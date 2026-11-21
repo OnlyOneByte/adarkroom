@@ -51,7 +51,7 @@ function campaign(ctx, gen, danger, fire, c, squads, gear, stance, roll) {
   const { Armies: A, Fire: F } = ctx;
   const isLit = (x, y) => !!fire.lit[x + y * gen.cols];
   const dangerAt = (x, y) => (isLit(x, y) ? Math.max(0, danger(x, y) - F.LIT_DANGER) : danger(x, y));
-  const camp = A.campFor(gen, c, gen.capital, isLit);
+  const camp = A.campFor(gen, c, gen.capital, (x, y) => (isLit(x, y) ? 1 : 0));
   const path = camp && A.route(gen, gen.capital, camp, isLit);
   if (!path) return null;
   const army = { squads: { ...squads }, ammo: {}, gear: { ...gear }, hurt: 0 };

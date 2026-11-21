@@ -62,7 +62,7 @@ Events.Armies = {
 			var left = Math.min(res.left, A.routed(res.start, s.garrison, s.garrisonMax));
 			scenes.start.buttons.go = { text: _('go on'), onChoose: function () { A.rout(id); }, nextScene: { 1: 'routed' } };
 			scenes.routed = {
-				text: [_('the line breaks. the army runs for the light.'), _('{0} soldiers come away from the walls. the baggage stays where it fell.', left)],
+				text: [_('the line breaks. the army runs for the light.'), (left === 1 ? _('1 soldier comes away from the walls. the baggage stays where it fell.') : _('{0} soldiers come away from the walls. the baggage stays where it fell.', left))],
 				buttons: Events.Armies.go
 			};
 		}
@@ -77,7 +77,7 @@ Events.Armies = {
 			title: CityStates.byId(a.to).name,
 			scenes: {
 				start: {
-					text: [_('the army breaks under the walls. it runs for the light.'), _('{0} soldiers come away from the walls. the baggage stays where it fell.', left)],
+					text: [_('the army breaks under the walls. it runs for the light.'), (left === 1 ? _('1 soldier comes away from the walls. the baggage stays where it fell.') : _('{0} soldiers come away from the walls. the baggage stays where it fell.', left))],
 					buttons: { 'go': { text: _('go on'), onChoose: function () { A.rout(id); }, nextScene: 'end' } }
 				}
 			}

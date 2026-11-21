@@ -1,0 +1,28 @@
+/* the army box in the town panel, under the land (script/armies.js) */
+div#cityArmies {
+	margin-top: 10px;
+	clear: both;
+	font-size: 14px;
+}
+
+div#cityArmies:before {
+	content: attr(data-legend);
+	position: relative;
+	top: -5px;
+	font-size: 16px;
+}
+
+div#cityArmies .csLine {
+	color: #666;
+	margin-bottom: 4px;
+}
+
+div#cityArmies .button {
+	float: left;
+	margin: 4px 8px 4px 0px;
+}
+
+div#cityArmies #armyStatus {
+	clear: both;
+	padding-top: 4px;
+}
