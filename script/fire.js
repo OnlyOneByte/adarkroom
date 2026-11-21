@@ -28,34 +28,55 @@ var Fire = {
 	 *   story   true for a fixed story event (LADDERS.md ⚑), false for a play milestone
 	 *   chain   the story chain it belongs to, if any
 	 *   when    the unlock condition hook, a key of Network.UNLOCKS; null = not wired yet
-	 * Only the ember era is wired in this phase; the rest is data waiting for its story.
+	 * The ember and flame eras are wired; the rest is data waiting for its story.
 	 */
 	TIERS: [],
 
-	// provisional (CITY.md): what each ember tier does. Later eras get theirs as they are built.
-	// fuel: fire per unit, burn time in fire ticks, the danger its line can push into
+	// provisional (CITY.md for the ember era; the flame era sim-tuned, design/text/flame-build.md):
+	// what each tier does. Later eras get theirs as they are built.
+	// fuel: fire per unit, burn time in fire ticks, the danger its line can push into;
+	// holds: the damp ground it reaches further into (Fire.SWAMP, Fire.JUNGLE bits), wet: how far
 	FUELS: {
 		'wood':         { tier: 'F1', fire: 1,   burn: 1, cap: 1 },
 		'dry wood':     { tier: 'F2', fire: 1.5, burn: 1, cap: 1.5 },
 		'seasoned oak': { tier: 'F3', fire: 2,   burn: 1, cap: 2 },
-		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 }
+		'tallow':       { tier: 'F4', fire: 2,   burn: 2, cap: 2.5 },
+		'charcoal':     { tier: 'F5', fire: 4,   burn: 1, cap: 3.25 },
+		'peat':         { tier: 'F6', fire: 2.5, burn: 2, cap: 3.5,  holds: 1, wet: 5.5 },
+		'resin':        { tier: 'F7', fire: 4,   burn: 1, cap: 4,    holds: 2, wet: 6 },
+		'coal':         { tier: 'F8', fire: 5,   burn: 2, cap: 6 }
 	},
 	// beacon: the share of fire kept per hop; hills: a beacon on hills carries one hop further.
 	// hops is CITY.md's table, how far a line from a stone hearth (16) carries: it isn't a cap,
 	// it falls out of keep and Fire.RELAY_MIN, so a stronger hearth carries further.
+	// road: the share kept on a hop that runs all along a road (B6 on); water: lines cross lake
+	// hexes (B7 on); marsh: no extra loss over swamps (B8)
 	BEACONS: {
-		B1: { name: 'brazier',    hops: 2, keep: 0.5,  hills: false, cost: { wood: 20 } },
-		B2: { name: 'torch-post', hops: 2, keep: 0.6,  hills: false, cost: { wood: 20 } },
-		B3: { name: 'cairn fire', hops: 3, keep: 0.65, hills: false, cost: { wood: 20 } },
-		B4: { name: 'watch fire', hops: 3, keep: 0.7,  hills: true,  cost: { wood: 20 } }
+		B1: { name: 'brazier',        hops: 2, keep: 0.5,  hills: false, cost: { wood: 20 } },
+		B2: { name: 'torch-post',     hops: 2, keep: 0.6,  hills: false, cost: { wood: 20 } },
+		B3: { name: 'cairn fire',     hops: 3, keep: 0.65, hills: false, cost: { wood: 20 } },
+		B4: { name: 'watch fire',     hops: 3, keep: 0.7,  hills: true,  cost: { wood: 20 } },
+		B5: { name: 'watchtower',     hops: 4, keep: 0.75, hills: true,  cost: { wood: 40 } },
+		B6: { name: 'lamp-post',      hops: 4, keep: 0.75, hills: true,  road: 0.95, cost: { wood: 40 } },
+		B7: { name: 'ford light',     hops: 4, keep: 0.75, hills: true,  road: 0.95, water: true, cost: { wood: 40 } },
+		B8: { name: 'marsh lantern',  hops: 4, keep: 0.75, hills: true,  road: 0.95, water: true, marsh: true, cost: { wood: 40 } }
 	},
-	// hearth: fire it makes at most, fire it stores, whether it can feed a line
+	// hearth: fire it makes at most, fire it stores, whether it can feed a line; grow: its output
+	// grows with the city's people, up to this many times out (Network.hearthScale)
 	HEARTHS: {
-		H1: { name: 'campfire',     out: 4,  store: 0,  share: false },
-		H2: { name: 'fire pit',     out: 8,  store: 0,  share: false },
-		H3: { name: 'stone hearth', out: 16, store: 0,  share: true },
-		H4: { name: 'town hearth',  out: 24, store: 32, share: true }
+		H1: { name: 'campfire',       out: 4,  store: 0,   share: false },
+		H2: { name: 'fire pit',       out: 8,  store: 0,   share: false },
+		H3: { name: 'stone hearth',   out: 16, store: 0,   share: true },
+		H4: { name: 'town hearth',    out: 24, store: 32,  share: true },
+		H5: { name: 'chimney hearth', out: 32, store: 32,  share: true },
+		H6: { name: 'kiln',           out: 40, store: 160, share: true },
+		H7: { name: 'bread oven',     out: 40, store: 160, share: true, grow: 2 },
+		H8: { name: 'forge hearth',   out: 80, store: 240, share: true, grow: 2 }
 	},
+	// provisional: a hop over swamp keeps this share of what it would, before the marsh lantern (B8)
+	SWAMP_KEEP: 0.85,
+	// net.kind bits (Fire.compute)
+	SWAMP: 1, JUNGLE: 2, LAKE: 4, ROAD: 8,
 
 	TICK: 10,           // seconds per fire tick (the room's fire)
 	HOP: 3,             // a beacon reaches the next node up to 3 hexes away
@@ -81,6 +102,28 @@ var Fire = {
 			if (t.ladder === ladder && unlocked[t.id] && (!best || t.n > best.n)) best = t;
 		});
 		return best;
+	},
+
+	/*
+	 * A tier's beat happened somewhere outside the ladders' own checks: a power broken (F8, the
+	 * garrison of the deep mines; Phase 6 calls it). The game sets Fire.onUnlock (Network.beat); the
+	 * tier comes in once the one before it is in, like every other.
+	 */
+	/*
+	 * provisional (flame-build.md): the fire a founded city's hearth of tier H makes with this many
+	 * people. Whatever its tier it gives the town hearth's (H4) up to P people (24 x people / P), so a
+	 * small town's big hearth doesn't eat all its wood; it rises to its own tier's fire by 2P, and
+	 * the bread oven and forge hearth grow on past that, up to H.grow times their fire.
+	 */
+	foundedOut: function (H, people, P) {
+		var base = Math.min(H.out, Fire.HEARTHS.H4.out);
+		var out = base * Math.min(1, people / P) + (H.out - base) * Math.max(0, Math.min(1, (people - P) / P));
+		return H.grow && people > 2 * P ? H.out * Math.min(H.grow, people / (2 * P)) : out;
+	},
+
+	onUnlock: null,
+	unlock: function (id) {
+		return Fire.onUnlock ? Fire.onUnlock(id) : false;
 	},
 
 	/*
@@ -169,20 +212,27 @@ var Fire = {
 	 *                      hex as an array (x + y * cols), read without a call (perf)
 	 *   net.hills(x, y)    true on hills
 	 *   net.open(x, y)     true on open dry ground a line can cross (optional: all of it)
-	 *   net.hearths[]      { at: [x, y], out, share, cap }
+	 *   net.kind           optional Uint8Array (x + y * cols) of Fire.SWAMP / JUNGLE / LAKE / ROAD bits
+	 *   net.hearths[]      { at: [x, y], out, share, cap, holds, wet } (its fuel's FUELS fields)
 	 *   net.beacons[]      [x, y]
 	 *   net.beacon         the beacon tier in use, one of Fire.BEACONS
 	 * A hearth lights its own ground, a ring at a time, -25% a ring. A beacon links to any node
 	 * up to Fire.HOP hexes away. Sharing hearths whose fire reaches each other pool it, and
 	 * each sends the pool out; every hop keeps `keep` of it, and fire carries on only while it
 	 * is at least Fire.RELAY_MIN. Nothing goes into a hex over the fuel's danger cap: a beacon
-	 * there is dark, and so is everything past it. A line between two nodes needs every hex
-	 * between them open and under the cap.
+	 * there is dark, and so is everything past it; on the damp ground a fuel holds (peat: swamp,
+	 * resin: jungle) its cap is `wet`. A line between two nodes needs every hex between them open (lake too, from
+	 * the ford light) and under the cap; a hop all along a road keeps the beacon's road share,
+	 * and one over swamp loses more (Fire.SWAMP_KEEP) until the marsh lantern.
 	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
 	 */
 	compute: function (net) {
-		var cols = net.cols, rows = net.rows, n = cols * rows, field = net.field;
+		var cols = net.cols, rows = net.rows, n = cols * rows, field = net.field, kind = net.kind || null;
 		var danger = field ? function (x, y) { return field[x + y * cols]; } : net.danger;
+		// whether a hearth's fuel reaches hex k: further on the damp ground it holds
+		var reaches = function (k, h) {
+			return (field ? field[k] : danger(k % cols, (k - k % cols) / cols)) <= (kind && h.holds && kind[k] & h.holds ? h.wet : h.cap);
+		};
 		var fire = new Float32Array(n), lit = new Uint8Array(n);
 		var nodes = net.hearths.map(function (h) { return { at: h.at, s: 0, hearth: h }; })
 			.concat(net.beacons.map(function (b) { return { at: b, s: 0, hearth: null }; }));
@@ -207,44 +257,69 @@ var Fire = {
 		}
 		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
 		// fire reaching a hex from a line with this fuel cap
-		var cover = function (p, s, cap) {
-			if (!inside(p) || danger(p[0], p[1]) > cap) return;
-			var k = p[0] + p[1] * cols;
-			if (s > fire[k]) fire[k] = s;
+		var cover = function (p, s, h) {
+			var x = p[0], y = p[1];
+			if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+			var k = x + y * cols;
+			if (s <= fire[k]) return;
+			// reaches(k, h), written out: the painter's hottest path (perf)
+			var d = field ? field[k] : danger(x, y);
+			if (d <= h.cap || (kind && h.holds && kind[k] & h.holds && d <= h.wet)) fire[k] = s;
 		};
 
 		var B = net.beacon, H = net.hearths.length;
-		// the hexes strictly between two linked nodes: the most danger on them, and whether all are
-		// open dry ground (a line can't jump what it couldn't light, or cross water or mountains)
-		var corridors = {};
+		// the hexes strictly between two linked nodes: the most danger on them (on dry ground, on
+		// swamp, on jungle), whether all are open dry ground (a line can't jump what it couldn't
+		// light, or cross water or mountains; lake from the ford light), whether any is swamp, and
+		// whether the whole line, its ends too, is road
+		var corridors = {}, NN = nodes.length;
 		var between = function (a, b) {
-			var k = Math.min(a, b) + ',' + Math.max(a, b), c = corridors[k];
+			var k = a < b ? a * NN + b : b * NN + a, c = corridors[k];
 			if (c) return c;
-			c = corridors[k] = { danger: 0, open: true };
+			c = corridors[k] = { danger: 0, swamp: -1, jungle: -1, open: true, wet: false, road: !!kind };
 			var l = Fire.line(nodes[a].at, nodes[b].at);
-			for (var i = 1; i < l.length - 1; i++) {
-				var p = l[i];
-				if (!inside(p) || (net.open && !net.open(p[0], p[1]))) c.open = false;
-				else c.danger = Math.max(c.danger, danger(p[0], p[1]));
+			for (var i = kind ? 0 : 1; i < (kind ? l.length : l.length - 1); i++) {
+				var p = l[i], bits = kind && inside(p) ? kind[p[0] + p[1] * cols] : 0;
+				if (!(bits & Fire.ROAD)) c.road = false;
+				if (i === 0 || i === l.length - 1) continue;
+				if (!inside(p) || (net.open && !net.open(p[0], p[1]) && !(B && B.water && bits & Fire.LAKE))) {
+					c.open = false;
+					continue;
+				}
+				var d = danger(p[0], p[1]);
+				if (bits & Fire.SWAMP) {
+					c.swamp = Math.max(c.swamp, d);
+					c.wet = true;
+				} else if (bits & Fire.JUNGLE) c.jungle = Math.max(c.jungle, d);
+				else c.danger = Math.max(c.danger, d);
 			}
 			return c;
 		};
-		var carries = function (a, b, cap) {
-			var c = between(a, b);
-			return c.open && c.danger <= cap;
+		var carries = function (a, b, h) {
+			var c = between(a, b), holds = h.holds || 0;
+			return c.open && c.danger <= h.cap && c.swamp <= (holds & Fire.SWAMP ? h.wet : h.cap) &&
+				c.jungle <= (holds & Fire.JUNGLE ? h.wet : h.cap);
 		};
+		// the share of fire a hop from a to b keeps, and the most any hop keeps
+		var keep = function (a, b) {
+			if (!kind) return B.keep;
+			var c = between(a, b), k = B.road && c.road ? B.road : B.keep;
+			return c.wet && !B.marsh ? k * Fire.SWAMP_KEEP : k;
+		};
+		var most = B ? (kind && B.road ? Math.max(B.keep, B.road) : B.keep) : 0;
 		// a hearth's fire out along the beacons, keeping each beacon's strongest: { best, links }
-		var spread = function (hi, s0, cap) {
+		var spread = function (hi, s0, h) {
 			var best = {}, links = {}, queue = [[hi, s0]];
 			for (var qi = 0; qi < queue.length; qi++) {
 				var q = queue[qi];
 				adj[q[0]].forEach(function (b) {
 					if (b < H) return; // a hearth doesn't relay another's line
-					var at = nodes[b].at;
-					var s = q[1] * B.keep;
+					var at = nodes[b].at, s = q[1] * most;
+					if (s < Fire.LIT_MIN || best[b] >= s) return; // not even the best hop would do
+					if (!reaches(at[0] + at[1] * cols, h)) return; // past the fuel's reach: dark
+					if (!carries(q[0], b, h)) return;
+					s = q[1] * keep(q[0], b);
 					if (s < Fire.LIT_MIN || best[b] >= s) return;
-					if (danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
-					if (!carries(q[0], b, cap)) return;
 					best[b] = s;
 					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];
 					// a beacon on hills (where its tier can use them) carries one hop further
@@ -269,7 +344,7 @@ var Fire = {
 			});
 			walks = net.hearths.map(function (h, hi) {
 				var s0 = h.share ? pool[find(hi)] : h.out;
-				return { s0: s0, w: h.share && B && s0 >= Fire.RELAY_MIN ? spread(hi, s0, h.cap) : null };
+				return { s0: s0, w: h.share && B && s0 >= Fire.RELAY_MIN ? spread(hi, s0, h) : null };
 			});
 			walks.forEach(function (wk, a) {
 				if (!wk.w) return;
@@ -277,7 +352,7 @@ var Fire = {
 				for (var k in wk.w.best) if (wk.w.best[k] >= Fire.RELAY_MIN) from.push(+k);
 				from.forEach(function (f) {
 					adj[f].forEach(function (b) {
-						if (b < H && net.hearths[b].share && find(b) !== find(a) && carries(f, b, net.hearths[a].cap)) {
+						if (b < H && net.hearths[b].share && find(b) !== find(a) && carries(f, b, net.hearths[a])) {
 							root[find(b)] = find(a);
 							joined = true;
 						}
@@ -293,20 +368,20 @@ var Fire = {
 			// its own ground: ring by ring while the ring inside still carries
 			for (var r = 0, s = s0; r <= 1 / Fire.RING_FALLOFF; r++) {
 				s = s0 * (1 - Fire.RING_FALLOFF * r);
-				Fire.ring(h.at[0], h.at[1], r).forEach(function (p) { cover(p, s, h.cap); });
+				Fire.ring(h.at[0], h.at[1], r).forEach(function (p) { cover(p, s, h); });
 				if (s < Fire.RELAY_MIN) break;
 			}
 			if (!w) return;
 			for (var b in w.best) {
 				var at = nodes[b].at;
 				if (w.best[b] > nodes[b].s) nodes[b].s = w.best[b];
-				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, w.best[b], h.cap); });
+				Fire.around(at[0], at[1], Fire.CORRIDOR).forEach(function (p) { cover(p, w.best[b], h); });
 			}
 			for (var k in w.links) {
 				var l = w.links[k];
 				all.push(l);
 				Fire.line(nodes[l[0]].at, nodes[l[1]].at).forEach(function (c) {
-					Fire.around(c[0], c[1], Fire.CORRIDOR).forEach(function (p) { cover(p, l[2], h.cap); });
+					Fire.around(c[0], c[1], Fire.CORRIDOR).forEach(function (p) { cover(p, l[2], h); });
 				});
 			}
 		});
@@ -323,10 +398,10 @@ var Fire = {
 			['dry wood', 'the builder raises a woodshed against the damp', false, null, 'woodshed'],
 			['seasoned oak', 'the first trek brings back an old axe-head from the forest', false, null, 'axe-head'],
 			['tallow', 'the town has its first tannery and smokehouse running together', false, null, 'tannery and smokehouse'],
-			['charcoal', 'a stranger from the first resettled fallen city teaches the burning pits', true, 'the charcoal stranger'],
-			['peat', 'a swamp city-state shares the cutting of the bog', true],
-			['resin', 'the jungle folk trade the bleeding of the trees', false],
-			['coal', 'the garrison holding the deep mines is broken (first power)', true, 'the garrison of the deep mines'],
+			['charcoal', 'a stranger from the first resettled fallen city teaches the burning pits', true, 'the charcoal stranger', 'burning pits'],
+			['peat', 'a swamp city-state shares the cutting of the bog', true, null, 'bog cutters'],
+			['resin', 'the jungle folk trade the bleeding of the trees', false, null, 'resin tappers'],
+			['coal', 'the garrison holding the deep mines is broken (first power)', true, 'the garrison of the deep mines', 'garrison broken'],
 			['coke', 'the forge-masters of the hill towns are won over', true],
 			['pitch', 'the tar-keepers of the desert pits swear to you', true],
 			['whale oil', 'a coastal fallen city is resettled and its boats relaunched', true, 'the drowned harbour'],
@@ -341,10 +416,10 @@ var Fire = {
 			['torch-post', 'the first trek returns home alive', false, null, 'trek home'],
 			['cairn fire', 'a wanderer shows how the old roads were marked', true, 'the wanderer\'s cairns', 'cairn'],
 			['watch fire', 'the first waystation is held', false, null, 'waystation lit'],
-			['watchtower', 'a waystation survives a night of attack', false],
-			['lamp-post line', 'the first road joins two cities', false],
-			['ford light', 'a river crossing is bridged', false],
-			['marsh lantern', 'the swamp city-state\'s lantern-keepers join you', true],
+			['watchtower', 'a waystation survives a night of attack', false, null, 'waystation held'],
+			['lamp-post line', 'the first road joins two cities', false, null, 'road joins'],
+			['ford light', 'a river crossing is bridged', false, null, 'water crossed'],
+			['marsh lantern', 'the swamp city-state\'s lantern-keepers join you', true, null, 'lantern-keepers'],
 			['signal mirror', 'a desert city-state teaches the mirrors', true],
 			['pass beacon', 'a mountain pass is held through a siege', true],
 			['lighthouse', 'a coastal fallen city is resettled', true, 'the drowned harbour'],
@@ -359,10 +434,10 @@ var Fire = {
 			['fire pit', 'the builder stays', false, null, 'builder stays'],
 			['stone hearth', 'the village is built (20 huts + trading post)', true, 'the world is bigger', 'stone hearth'],
 			['town hearth', 'the capital raises its first district', false, null, 'first district'],
-			['chimney hearth', 'the first fallen city is resettled', true],
-			['kiln', 'potters of a city-state join the empire', true],
-			['bread oven', 'a city reaches its second population tier', false],
-			['forge hearth', 'coke is learned (F9)', false],
+			['chimney hearth', 'the first fallen city is resettled', true, null, 'old chimney'],
+			['kiln', 'potters of a city-state join the empire', true, null, 'potters'],
+			['bread oven', 'a city reaches its second population tier', false, null, 'second tier'],
+			['forge hearth', 'the first coal is burned in a city (after F8)', false, null, 'coal burned'],
 			['bloomery', 'the hill towns\' smiths teach smelting', true],
 			['great hearth', 'a city reaches the top population tier', false],
 			['furnace', 'a power\'s foundry is captured', true],

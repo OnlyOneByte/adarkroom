@@ -12,8 +12,10 @@
  *   view.stores     { store: amount }
  *   view.fuels      { fuel: fire per unit } the unlocked fuels
  *   view.need       fire the hearth wants a tick
- *   view.builds     [{ key, cost: { store: n } }] buildings it could still build (under their maximum)
+ *   view.builds     [{ key, cost: { store: n }, have: n }] buildings it could still build (under their maximum)
  *   view.cold       true if the hearth made no fire last tick
+ *   view.spent      true if its bog cuts are all spent (dug deep)
+ *   view.room       people its houses hold: with no room left, any focus builds a house first
  * Returns { workers: { job: n }, build: key or null, notices: [code] }.
  */
 var Governor = {
@@ -23,14 +25,16 @@ var Governor = {
 
 	// what each focus works and builds, in order; military is a stub until armies (Phase 5)
 	JOBS: {
-		fire: ['woodcutter', 'gatherer', 'drier', 'oak cutter', 'seasoner', 'hunter', 'renderer'],
+		fire: ['woodcutter', 'gatherer', 'drier', 'oak cutter', 'seasoner', 'hunter', 'renderer',
+			'collier', 'peat cutter', 'resin tapper', 'coal miner'],
 		farming: ['hunter', 'charcutier', 'trapper', 'woodcutter', 'gatherer'],
-		industry: ['hunter', 'tanner', 'charcutier', 'woodcutter', 'gatherer', 'labourer'],
+		industry: ['hunter', 'tanner', 'charcutier', 'coal miner', 'woodcutter', 'gatherer', 'labourer'],
 		trade: ['trapper', 'hunter', 'tanner', 'woodcutter', 'gatherer'],
 		military: []
 	},
 	BUILDS: {
-		fire: ['woodshed', 'tallow vats', 'house'],
+		// [key, n]: only while the city has fewer than n of it. A first house, then the fuel buildings, then houses again
+		fire: ['woodshed', ['house', 1], 'charcoal pits', 'tallow vats', 'house'],
 		farming: ['house', 'smokehouse'],
 		industry: ['tannery', 'smokehouse', 'house'],
 		trade: ['house', 'tannery'],
@@ -93,9 +97,14 @@ var Governor = {
 		var stock = 0;
 		for (var f in view.fuels) stock += (view.stores[f] || 0) * view.fuels[f];
 		var build = null, reserve = view.need * Governor.RESERVE;
-		(Governor.BUILDS[view.focus] || []).some(function (key) {
+		// a governor never starves its own growth: no room left and a house can still go up, it saves
+		// for the house and builds nothing else
+		var order = Governor.BUILDS[view.focus] || [];
+		if (typeof view.room == 'number' && view.citizens >= view.room && view.builds.some(function (x) { return x.key === 'house'; })) order = ['house'];
+		order.some(function (item) {
+			var key = typeof item == 'string' ? item : item[0];
 			var b = view.builds.filter(function (x) { return x.key === key; })[0];
-			if (!b) return false;
+			if (!b || (typeof item != 'string' && (b.have || 0) >= item[1])) return false;
 			var fireCost = 0;
 			for (var k in b.cost) {
 				if ((view.stores[k] || 0) < b.cost[k]) return false;
@@ -107,6 +116,7 @@ var Governor = {
 		});
 		if (view.cold) notices.push('cold');
 		else if (fuelShort && stock < view.need) notices.push('fuel');
+		if (view.spent) notices.push('spent');
 		if (free > 0 && view.focus !== 'military') notices.push('idle');
 		return { workers: workers, build: build, notices: notices };
 	}

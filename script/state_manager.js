@@ -432,6 +432,14 @@ var StateManager = {
 			$SM.set('version', 2.6);
 			version = 2.6;
 		}
+		if(version == 2.6) {
+			// v2.7 is the flame era (script/network.js): tiers 5-8 unlock from the story the save already
+			// has; carts on the road (game.network.carts) start empty
+			if($SM.get('game.network') && !$SM.get('game.network.carts')) $SM.set('game.network.carts', [], true);
+			Engine.log('upgraded save to v2.7');
+			$SM.set('version', 2.7);
+			version = 2.7;
+		}
 	},
 
 	/******************************************************************

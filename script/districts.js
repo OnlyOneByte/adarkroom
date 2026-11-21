@@ -11,11 +11,13 @@
  * Type fields:
  *   name     display name
  *   glyph    what the district shows on the hex map
- *   fits(g)  g = { terrain: key, at, terrainAt(x, y), site: bool, city: { 'x,y': type }, capital: bool };
+ *   fits(g)  g = { terrain: key, at, terrainAt(x, y), site: bool, city: { 'x,y': type }, capital: bool,
+ *            coal: bool (a coal seam under it), spent: 0-1 (how worn a bog cut dug deep is) };
  *            true if the type can go on that hex
  *   holds    City.Buildings keys this type holds (CITY.md)
  *   jobs     { job: slots(g) } raw jobs a hex of this type opens, from its ground
  *   bonus    [{ next: type, job: key|'*', add: share }] +share output to the job when touching that type
+ *   needs    (optional) the fire tier it waits for before it can be placed
  *   stub     true: data only, placed from a later phase
  */
 var District = {
@@ -92,7 +94,9 @@ var District = {
 		jobs: {
 			'woodcutter': function () { return 4; },
 			// the old forests are where the oak is
-			'oak cutter': function (g) { return g.deep ? 2 : 0; }
+			'oak cutter': function (g) { return g.deep ? 2 : 0; },
+			// the jungle's trees are bled for resin (F7)
+			'resin tapper': function (g) { return g.terrain === 'jungle' ? 2 : 0; }
 		},
 		bonus: [{ next: 'huts', job: 'woodcutter', add: 0.25 }]
 	};
@@ -115,8 +119,18 @@ var District = {
 		fits: function (g) { return g.terrain === 'barrens' || District.forestEdge(g); },
 		bonus: [{ next: 'woods', job: '*', add: 0.25 }]
 	};
-	T['bog cuts'] = { name: _('bog cuts'), glyph: 'c', fits: on('swamp'), holds: [], jobs: {}, stub: true };
-	T['mines'] = { name: _('mines'), glyph: 'm', fits: on('hills', 'mountains'), holds: [], jobs: {}, stub: true };
+	T['bog cuts'] = {
+		name: _('bog cuts'), glyph: 'c', fits: on('swamp'), holds: [], needs: 'F6',
+		// a bog cut deep is spent for a while (Network.wearBogs)
+		jobs: { 'peat cutter': function (g) { return g.spent >= 1 ? 0 : 4; } },
+		// damp: a bog cut beside the hearth quarter takes fire from it, more than the touch gives
+		bonus: [{ next: 'hearth quarter', job: '*', add: -0.2 }]
+	};
+	T['mines'] = {
+		name: _('mines'), glyph: 'm', fits: on('hills', 'mountains'), holds: [], needs: 'F8',
+		// shortcut: only coal is mined here for now; iron and sulphur stay the village's mines until a tier needs them
+		jobs: { 'coal miner': function (g) { return g.coal ? 4 : 0; } }
+	};
 	T['forge'] = { name: _('forge'), glyph: 'g', fits: on('hills', 'barrens'), holds: [], jobs: {}, stub: true };
 	T['trading post'] = { name: _('trading post'), glyph: 'p', fits: any, holds: [], jobs: {}, stub: true };
 	T['harbour'] = {

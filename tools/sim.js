@@ -21,8 +21,9 @@
  *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
- * ember tier of each ladder; it reports the land lit and how far out, and how many lines a
- * steady supply of each fuel keeps burning.
+ * ember and flame tier of each ladder; it reports the land lit and how far out, by danger band
+ * and on the damp ground (swamp, jungle) the flame fuels open, and how many lines a steady supply
+ * of each fuel keeps burning.
  *
  * The bot: each trek it walks the cheapest way toward a target (a random hex in the
  * outer half of what its water can reach there and back, or its dropped pack) and turns home when
@@ -292,7 +293,20 @@ export function simulate({ seeds, treks, difficulties = ['gentle', 'normal', 'ha
 }
 
 const TIERS = ['1', '2', '3', '4'];
+const FLAME = ['4', '5', '6', '7', '8'];
 const ID = { fuel: 'F', beacon: 'B', hearth: 'H' };
+
+// Fire.compute's net.kind for a world, as Network.kinds builds it (no roads: the bot lays none)
+function kindsOf(ctx, gen) {
+  const { Fire: F, WorldGen: G } = ctx, T = G.TERRAIN, bits = new Uint8Array(gen.cols * gen.rows);
+  for (let x = 0; x < gen.cols; x++) {
+    for (let y = 0; y < gen.rows; y++) {
+      const t = gen.terrain[x][y];
+      bits[x + y * gen.cols] = t === T.swamp ? F.SWAMP : t === T.jungle ? F.JUNGLE : t === T.lake ? F.LAKE : 0;
+    }
+  }
+  return bits;
+}
 
 // The bot's network for one set of ember tiers ({ fuel: n, beacon: n, hearth: n }) on one world:
 // six straight lines out from the capital, a beacon every Fire.HOP hexes while it still catches.
@@ -302,11 +316,14 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
   const fuel = Object.keys(F.FUELS).find((k) => F.FUELS[k].tier === 'F' + t.fuel);
   const H = F.HEARTHS['H' + t.hearth];
   const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
+  // the capital's village is full (80 people): a hearth that grows with its people is at its most
+  const out = H.out * (H.grow ? Math.min(H.grow, 80 / 32) : 1);
   const net = {
-    cols: gen.cols, rows: gen.rows, danger,
+    cols: gen.cols, rows: gen.rows, danger, kind: opts.kind,
     hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
     open: (x, y) => G.isPassable(gen.terrain[x][y]) && !G.isWater(gen.terrain[x][y]),
-    hearths: [{ at: gen.capital, out: H.out, share: H.share, cap: fuel ? F.FUELS[fuel].cap : Infinity }],
+    // no fuel cap: and no damp ground either
+    hearths: [{ at: gen.capital, out, share: H.share, cap: fuel ? F.FUELS[fuel].cap : Infinity, holds: fuel ? F.FUELS[fuel].holds || 0 : 0, wet: fuel ? F.FUELS[fuel].wet : 0 }],
     beacons: [], beacon: F.BEACONS['B' + t.beacon],
   };
   const open = (p) => p[0] >= 0 && p[1] >= 0 && p[0] < gen.cols && p[1] < gen.rows &&
@@ -334,12 +351,36 @@ function fireNetwork(ctx, gen, field, t, opts = {}) {
   }
   const r = F.compute(net);
   let lit = 0, far = 0;
+  const bands = [0, 0, 0, 0, 0], damp = { swamp: 0, jungle: 0 };
   for (let k = 0; k < r.lit.length; k++) {
     if (!r.lit[k]) continue;
     lit++;
-    far = Math.max(far, G.distance([k % gen.cols, Math.floor(k / gen.cols)], gen.capital));
+    const x = k % gen.cols, y = Math.floor(k / gen.cols);
+    far = Math.max(far, G.distance([x, y], gen.capital));
+    bands[Math.min(4, Math.floor(danger(x, y) / D.BAND_SIZE))]++;
+    if (gen.terrain[x][y] === G.TERRAIN.swamp) damp.swamp++;
+    if (gen.terrain[x][y] === G.TERRAIN.jungle) damp.jungle++;
   }
-  return { net, lines, lit, far, beacons: r.nodes.filter((n) => !n.hearth && n.s >= F.LIT_MIN).length, result: r, fuel };
+  return { net, lines, lit, far, bands, damp, beacons: r.nodes.filter((n) => !n.hearth && n.s >= F.LIT_MIN).length, result: r, fuel };
+}
+
+// Damp ground a fuel can light at all, wherever a line takes it: swamp and jungle hexes the
+// wanderer can walk to, within 60 hexes of the capital, under the fuel's cap (its `wet` cap on the
+// ground it holds). Six straight lines seldom meet a swamp, so this is what shows peat and resin.
+function dampReach(ctx, gen, field, kind, n) {
+  const { Fire: F, Danger: D } = ctx, out = { swamp: 0, jungle: 0 };
+  const fuel = Object.keys(F.FUELS).find((k) => F.FUELS[k].tier === 'F' + n);
+  if (!fuel) return out;
+  const f = F.FUELS[fuel], holds = f.holds || 0;
+  for (const p of F.around(gen.capital[0], gen.capital[1], 60)) {
+    const [x, y] = p;
+    if (x < 0 || y < 0 || x >= gen.cols || y >= gen.rows || !gen.reachable[x + y * gen.cols]) continue;
+    const b = kind[x + y * gen.cols] & 3;
+    if (!b) continue;
+    if (D.at(field, gen.cols, x, y, 'normal') > (b & holds ? f.wet : f.cap)) continue;
+    out[b & F.SWAMP ? 'swamp' : 'jungle']++;
+  }
+  return out;
 }
 
 export function simulateFire({ seeds, firstSeed = 1 }) {
@@ -348,7 +389,7 @@ export function simulateFire({ seeds, firstSeed = 1 }) {
   const { World: W, WorldGen: G, Danger: D, Fire: F } = ctx;
   const max = { fuel: 4, beacon: 4, hearth: 4 };
   const rows = [];
-  const add = (label, ladder, t) => rows.push({ label, ladder, t, lit: [], far: [], beacons: [] });
+  const add = (label, ladder, t) => rows.push({ label, ladder, t, lit: [], far: [], beacons: [], bands: [], damp: [], reach: [] });
   // each ladder on its own: the others at the top of the ember era, except that past tallow's
   // reach (danger 2.5) the fuel is what binds, so beacons and hearths are measured without a fuel cap
   for (const ladder of ['fuel', 'beacon', 'hearth']) {
@@ -358,26 +399,38 @@ export function simulateFire({ seeds, firstSeed = 1 }) {
   }
   for (const n of TIERS) add(`B${n} with tallow (F4, H4)`, 'beacon at F4', { ...max, beacon: +n });
   for (const n of TIERS) add(`F${n} B${n} H${n} together`, 'all', { fuel: +n, beacon: +n, hearth: +n });
+  // the flame era, from the top of the ember era: each ladder with the others at the flame's top (F8 B8 H8)
+  const top = { fuel: 8, beacon: 8, hearth: 8 };
+  for (const ladder of ['fuel', 'beacon', 'hearth']) {
+    const others = ladder === 'fuel' ? { ...top } : { ...top, fuel: 0 };
+    const rest = Object.keys(top).filter((l) => l !== ladder).map((l) => (others[l] ? ID[l] + others[l] : 'no fuel cap')).join(', ');
+    for (const n of FLAME) add(`${ID[ladder]}${n} (${rest})`, 'flame ' + ladder, { ...others, [ladder]: +n });
+  }
+  for (const n of FLAME) add(`F${n} B${n} H${n} together`, 'flame all', { fuel: +n, beacon: +n, hearth: +n });
   const cut = { checked: 0, fails: [] };
   const sustain = {};
   for (const k in F.FUELS) sustain[k] = { beaconsPerLine: [] };
   for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
-    const field = D.field(gen);
+    const field = D.field(gen), kind = kindsOf(ctx, gen);
     for (const row of rows) {
-      const n = fireNetwork(ctx, gen, field, row.t);
+      const n = fireNetwork(ctx, gen, field, row.t, { kind });
       row.lit.push(n.lit);
       row.far.push(n.far);
       row.beacons.push(n.beacons);
+      row.bands.push(n.bands);
+      row.damp.push(n.damp);
+      row.reach.push(dampReach(ctx, gen, field, kind, row.t.fuel));
     }
-    // lines sustained: how long one line burning each fuel is, at B4 H4
+    // lines sustained: how long one line burning each fuel is, at B4 H4 (B8 H8 for the flame fuels)
     for (const k in F.FUELS) {
-      const t = { fuel: F.tier(F.FUELS[k].tier).n, beacon: 4, hearth: 4 };
-      const n = fireNetwork(ctx, gen, field, t);
+      const flame = F.tier(F.FUELS[k].tier).n > 4;
+      const t = { fuel: F.tier(F.FUELS[k].tier).n, beacon: flame ? 8 : 4, hearth: flame ? 8 : 4 };
+      const n = fireNetwork(ctx, gen, field, t, { kind });
       sustain[k].beaconsPerLine.push(n.beacons / 6);
     }
     // a cut line: put out the first beacon of the longest line; everything past it goes dark
-    const full = fireNetwork(ctx, gen, field, max);
+    const full = fireNetwork(ctx, gen, field, max, { kind });
     const longest = full.lines.reduce((a, b) => (b.length > a.length ? b : a), []);
     if (longest.length >= 2) {
       cut.checked++;
@@ -401,15 +454,18 @@ const SUPPLY = 40;
 export function fireTable({ rows, cut, sustain, F }) {
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
   const lines = [];
-  lines.push('| tiers | hexes lit | furthest lit (hexes from the capital) | beacons lit |');
-  lines.push('|---|---|---|---|');
-  for (const r of rows) lines.push(`| ${r.label} | ${mean(r.lit).toFixed(0)} | ${mean(r.far).toFixed(1)} | ${mean(r.beacons).toFixed(1)} |`);
-  lines.push('');
-  lines.push(`| fuel (B4, H4) | fire per unit | danger cap | beacons per line | units / tick for the hearth | units / tick per line | lines kept by ${SUPPLY} units / tick |`);
+  lines.push('| tiers | hexes lit | furthest lit (hexes from the capital) | beacons lit | lit in band 0 / 1 / 2 | lit swamp / jungle | swamp / jungle its fuel can light |');
   lines.push('|---|---|---|---|---|---|---|');
-  const H = F.HEARTHS.H4;
+  for (const r of rows) {
+    const band = (b) => mean(r.bands.map((x) => x[b])).toFixed(0);
+    lines.push(`| ${r.label} | ${mean(r.lit).toFixed(0)} | ${mean(r.far).toFixed(1)} | ${mean(r.beacons).toFixed(1)} | ${band(0)} / ${band(1)} / ${band(2)} | ${mean(r.damp.map((d) => d.swamp)).toFixed(1)} / ${mean(r.damp.map((d) => d.jungle)).toFixed(1)} | ${r.t.fuel ? mean(r.reach.map((d) => d.swamp)).toFixed(0) + ' / ' + mean(r.reach.map((d) => d.jungle)).toFixed(0) : '-'} |`);
+  }
+  lines.push('');
+  lines.push(`| fuel (B4 H4; flame: B8 H8) | fire per unit | danger cap | beacons per line | units / tick for the hearth | units / tick per line | lines kept by ${SUPPLY} units / tick |`);
+  lines.push('|---|---|---|---|---|---|---|');
   for (const k in sustain) {
     const f = F.FUELS[k], per = f.fire * f.burn, b = mean(sustain[k].beaconsPerLine);
+    const H = F.tier(f.tier).n > 4 ? F.HEARTHS.H5 : F.HEARTHS.H4; // the hearth's own fire at its plainest
     const lineCost = b * F.UPKEEP / per;
     const kept = lineCost > 0 ? Math.max(0, Math.floor((SUPPLY - H.out / per) / lineCost)) : 0;
     lines.push(`| ${k} | ${per} | ${f.cap} | ${b.toFixed(1)} | ${(H.out / per).toFixed(1)} | ${lineCost.toFixed(1)} | ${kept} |`);
@@ -420,19 +476,39 @@ export function fireTable({ rows, cut, sustain, F }) {
 }
 
 // The guards CI holds the fire to: every ember tier lights more land than the one before it,
-// and a cut line goes dark past the cut.
+// and a cut line goes dark past the cut. The flame era opens the ground LADDERS.md says: charcoal
+// lights more of band 1, peat more swamp, resin more jungle, coal band 2; the watchtower carries
+// further; the lamp-post, ford light and marsh lantern (roads, lakes, swamps) never light less;
+// every flame hearth lights more than the one before it.
 export function checkFire({ rows, cut }) {
   const fails = [];
   const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
-  for (const ladder of ['fuel', 'beacon', 'hearth', 'all']) {
+  const more = (rs, i, what, of) => {
+    if (!(mean(rs[i][of]) > mean(rs[i - 1][of]))) fails.push(`${rs[i].label} lights ${mean(rs[i][of]).toFixed(1)} ${what}, not more than ${rs[i - 1].label} (${mean(rs[i - 1][of]).toFixed(1)})`);
+  };
+  for (const ladder of ['fuel', 'beacon', 'hearth', 'all', 'flame fuel', 'flame beacon', 'flame hearth', 'flame all']) {
     const rs = rows.filter((r) => r.ladder === ladder);
     if (!rs.length) fails.push(`no rows for ${ladder}`);
     for (let i = 1; i < rs.length; i++) {
-      if (!(mean(rs[i].lit) > mean(rs[i - 1].lit))) {
-        fails.push(`${rs[i].label} lights ${mean(rs[i].lit).toFixed(1)} hexes, not more than ${rs[i - 1].label} (${mean(rs[i - 1].lit).toFixed(1)})`);
-      }
+      // roads, lakes and swamps are what B6-B8 add: a straight line may meet none of them
+      if (ladder === 'flame beacon' && i > 1) {
+        if (mean(rs[i].lit) < mean(rs[i - 1].lit)) fails.push(`${rs[i].label} lights less than ${rs[i - 1].label}`);
+      } else more(rs, i, 'hexes', 'lit');
     }
   }
+  const fuel = rows.filter((r) => r.ladder === 'flame fuel'), at = (n) => fuel.find((r) => r.t.fuel === n);
+  for (const r of fuel) {
+    r.band1 = r.bands.map((b) => b[1]);
+    r.band2 = r.bands.map((b) => b[2]);
+    r.swamp = r.reach.map((d) => d.swamp);
+    r.jungle = r.reach.map((d) => d.jungle);
+  }
+  const step = (n, of, what) => more([at(n - 1), at(n)], 1, what, of);
+  step(5, 'band1', 'band 1 hexes');
+  step(6, 'swamp', 'swamp hexes in reach');
+  step(7, 'jungle', 'jungle hexes in reach');
+  step(8, 'band2', 'band 2 hexes');
+  if (mean(at(7).band2) > 0.05 * mean(at(8).band2)) fails.push(`resin (F7) already lights ${mean(at(7).band2).toFixed(1)} band 2 hexes; coal (F8) is what opens band 2`);
   if (!cut.checked) fails.push('no line long enough to cut');
   fails.push(...cut.fails);
   return fails;
@@ -488,7 +564,7 @@ function foundCities(ctx, gen, field, home, max) {
   const cost = C.SETTLERS.stores;
   const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
   const H = F.HEARTHS.H4, cap = gen.capital, cols = gen.cols;
-  const net = { cols, rows: gen.rows, danger, hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills,
+  const net = { cols, rows: gen.rows, danger, hills: (x, y) => gen.terrain[x][y] === G.TERRAIN.hills, kind: kindsOf(ctx, gen),
     hearths: [{ at: cap, out: H.out, share: true, cap: F.FUELS.tallow.cap }], beacons: [], beacon: F.BEACONS.B4 };
   const cities = [{ at: cap, districts: { [cap.join(',')]: Di.HEARTH } }];
   const taken = (p) => cities.some((c) => Object.keys(c.districts).some((k) => F.distance(k.split(',').map(Number), p) <= 1));
@@ -553,19 +629,25 @@ function foundCities(ctx, gen, field, home, max) {
   return out;
 }
 
+// The flame era's first tiers for a governed city (the ones a city's own land can reach: charcoal,
+// the watchtower, the chimney hearth to the bread oven); its collier works the stranger's way
+const FLAME_CITY = ['F5', 'B5', 'H5', 'H6', 'H7'];
+
 // One founded city under a focus for GOVERN_TICKS fire ticks; returns how its hearth fared.
-function governCity(ctx, store, gen, at, focus, rand) {
+// flame: with FLAME_CITY's tiers too, a burning pits district, and the bread oven's hearth
+function governCity(ctx, store, gen, at, focus, rand, flame = false) {
   const { Fire: F, District: Di, City: C, Governor: Gv } = ctx;
   const id = 'sim', districts = { [at.join(',')]: Di.HEARTH };
   // the districts its ground fits, next to the hearth quarter: woods, hunting grounds, huts, one each
-  for (const type of ['woods', 'hunting grounds', 'huts']) {
+  for (const type of ['woods', 'hunting grounds', 'huts'].concat(flame ? ['burning pits'] : [])) {
     const p = Di.neighbours(at).find((q) => !districts[q.join(',')] && Di.TYPES[type].fits(groundOf(ctx, gen, q, districts)));
     if (p) districts[p.join(',')] = type;
   }
   const city = { citizens: C.SETTLERS.people, stores: { ...C.SETTLERS.stores }, buildings: {}, workers: {}, hearth: { out: 0, stored: 0 } };
   const tiers = {};
-  ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].forEach((k) => { tiers[k] = true; });
-  const H = F.HEARTHS.H4;
+  ['F1', 'F2', 'F3', 'F4', 'B1', 'B2', 'B3', 'B4', 'H1', 'H2', 'H3', 'H4'].concat(flame ? FLAME_CITY : []).forEach((k) => { tiers[k] = true; });
+  const hid = flame ? 'H7' : 'H4', H = F.HEARTHS[hid];
+  store['game.network.story.charcoalWay'] = flame ? 'their' : undefined;
   const hexesOf = (type) => Object.keys(districts).filter((k) => districts[k] === type).map((k) => k.split(',').map(Number));
   const max = (b) => (C.Buildings[b].later || (C.Buildings[b].needs && !tiers[C.Buildings[b].needs]) ? 0 : C.Buildings[b].maximum * hexesOf(C.Buildings[b].district).length);
   const slots = (j) => {
@@ -575,6 +657,8 @@ function governCity(ctx, store, gen, at, focus, rand) {
     return hexesOf(inc.district).reduce((s, p) => s + Di.TYPES[inc.district].jobs[j](groundOf(ctx, gen, p, districts)), 0);
   };
   const scale = () => Math.min(1, city.citizens / 32); // Network.HEARTH_PEOPLE
+  // Network.hearthOut: from the bread oven, the fire grows with the people
+  const outScale = () => F.foundedOut(H, city.citizens, 32) / H.out; // Network.hearthOut
   const share = (j) => {
     const inc = C._INCOME[j], fn = inc.raw ? Di.TYPES[inc.district].jobs[j] : null;
     let total = 0, weight = 0;
@@ -585,7 +669,7 @@ function governCity(ctx, store, gen, at, focus, rand) {
       weight += w;
     }
     if (!weight) return 1;
-    const full = H.out * scale();
+    const full = H.out * outScale();
     return total / weight * (Di.DARK_FLOOR + (1 - Di.DARK_FLOOR) * (full > 0 ? Math.min(1, city.hearth.out / full) : 0));
   };
   const open = () => {
@@ -594,19 +678,20 @@ function governCity(ctx, store, gen, at, focus, rand) {
     for (const j in C._INCOME) if (C._INCOME[j].raw) jobs.add(j);
     return [...jobs].filter((j) => slots(j) > 0);
   };
-  const res = { focus, cold: 0, lowest: Infinity, built: 0, citizens: 0 };
+  const res = { focus: flame ? focus + ' (flame: ' + FLAME_CITY.join(' ') + ')' : focus, cold: 0, lowest: Infinity, built: 0, citizens: 0 };
   let nextPeople = 3 + Math.floor(rand.next() * 15);
   for (let tick = 0; tick < GOVERN_TICKS; tick++) {
     // the hearth
-    const need = H.out * scale();
-    const r = F.burnAll('H4', tiers, (k) => city.stores[k] || 0, need, city.hearth.stored, H.store * scale());
+    const need = H.out * outScale();
+    const r = F.burnAll(hid, tiers, (k) => city.stores[k] || 0, need, city.hearth.stored, H.store * scale());
     for (const k in r.burn) city.stores[k] -= r.burn[k];
     city.hearth = { out: need > 0 ? r.out * need / H.out : 0, stored: r.stored };
     if (!(city.hearth.out > 0)) res.cold++;
     // the governor
-    const view = { focus, citizens: city.citizens, jobs: {}, stores: { ...city.stores }, fuels: {}, builds: [], need, cold: !(city.hearth.out > 0) };
+    const view = { focus, citizens: city.citizens, jobs: {}, stores: { ...city.stores }, fuels: {}, builds: [], need, cold: !(city.hearth.out > 0),
+      room: (city.buildings.house || 0) * C.Buildings.house.room };
     for (const j of open()) {
-      const inc = C._INCOME[j], s = share(j), per = {};
+      const inc = C.income(j), s = share(j), per = {};
       for (const k in inc.stores) per[k] = inc.stores[k] * s * 10 / inc.delay;
       view.jobs[j] = { slots: slots(j), stores: per };
     }
@@ -614,7 +699,7 @@ function governCity(ctx, store, gen, at, focus, rand) {
     for (const b in C.Buildings) {
       if ((city.buildings[b] || 0) >= max(b)) continue;
       store[`game.cities["${id}"].buildings["${b}"]`] = city.buildings[b] || 0;
-      view.builds.push({ key: b, cost: C.Buildings[b].cost(id) });
+      view.builds.push({ key: b, cost: C.Buildings[b].cost(id), have: city.buildings[b] || 0 });
     }
     const plan = Gv.plan(view);
     city.workers = plan.workers;
@@ -628,7 +713,7 @@ function governCity(ctx, store, gen, at, focus, rand) {
     for (const j in city.workers) {
       const n = city.workers[j];
       if (!n) continue;
-      const inc = C._INCOME[j], delay = Math.max(1, Math.round(inc.delay / Math.max(0.1, share(j))));
+      const inc = C.income(j), delay = Math.max(1, Math.round(inc.delay / Math.max(0.1, share(j))));
       const per = 10 / delay, add = {};
       for (const k in inc.stores) add[k] = inc.stores[k] * n * per;
       if (Object.keys(add).every((k) => (city.stores[k] || 0) + add[k] >= 0)) for (const k in add) city.stores[k] = (city.stores[k] || 0) + add[k];
@@ -665,6 +750,7 @@ export function simulateCities({ seeds, firstSeed = 1 }) {
     founding.push({ seed, cities });
     if (cities[0]) {
       for (const focus of ctx.Governor.FOCUSES) governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, focus, rand) });
+      governors.push({ seed, ...governCity(ctx, store, gen, cities[0].at, 'fire', rand, true) });
     }
   }
   return { founding, governors, seeds };
@@ -699,7 +785,7 @@ export function citiesTable({ founding, governors, seeds }) {
 
 // The guards CI holds the cities to (CITY.md: an ember-era empire holds 2-3 small cities): every
 // seed founds a 2nd city, 15-25 minutes after the town opens (median); most seeds hold 2-3 cities when
-// the ember era ends; no focused city's hearth goes cold in two hours.
+// the ember era ends; no focused city's hearth goes cold in two hours; a flame-era fire city reaches 20 people.
 export function checkCities({ founding, governors, seeds }) {
   const fails = [];
   const second = founding.filter((f) => f.cities[0]);
@@ -713,6 +799,10 @@ export function checkCities({ founding, governors, seeds }) {
     if (g.cold > 0) fails.push(`seed ${g.seed}: a ${g.focus} city's hearth was cold for ${g.cold} ticks`);
   }
   if (!governors.length) fails.push('no governed city');
+  // a flame-era fire city grows: its big hearth doesn't eat the wood its houses need (Fire.foundedOut)
+  const flame = governors.filter((g) => g.focus.startsWith('fire (flame'));
+  const fp = flame.length ? median(flame.map((g) => g.citizens)) : 0;
+  if (!(fp >= 20)) fails.push(`the flame-era fire city has ${fp} people after 2 h (median), want 20 or more`);
   return fails;
 }
 

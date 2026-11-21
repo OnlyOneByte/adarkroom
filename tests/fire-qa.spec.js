@@ -297,23 +297,23 @@ test('story: the wanderer sent off asks again; the cairn left alone can be studi
   expect(errors).toEqual([]);
 });
 
-test('a v1.3 save with a world loads through every step to v2.6, with a fire network and no errors', async ({ page }) => {
+test('a v1.3 save with a world loads through every step to v2.7, with a fire network and no errors', async ({ page }) => {
   const save = load('v1.3-world');
   await freezeClock(page); // no income ticks before the stores are read
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.6);
+  expect(s.version).toBe(2.7);
   expect(s.game.network.tiers.F1).toBe(true);
   for (const id in s.game.cities || {}) expect(s.game.cities[id].happiness).toBeUndefined();
   expect(s.stores).toEqual(save.stores);
   expect(errors).toEqual([]);
 });
 
-test('a v2.0 town save loads to v2.6: happiness gone, the town keeps its people and buildings', async ({ page }) => {
+test('a v2.0 town save loads to v2.7: happiness gone, the town keeps its people and buildings', async ({ page }) => {
   const save = load('v2.0-town');
   const errors = await openGame(page, { save });
   const s = await getState(page);
-  expect(s.version).toBe(2.6);
+  expect(s.version).toBe(2.7);
   for (const id in save.game.cities) {
     expect(s.game.cities[id].happiness).toBeUndefined();
     expect(s.game.cities[id].population).toEqual(save.game.cities[id].population);
