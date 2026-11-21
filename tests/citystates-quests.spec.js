@@ -9,7 +9,6 @@ async function questFor(page, t) {
   const c = await page.evaluate((t) => {
     const c = CityStates.list().find((x) => x.t === t);
     for (const k in CityStates.TEMPERAMENTS) $SM.set('game.citystates.sighted["' + k + '"]', true, true); // no first sightings
-    $SM.set('game.network.story.harbourSeen', true, true); // (the drowned harbour is seen from the tar pits)
     $SM.set('game.citystates.cs["' + c.id + '"].met', true);
     $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true);
     CityStates.tell(c);
