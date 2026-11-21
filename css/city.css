@@ -3,6 +3,11 @@ div#cityPanel {
 	min-height: 1000px;
 }
 
+/* the page grows to fit the town panel while it shows (Engine.travelTo) */
+body.tallTown div#content, body.tallTown div#outerSlider > div#main {
+	height: 1000px;
+}
+
 div#cityBuildBtns {
 	position: absolute;
 	top: 0px;
@@ -111,4 +116,13 @@ div#cityStores {
 	margin-top: 8px;
 	border-top: 1px dotted #999;
 	padding-top: 4px;
+}
+
+div#landSettlers {
+	font-size: 14px;
+	margin-bottom: 6px;
+}
+
+div#landSettlers .button {
+	margin: 4px 0px 0px 0px;
 }

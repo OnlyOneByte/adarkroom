@@ -493,6 +493,11 @@ var World = {
       }
     }
 
+    // settlers walking with the wanderer (they carry their own supplies)
+    var settlers = World.hex && typeof Network != 'undefined' && Network.settlers();
+    $('div#supply_settlers', supplies).remove();
+    if(settlers && settlers.out) World.createItemDiv('settlers', settlers.people).appendTo(supplies);
+
     // Update label
     var t = _('pockets');
     if($SM.get('stores.rucksack', true) > 0) {
@@ -1376,6 +1381,8 @@ var World = {
     if(site && WorldGen.isTerrain(c)) {
       // a site shows its own glyph across all its hexes; the wasteland's towns keep theirs
       var a = map[site.anchor[0]][site.anchor[1]].charAt(0);
+      // a resettled site is a city of ours now: its other hexes are plain ground again
+      if(a === World.TILE.VILLAGE) return [c.charAt(0), false];
       return [WorldGen.isTerrain(a) ? WorldGen.SITES[site.kind].glyph : a, false];
     }
     return [c.charAt(0), false];

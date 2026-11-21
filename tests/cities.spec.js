@@ -150,6 +150,26 @@ test('settlers home without reaching the site wait for the next trek; called off
   expect(errors).toEqual([]);
 });
 
+test('a site gone dark while the settlers walk: they will not stay, and go home with what they carried', async ({ page }) => {
+  const errors = await townToFound(page);
+  const r = await page.evaluate(() => {
+    const at = blankSite();
+    Network.sendSettlers('capital', at[0], at[1]);
+    const before = { people: $SM.get('game.population'), wood: $SM.get('stores.wood') };
+    embark();
+    // the hearth goes cold behind them
+    World.hex.fire.lit.fill(0);
+    Network.refresh = () => {};
+    stepOnto(at);
+    return { before, people: $SM.get('game.population'), wood: $SM.get('stores.wood'), city: $SM.get('game.cities.city2') || null, settlers: Network.settlers() };
+  });
+  expect(r.city).toBeNull();
+  expect(r.settlers).toBeNull();
+  expect(r.people).toBe(r.before.people + 8);
+  expect(r.wood).toBe(r.before.wood + 40);
+  expect(errors).toEqual([]);
+});
+
 test('a lit fallen city is resettled: old districts by its size, and the first one starts the charcoal stranger', async ({ page }) => {
   const errors = await townToFound(page);
   const r = await page.evaluate(() => {

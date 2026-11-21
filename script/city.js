@@ -555,7 +555,8 @@ var City = {
 				$('<div>').addClass('row_key').text(City.Buildings[k].name).appendTo(row);
 				$('<div>').addClass('row_val').appendTo(row);
 				$('<div>').addClass('clear').appendTo(row);
-				row.appendTo(town);
+				if ($('#cityStores').length) row.insertBefore('#cityStores');
+				else row.appendTo(town);
 			}
 			$('.row_val', row).text(num);
 		}
@@ -721,7 +722,10 @@ var City = {
 		City.updateTown();
 		City.updateWorkersView();
 		City.updateBuildButtons();
-		if (Engine.activeModule == City) Engine.moveStoresView($('#town'));
+		if (Engine.activeModule == City) {
+			$('#storesContainer').css('visibility', cityId == City.CAPITAL ? '' : 'hidden');
+			Engine.moveStoresView($('#town'));
+		}
 		if (typeof Network != 'undefined') Network.focusCity(cityId);
 	},
 
