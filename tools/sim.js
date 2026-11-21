@@ -692,7 +692,7 @@ function governCity(ctx, store, gen, at, focus, rand, flame = false) {
     for (const b in C.Buildings) {
       if ((city.buildings[b] || 0) >= max(b)) continue;
       store[`game.cities["${id}"].buildings["${b}"]`] = city.buildings[b] || 0;
-      view.builds.push({ key: b, cost: C.Buildings[b].cost(id) });
+      view.builds.push({ key: b, cost: C.Buildings[b].cost(id), have: city.buildings[b] || 0 });
     }
     const plan = Gv.plan(view);
     city.workers = plan.workers;
