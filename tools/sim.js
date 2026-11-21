@@ -591,10 +591,9 @@ function governCity(ctx, store, gen, at, focus, rand) {
   let nextPeople = 3 + Math.floor(rand.next() * 15);
   for (let tick = 0; tick < GOVERN_TICKS; tick++) {
     // the hearth
-    const fuel = F.pickFuel(tiers, (k) => city.stores[k] || 0);
     const need = H.out * scale();
-    const r = F.burn('H4', fuel, need, fuel ? city.stores[fuel] : 0, city.hearth.stored, H.store * scale());
-    if (r.burn) city.stores[fuel] -= r.burn;
+    const r = F.burnAll('H4', tiers, (k) => city.stores[k] || 0, need, city.hearth.stored, H.store * scale());
+    for (const k in r.burn) city.stores[k] -= r.burn[k];
     city.hearth = { out: need > 0 ? r.out * need / H.out : 0, stored: r.stored };
     if (!(city.hearth.out > 0)) res.cold++;
     // the governor

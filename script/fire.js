@@ -83,31 +83,29 @@ var Fire = {
 		return best;
 	},
 
-	// the fuel a hearth burns: the strongest unlocked one it has in stock
-	pickFuel: function (unlocked, have) {
-		var pick = null;
-		for (var k in Fire.FUELS) {
-			var f = Fire.FUELS[k];
-			if (!unlocked[f.tier] || !(have(k) > 0)) continue;
-			if (!pick || Fire.tier(f.tier).n > Fire.tier(Fire.FUELS[pick].tier).n) pick = k;
-		}
-		return pick;
-	},
-
 	/*
-	 * One fire tick of a hearth. need = fire wanted (its output plus the upkeep of the beacons
-	 * it fed last tick); stock = units of its fuel; stored = fire held over (H4 and up);
+	 * One fire tick of a hearth, over every unlocked fuel it has in stock: the strongest first,
+	 * then the next tops up what that left short, until the need (and the store) is met.
+	 * need = fire wanted (its output plus the upkeep of the beacons it fed last tick);
+	 * have(fuel) = units in stock; stored = fire held over (H4 and up);
 	 * room = fire it may hold over, the tier's store by default (a small city's hearth holds less).
-	 * Returns { burn: units used, out: fire made, stored }.
+	 * Returns { burn: { fuel: units used }, fuel: the fuel whose reach its lines get (the
+	 * strongest burned), out: fire made, stored }.
 	 */
-	burn: function (hearthId, fuel, need, stock, stored, room) {
-		var h = Fire.HEARTHS[hearthId], f = fuel ? Fire.FUELS[fuel] : null;
-		var perUnit = f ? f.fire * f.burn : 0, store = typeof room == 'number' ? room : h.store;
-		var want = need + Math.max(0, store - stored);
-		var burn = perUnit ? Math.min(stock, Math.ceil(want / perUnit)) : 0;
-		var fire = burn * perUnit + stored;
-		var used = Math.min(fire, need);
-		return { burn: burn, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
+	burnAll: function (hearthId, unlocked, have, need, stored, room) {
+		var h = Fire.HEARTHS[hearthId], store = typeof room == 'number' ? room : h.store;
+		var want = need + Math.max(0, store - stored), made = 0, burn = {}, fuel = null;
+		Object.keys(Fire.FUELS).filter(function (k) { return unlocked[Fire.FUELS[k].tier] && have(k) > 0; })
+			.sort(function (a, b) { return Fire.tier(Fire.FUELS[b].tier).n - Fire.tier(Fire.FUELS[a].tier).n; })
+			.forEach(function (k) {
+				if (made >= want) return;
+				var f = Fire.FUELS[k], per = f.fire * f.burn, n = Math.min(have(k), Math.ceil((want - made) / per));
+				burn[k] = n;
+				made += n * per;
+				if (!fuel) fuel = k;
+			});
+		var fire = made + stored, used = Math.min(fire, need);
+		return { burn: burn, fuel: fuel, out: need > 0 ? h.out * used / need : 0, stored: Math.min(store, fire - used) };
 	},
 
 	// offset (odd rows shifted right) <-> cube coordinates
