@@ -322,6 +322,12 @@ var World = {
     return i < 0 ? null : World.hex.gen.sites[i];
   },
 
+  // a site the map doesn't show yet: the garrison of the deep mines (it stands on the old wasteland's
+  // edge, maybe on land seen in the prologue) until "smoke in the hills" marks it
+  siteHidden: function(site) {
+    return !!site && !!site.garrison && typeof Network != 'undefined' && !Network.flag('garrisonMarked');
+  },
+
   formationAt: function(x, y) {
     var i = World.hex.gen.formationAt[x + y * World.hex.gen.cols];
     return i < 0 ? null : World.hex.gen.formations[i];
@@ -1376,7 +1382,7 @@ var World = {
     if(cs) return under ? cs + ',&nbsp;' + fire : cs;
     if(c == World.TILE.VILLAGE) return _('the&nbsp;capital');
     var site = World.siteAt(x, y);
-    var mark = World.LANDMARKS[c.charAt(0)] ? World.LANDMARKS[c.charAt(0)].label : (site ? WorldGen.SITES[site.kind].label : null);
+    var mark = World.LANDMARKS[c.charAt(0)] ? World.LANDMARKS[c.charAt(0)].label : (site && !World.siteHidden(site) ? WorldGen.SITES[site.kind].label : null);
     if(mark) return under ? mark + ',&nbsp;' + fire : mark;
     if(World.hex.passes[x + ',' + y]) return WorldGen.PASS_LABEL;
     var f = World.formationAt(x, y);
@@ -1409,7 +1415,7 @@ var World = {
     if(typeof Network != 'undefined' && Network.isCairn(x, y)) return [Network.CAIRN_GLYPH, true];
     if(typeof Network != 'undefined' && Network.isPits(x, y)) return [Network.PITS_GLYPH, true];
     var site = World.siteAt(x, y);
-    if(site && WorldGen.isTerrain(c)) {
+    if(site && WorldGen.isTerrain(c) && !World.siteHidden(site)) {
       // a site shows its own glyph across all its hexes; the wasteland's towns keep theirs
       var a = map[site.anchor[0]][site.anchor[1]].charAt(0);
       // a resettled site is a city of ours now: its other hexes are plain ground again
@@ -1536,7 +1542,8 @@ var World = {
       ctx.setLineDash([]);
     };
     edges(function(x, y) { return gen.formationAt[x + y * gen.cols]; }, false);
-    edges(function(x, y) { return gen.siteAt[x + y * gen.cols]; }, true);
+    var hidden = gen.garrison >= 0 && World.siteHidden(gen.sites[gen.garrison]) ? gen.garrison : -2;
+    edges(function(x, y) { var i = gen.siteAt[x + y * gen.cols]; return i === hidden ? -1 : i; }, true);
     // a city's districts: its shape on the map
     if(typeof Network != 'undefined') edges(function(x, y) { return Network.cityIndexAt(x, y); }, true);
 
