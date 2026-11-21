@@ -2,7 +2,7 @@
   var Engine = window.Engine = {
 
     SITE_URL: encodeURIComponent("http://adarkroom.doublespeakgames.com"),
-    VERSION: 2.8,
+    VERSION: 2.9,
     MAX_STORE: 99999999999999,
     SAVE_DISPLAY: 30 * 1000,
     GAME_OVER: false,

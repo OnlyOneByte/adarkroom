@@ -10,7 +10,7 @@ test('fresh game loads without errors and shows the room', async ({ page }) => {
   await expect(page.locator('#location_room')).toBeVisible();
 
   const state = await getState(page);
-  expect(state.version).toBe(2.8);
+  expect(state.version).toBe(2.9);
   expect(state.game.fire.value).toBe(0);
   expect(errors).toEqual([]);
 });
