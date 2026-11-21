@@ -17,6 +17,8 @@
  * Then the city-states (simulateCityStates, below): the placement's counts and guarantees, and how long
  * the nearest herders take to win by influence alone once a beacon line touches them.
  *
+ * Then the armies (tools/sim-armies.js): a city-state taken by force, waited out, and a storm lost.
+ *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, 3 hexes apart, until the next beacon would stay dark, for each
  * ember tier of each ladder; it reports the land lit and how far out, and how many lines a
@@ -31,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { simulateArmies, armiesTable, checkArmies } from './sim-armies.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -44,7 +47,7 @@ const KITS = [
 ];
 const TREKS_PER_KIT = 10;
 
-function loadGame(rand) {
+export function loadGame(rand) {
   const store = {};
   const ctx = {
     _: (s, ...a) => s.replace(/\{(\d)\}/g, (m, i) => a[i]),
@@ -61,7 +64,7 @@ function loadGame(rand) {
   vm.createContext(ctx);
   // the context's own Math, so the encounter tables' Math.random is the sim's seeded one
   vm.runInContext('Math.random = __rand;', Object.assign(ctx, { __rand: () => rand.next() }));
-  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js']) {
+  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext('World.setupLandmarks();', ctx);
@@ -69,7 +72,7 @@ function loadGame(rand) {
 }
 
 // a reseedable stream shared by the bot and the game's tables
-function seeded() {
+export function seeded() {
   let a = 1;
   return {
     seed(s) { a = s >>> 0; },
@@ -958,9 +961,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const states = simulateCityStates({ seeds });
   console.log(`\nCity-states, ${seeds} seeds, normal difficulty, a beacon line at the ember top (F4 B4 H4)\n`);
   console.log(cityStatesTable(states));
+  const armies = simulateArmies({ seeds });
+  console.log(`\nArmies and sieges, ${seeds} seeds, normal difficulty, a beacon line at the ember top (F4 B4 H4)\n`);
+  console.log(armiesTable(armies));
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states));
+    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);
