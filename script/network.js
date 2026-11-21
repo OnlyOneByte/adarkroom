@@ -593,9 +593,9 @@ var Network = {
 		var s = Network.settlers();
 		if (s && s.to[0] === x && s.to[1] === y) return _('where&nbsp;the&nbsp;settlers&nbsp;are&nbsp;bound');
 		var d = Network.districtAt(x, y);
-		// a founded city's centre is the city itself
+		// a city's centre is the city itself (home: World.hexLabel names the capital)
 		var ci = Network.cityIndexAt(x, y), city = ci >= 0 ? Network.cities()[ci] : null;
-		if (d === District.HEARTH && city.id != City.CAPITAL) d = city.city.name;
+		if (d === District.HEARTH) d = city.id != City.CAPITAL ? city.city.name : null;
 		else if (d) d = District.TYPES[d].name;
 		if (d) return d.replace(/ /g, '&nbsp;');
 		if (Network.isCairn(x, y)) return _('an&nbsp;old&nbsp;cairn');
