@@ -354,7 +354,7 @@ var Network = {
 	/*
 	 * Placing things on the land
 	 */
-	// a beacon goes on seen, open dry ground, up to Fire.HOP hexes from a lit hearth or beacon
+	// a beacon goes on seen, open dry ground, up to Fire.HOP hexes from a hearth or a lit beacon
 	canBeacon: function (x, y) {
 		if (!World.hex || !Network.beaconTier()) return false;
 		var gen = World.hex.gen;
@@ -362,9 +362,10 @@ var Network = {
 		if (!WorldGen.isPassable(World.hex.map[x][y]) || World.hex.map[x][y] === WorldGen.TERRAIN.ocean) return false;
 		if (WorldGen.isWater(gen.terrain[x][y])) return false; // crossing water is for later beacons (B7, B11)
 		if (Network.beaconAt(x, y) || Network.districtAt(x, y) || Network.isCairn(x, y)) return false;
-		// a lit node: a dark beacon is no anchor to build out from
+		// a hearth, lit or cold (a cold one must not lock the player out), or a lit beacon:
+		// a dark beacon is no anchor to build out from
 		return !!World.hex.fire && World.hex.fire.nodes.some(function (n) {
-			return n.s >= Fire.LIT_MIN && Fire.distance(n.at, [x, y]) <= Fire.HOP;
+			return (n.hearth || n.s >= Fire.LIT_MIN) && Fire.distance(n.at, [x, y]) <= Fire.HOP;
 		});
 	},
 
