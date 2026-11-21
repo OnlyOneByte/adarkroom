@@ -306,16 +306,17 @@ var Network = {
 	// then the focused cities govern themselves.
 	tick: function () {
 		if ($SM.get('features.location.city')) {
-			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers();
+			var hid = Network.hearthTier(), H = Fire.HEARTHS[hid], tiers = Network.tiers(), home = false;
+			// every write quiet; one update (and one save) for the whole tick below (perf: ticks grow with cities)
 			Network.cities().forEach(function (c) {
 				var h = c.city.hearth || {};
 				var need = Network.hearthNeed(c.id);
 				var r = Fire.burnAll(hid, tiers, function (k) { return $SM.get(City.storePath(c.id, k), true); },
 					need, h.stored || 0, H.store * Network.hearthScale(c.id));
-				// quiet writes for the founded cities, one update for them all below (perf: ticks grow with cities)
-				var quiet = c.id != City.CAPITAL;
 				for (var k in r.burn) {
-					if (r.burn[k]) $SM.add(City.storePath(c.id, k), -r.burn[k], quiet);
+					if (!r.burn[k]) continue;
+					$SM.add(City.storePath(c.id, k), -r.burn[k], true);
+					if (c.id == City.CAPITAL) home = true;
 				}
 				// the fire made, as a share of what it wanted
 				var out = need > 0 ? r.out * need / H.out : 0;
@@ -335,6 +336,7 @@ var Network = {
 				});
 			}
 			Network.cities().forEach(function (c) { if (c.city.focus) City.govern(c.id); });
+			if (home) $SM.fireUpdate('stores'); // the capital's stores are the top-level ones
 			$SM.fireUpdate('game.cities', true); // the town panel and every city's income, once
 			Network.checkStory();
 		}
