@@ -760,6 +760,41 @@ function lineToward(ctx, gen, field, cs, target, list) {
   return { beacons: net.beacons.length, G: G0, S, rate, pull, minutes, distance: G.distance(target.at, gen.capital) };
 }
 
+// The quests (find, clear, meet, fetch) on one world: where each is, how far, whether the wanderer can walk
+// there, and where the drifters wander in 500 trek steps (a hex every 50).
+function questsOf(ctx, gen, danger, list) {
+  const { CityStates: CS, WorldGen: G, Danger: D } = ctx;
+  const out = {};
+  for (const c of list) {
+    const q = CS.questType(c.t);
+    if (!q) continue;
+    if (q.type === 'meet') {
+      let at = c.at.slice(), moves = 0, open = true;
+      const me = { ...c, at, land: [at] };
+      const others = list.filter((o) => o !== c);
+      for (let step = 1; step <= 500; step++) {
+        if (step % CS.QUEST.DRIFT_STEPS) continue;
+        const to = CS.driftTo(gen, me, others.concat([me]), (step * 0.618) % 1);
+        if (!to) continue;
+        moves++;
+        me.at = to;
+        me.land = [to];
+        open = open && !!gen.reachable[to[0] + to[1] * gen.cols];
+      }
+      out[q.type] = { ok: moves > 0 && open, moves, d: G.distance(me.at, c.at) };
+      continue;
+    }
+    const s = CS.questSite(gen, danger, c, list);
+    if (!s) { out[q.type] = { ok: false }; continue; }
+    const d = G.distance(s.at, c.at);
+    const win = { find: CS.QUEST.FIND, clear: CS.QUEST.CLEAR, fetch: CS.QUEST.FETCH }[q.type];
+    const r = { ok: !!gen.reachable[s.at[0] + s.at[1] * gen.cols], d, inWindow: d >= win[0] && d <= win[1] };
+    if (q.type === 'fetch') r.bandUp = D.band(danger(s.at[0], s.at[1])) >= c.band + 1;
+    out[q.type] = r;
+  }
+  return out;
+}
+
 export function simulateCityStates({ seeds, firstSeed = 1 }) {
   const rand = seeded();
   const { ctx } = loadGame(rand);
@@ -784,6 +819,7 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
       herdersInReach: list.filter((c) => c.t === 'herders' && reach(c)).length,
       pottersInReach: list.filter((c) => c.t === 'potters' && reach(c)).length,
       herders: lineToward(ctx, gen, field, CS, nearest('herders'), list),
+      quests: questsOf(ctx, gen, danger, list),
       potters: lineToward(ctx, gen, field, CS, nearest('potters'), list),
     });
   }
@@ -817,6 +853,11 @@ export function cityStatesTable({ out, seeds, feel, gift, unvalued, CS }) {
     lines.push(`| nearest ${k} | ${r.length}/${seeds} | ${med(r.map((x) => x.distance)) ?? '-'} | ${med(r.map((x) => x.beacons)) ?? '-'} | ${fmt(med(r.map((x) => x.G)))} | ${med(r.map((x) => x.S)) ?? '-'} | ${fmt(med(r.map((x) => x.rate)), 2)} | ${fmt(med(r.map((x) => x.pull)), 2)} | ${fmt(med(m))} / ${fmt(m.length ? Math.max(...m) : null)} |`);
   }
   lines.push('');
+  const qs = (k, f) => out.filter((o) => o.quests[k] && f(o.quests[k])).length;
+  lines.push(`quests, of ${seeds} seeds: find placed ${qs('find', (q) => q.ok && q.inWindow)} (4-8 hexes); clear ${qs('clear', (q) => q.ok && q.inWindow)} (2-4); ` +
+    `fetch ${qs('fetch', (q) => q.ok)}, inside 6-20 hexes ${qs('fetch', (q) => q.inWindow)}, a band above them ${qs('fetch', (q) => q.bandUp)}; ` +
+    `the drifters moved in 500 steps ${qs('meet', (q) => q.ok)} (median ${median(out.map((o) => o.quests.meet.moves))} hexes)`);
+  lines.push('');
   lines.push(`the design's example (herders, S=2, touched by a G=4 line) at RATE ${CS.RATE}: ${feel.toFixed(2)} / min, ~${(100 / feel).toFixed(0)} min; 50 leather to them: +${gift.toFixed(1)}; goods with no gift value: ${unvalued.length ? unvalued.join(', ') : 'none'}`);
   return lines.join('\n');
 }
@@ -829,6 +870,11 @@ export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
     if (o.n !== 64) fails.push(`seed ${o.seed}: ${o.n} city-states placed, want 64`);
     for (const t in CS.TEMPERAMENTS) if (CS.TEMPERAMENTS[t].kind === 'story' && o.by[t] !== 1) fails.push(`seed ${o.seed}: ${o.by[t] || 0} ${t}`);
     if (o.herdersInReach < 2) fails.push(`seed ${o.seed}: ${o.herdersInReach} herders inside the ember reach, want 2`);
+    for (const k of ['find', 'clear', 'meet', 'fetch']) {
+      const q = o.quests[k];
+      if (!q || !q.ok) fails.push(`seed ${o.seed}: the ${k} quest has no place the wanderer can reach`);
+      else if (k !== 'meet' && k !== 'fetch' && !q.inWindow) fails.push(`seed ${o.seed}: the ${k} quest is ${q.d} hexes from them`);
+    }
     if (o.glowFromHome) fails.push(`seed ${o.seed}: ${o.glowFromHome} city-states glow from the capital's hearth alone, want a beacon line to each`);
     if (o.pottersInReach !== 1) fails.push(`seed ${o.seed}: the potters are not inside the ember reach`);
     if (!o.herders) fails.push(`seed ${o.seed}: no beacon line reaches the nearest herders`);
