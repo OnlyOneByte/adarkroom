@@ -1286,7 +1286,7 @@ var Network = {
 	 * line in one table (Events.Blaze.TEXT) until design/text/blaze-draft.md is approved:
 	 *   the drowned harbour  a coastal fallen city resettled -> harbour (B11) -> its boats relaunched (F11)
 	 *   the black well       the drifters' well (Phase 4) -> found on a trek -> its pumps pieced together (F12)
-	 *                        -> the first rock oil burned -> the boiler-wrights (H12)
+	 *                        -> the first rock oil burned, the drifters joined -> the boiler-wrights (H12)
 	 *   the bloomery         a forge district touching the forge-masters' hearth (H9)
 	 *   the heliograph       the mirror folk, the lighthouse and the fleet broken (B12)
 	 * The forge-masters' price (F9), the mirror folk (B9) and the tar-keepers' oath (F10) play in Phase 4's
@@ -1327,6 +1327,13 @@ var Network = {
 		return cs ? $SM.get('game.citystates.cs["' + cs + '"].city') || null : null;
 	},
 
+	// pending user: the boiler-wrights are the drifters (H12): they must have joined (their quest, or their
+	// craftsmen home after force: both record the black well's beat)
+	driftersJoined: function () {
+		var cs = $SM.get('game.citystates.beats["the black well"]');
+		return !!cs && !!$SM.get('game.citystates.cs["' + cs + '"].city');
+	},
+
 	// H9's beat: a forge district of the forge-masters' city touching its hearth quarter
 	forgeByMasters: function () {
 		var id = Network.mastersCity(), c = id && $SM.get('game.cities["' + id + '"]');
@@ -1340,7 +1347,7 @@ var Network = {
 		if (harbour && st.lighthouseLit && !st.boatsRelaunched && City.districtHexes(harbour, 'harbour').length) return Events.Blaze.boats(harbour);
 		if (!st.bloomery && Network.forgeByMasters()) return Events.Blaze.bloomery();
 		if (st.wellFound && !st.wellTapped) return Events.Blaze.pumps();
-		if (st.rockOilBurned && !st.boilerWrights) return Events.Blaze.boilerWrights();
+		if (st.rockOilBurned && !st.boilerWrights && Network.driftersJoined()) return Events.Blaze.boilerWrights();
 		if (!st.heliograph && st.fleetBroken && Network.csBeat('B9') && Network.has('B11')) return Events.Blaze.heliograph();
 		return null;
 	},

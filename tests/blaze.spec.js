@@ -182,7 +182,7 @@ test('the drowned harbour: a coastal fallen city resettled (not the first), its 
   expect(errors).toEqual([]);
 });
 
-test('the black well: found on a trek, its pumps pieced together at home (F12); a well-hand on the old-world works; the first rock oil brings the boiler-wrights (H12)', async ({ page }) => {
+test('the black well: found on a trek, its pumps pieced together at home (F12); a well-hand on the old-world works; the first rock oil, the drifters joined, brings them as the boiler-wrights (H12)', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'F11', 'B9', 'B10', 'B11', 'H9', 'H10', 'H11']) });
   const well = await page.evaluate(() => {
     const at = secondCity(), g = World.hex.gen;
@@ -218,8 +218,12 @@ test('the black well: found on a trek, its pumps pieced together at home (F12); 
   await page.evaluate(() => { $SM.set('stores["rock oil"]', 200); burnTick(); });
   expect(await page.evaluate(() => ({ fuel: $SM.get('game.cities.capital.hearth.fuel'), burned: Network.flag('rockOilBurned') })))
     .toEqual({ fuel: 'rock oil', burned: true });
+  // the drifters haven't joined: no boiler-wrights yet
   await ask(page);
-  await expect(page.locator('#event')).toContainText('they say they built boilers once.');
+  expect(await page.evaluate(() => !!Events.activeEvent())).toBe(false);
+  await page.evaluate(() => $SM.set('game.citystates.cs.cs9', { city: 'city3' }));
+  await ask(page);
+  await expect(page.locator('#event')).toContainText('the drifters come in off the ice');
   await choose(page, 'take them in');
   await choose(page, 'good');
   await closed(page);

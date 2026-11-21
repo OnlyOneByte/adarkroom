@@ -4,7 +4,7 @@
  *   the drowned harbour  harbour (B11) -> boats (F11), in the first coastal fallen city resettled after the
  *                        charcoal stranger's
  *   the black well       well (a trek, at the drifters' well) -> pumps (F12) -> boilerWrights (H12, once rock
- *                        oil is burned)
+ *                        oil is burned and the drifters have joined: they are the boiler-wrights, pending user)
  *   the bloomery         bloomery (H9), once a forge district touches the forge-masters' hearth
  *   the heliograph       heliograph (B12), once the mirror folk, the lighthouse and the fleet are in
  * The forge-masters' price (F9), the mirror folk (B9) and the tar-keepers' oath (F10) are Phase 4's scenes
@@ -82,9 +82,10 @@ Events.Blaze = {
 		},
 		boilerWrights: {
 			title: _('The Boiler-Wrights'),                                                    // TEXT PENDING blaze-draft
-			text: [_('the smell of rock oil brings people out of the cold.'),                  // TEXT PENDING blaze-draft
+			// pending user: the boiler-wrights are the drifters
+			text: [_('the drifters come in off the ice when they smell the rock oil.'),        // TEXT PENDING blaze-draft
 				_('they say they built boilers once. they say they could again.')],            // TEXT PENDING blaze-draft
-			notification: _('strangers have come for the rock oil'),                          // TEXT PENDING blaze-draft
+			notification: _('the drifters have come for the rock oil'),                       // TEXT PENDING blaze-draft
 			take: _('take them in'),                                                           // TEXT PENDING blaze-draft
 			done: [_('iron drums go up by the hearth. they hiss all night.')]                  // TEXT PENDING blaze-draft
 		},
@@ -157,7 +158,7 @@ Events.Blaze = {
 		}, { done: t.done, left: t.left });
 	},
 
-	// the first rock oil burned in a city (H12's beat)
+	// the first rock oil burned in a city, the drifters joined (H12's beat)
 	boilerWrights: function () {
 		var t = Events.Blaze.TEXT.boilerWrights;
 		return Events.Blaze.scene(t, {
