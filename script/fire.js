@@ -246,9 +246,13 @@ var Fire = {
 		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
 		// fire reaching a hex from a line with this fuel cap
 		var cover = function (p, s, h) {
-			if (!inside(p)) return;
-			var k = p[0] + p[1] * cols;
-			if (s > fire[k] && reaches(k, h)) fire[k] = s;
+			var x = p[0], y = p[1];
+			if (x < 0 || y < 0 || x >= cols || y >= rows) return;
+			var k = x + y * cols;
+			if (s <= fire[k]) return;
+			// reaches(k, h), written out: the painter's hottest path (perf)
+			var d = field ? field[k] : danger(x, y);
+			if (d <= h.cap || (kind && h.holds && kind[k] & h.holds && d <= h.wet)) fire[k] = s;
 		};
 
 		var B = net.beacon, H = net.hearths.length;
