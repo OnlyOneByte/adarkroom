@@ -66,11 +66,30 @@ function siege(ctx, P, kit, fed, roll) {
   return out;
 }
 
+// the ground a pitch line can light from home, as Network.lineReach('pitch') works it out: passable dry land up
+// to pitch's cap (its wet cap on the ground it holds), at normal difficulty. Uint8Array
+function pitchReach(ctx, gen, field) {
+  const { Fire: F, WorldGen: G, Danger: D } = ctx, P = F.FUELS.pitch, bits = F.groundBits(gen), cols = gen.cols;
+  const out = new Uint8Array(cols * gen.rows), q = [gen.capital];
+  out[gen.capital[0] + gen.capital[1] * cols] = 1;
+  for (let i = 0; i < q.length; i++) {
+    for (let d = 0; d < 6; d++) {
+      const [x, y] = G.neighbour(q[i][0], q[i][1], d), k = x + y * cols;
+      if (x < 0 || y < 0 || x >= cols || y >= gen.rows || out[k]) continue;
+      const t = gen.terrain[x][y];
+      if (!G.isPassable(t) || G.isWater(t) || D.at(field, cols, x, y, 'normal') > (bits[k] & P.holds ? P.wet : P.cap)) continue;
+      out[k] = 1;
+      q.push([x, y]);
+    }
+  }
+  return out;
+}
+
 // the drowned harbour as Network.harbourSite picks it (network.js isn't loaded here): the fallen city nearest
-// home on an inland sea's shore whose centre a pitch line can light (danger ≤ pitch's cap), else the nearest
-// on any water a pitch line can light, else the nearest on an inland sea's shore, else the nearest on any water. shortcut: a copy of the game's rule; follow it
-// when harbourSite's rule changes
-function harbourSite(G, gen, danger, cap) {
+// home on an inland sea's shore whose centre a pitch line lights, else the nearest on any water a pitch line
+// lights, else the nearest on an inland sea's shore, else the nearest on any water. lit: pitchReach.
+// shortcut: a copy of the game's rule; follow it when harbourSite's rule changes
+function harbourSite(G, gen, lit) {
   const touches = (s, ok) => s.hexes.some((h) => [0, 1, 2, 3, 4, 5].some((d) => {
     const [x, y] = G.neighbour(h[0], h[1], d);
     return x >= 0 && y >= 0 && x < gen.cols && y < gen.rows && ok(x, y);
@@ -79,8 +98,8 @@ function harbourSite(G, gen, danger, cap) {
   const coast = (s) => touches(s, (x, y) => G.isWater(gen.terrain[x][y]));
   const near = (a, b) => G.distance(a.anchor, gen.capital) - G.distance(b.anchor, gen.capital) || gen.sites.indexOf(a) - gen.sites.indexOf(b);
   const falls = gen.sites.filter((s) => s.kind === 'fallenCity');
-  const shore = falls.filter(sea).sort(near), water = falls.filter(coast).sort(near), lit = (s) => danger(s.anchor[0], s.anchor[1]) <= cap;
-  return shore.filter(lit)[0] || water.filter(lit)[0] || shore[0] || water[0] || null;
+  const shore = falls.filter(sea).sort(near), water = falls.filter(coast).sort(near), reach = (s) => !!lit[s.anchor[0] + s.anchor[1] * gen.cols];
+  return shore.filter(reach)[0] || water.filter(reach)[0] || shore[0] || water[0] || null;
 }
 
 // the land a man walks from home (passable hexes), Uint8Array
@@ -154,7 +173,7 @@ export function simulatePowerFleet({ seeds, firstSeed = 1 }) {
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
     // the game's Fleet.place: put out on the drowned harbour's water
     const field0 = D.field(gen);
-    const hb = harbourSite(G, gen, (x, y) => D.at(field0, gen.cols, x, y, 'normal'), ctx.Fire.FUELS.pitch.cap);
+    const pitch = pitchReach(ctx, gen, field0), hb = harbourSite(G, gen, pitch);
     gen.fleet = G._fleet(gen, hb);
     if (gen.fleet < 0) { out.push({ seed, none: true }); continue; }
     const field = D.field(gen), danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
@@ -168,7 +187,7 @@ export function simulatePowerFleet({ seeds, firstSeed = 1 }) {
     const lit = reach(ctx, gen, danger, 'whale oil', [gen.capital, hb.anchor]);
     out.push({
       seed, distance: G.distance(site.anchor, gen.capital), harbour: G.distance(hb.anchor, gen.capital),
-      harbourLit: D.at(field0, gen.cols, hb.anchor[0], hb.anchor[1], 'normal') <= ctx.Fire.FUELS.pitch.cap,
+      harbourLit: !!pitch[hb.anchor[0] + hb.anchor[1] * gen.cols],
       hexes: site.hexes.length, danger: [Math.min(...dz), Math.max(...dz)],
       sea: site.hexes.every((h) => ctx.Fleet.inland(gen, h[0], h[1])),
       deep: site.hexes.every((h) => !G.isPassable(gen.terrain[h[0]][h[1]])),

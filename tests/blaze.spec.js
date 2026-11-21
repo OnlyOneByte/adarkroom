@@ -121,16 +121,17 @@ test('the city-states\' and the powers\' beats: F9 and B9 from Phase 4; F10 from
 test('the drowned harbour: seen on a trek and marked; resettled, the keepers (B11); a harbour district raises the boats, then the whales (F11)', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'B9', 'B10']) });
   const r = await page.evaluate(() => {
-    const g = World.hex.gen, site = Network.harbourSite();
-    const sea = (s) => s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
-    const lit = (s) => World.baseDangerAt(s.anchor[0], s.anchor[1]) <= Fire.FUELS.pitch.cap;
-    const near = (a, b) => Fire.distance(a.anchor, g.capital) - Fire.distance(b.anchor, g.capital) || g.sites.indexOf(a) - g.sites.indexOf(b);
-    // the rule: a pitch-lit city on an inland sea's shore, else the nearest pitch-lit city on any water, ...
-    const falls = g.sites.filter((s) => s.kind === 'fallenCity');
-    const want = falls.filter((s) => sea(s) && lit(s)).sort(near)[0] || falls.filter((s) => Network.coastal(s) && lit(s)).sort(near)[0];
-    return { at: site.anchor, picked: site === want, lit: lit(site), kind: site.kind };
+    const g = World.hex.gen, site = Network.harbourSite(), lit = Network.lineReach('pitch');
+    const seaOf = (s) => s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
+    const reach = (s) => !!lit[s.anchor[0] + s.anchor[1] * g.cols];
+    // its centre on ground a pitch line lights; seed 4242's sea-shore fallen cities are all past it (danger 6.3+),
+    // so it is the nearest on any water there; nearer ones on the water in reach: none
+    const nearer = g.sites.filter((s) => s.kind === 'fallenCity' && s !== site && Fire.distance(s.anchor, g.capital) < Fire.distance(site.anchor, g.capital) &&
+      reach(s) && Network.coastal(s));
+    const seaInReach = g.sites.filter((s) => s.kind === 'fallenCity' && seaOf(s) && reach(s)).length;
+    return { at: site.anchor, reach: reach(site), coastal: Network.coastal(site), nearer: nearer.length, seaInReach, kind: site.kind };
   });
-  expect(r).toMatchObject({ picked: true, lit: true, kind: 'fallenCity' });
+  expect(r).toMatchObject({ reach: true, coastal: true, nearer: 0, seaInReach: 0, kind: 'fallenCity' });
   // on a trek, the site comes into sight
   await page.locator('#location_path').click();
   await page.evaluate((at) => { embark(); World.curPos = at.slice(); Network.onStep(at[0], at[1]); }, r.at);

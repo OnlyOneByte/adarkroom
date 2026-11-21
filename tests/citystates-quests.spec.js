@@ -9,6 +9,7 @@ async function questFor(page, t) {
   const c = await page.evaluate((t) => {
     const c = CityStates.list().find((x) => x.t === t);
     for (const k in CityStates.TEMPERAMENTS) $SM.set('game.citystates.sighted["' + k + '"]', true, true); // no first sightings
+    $SM.set('game.network.story.harbourSeen', true, true); // (the drowned harbour is seen from the tar pits)
     $SM.set('game.citystates.cs["' + c.id + '"].met', true);
     $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true);
     CityStates.tell(c);
@@ -118,8 +119,7 @@ test('clear: the raiders at the pits are a fight one band hard; won, the tar-kee
   const d = await page.evaluate((q) => WorldGen.distance(q.at, cs.at), q);
   expect(d).toBeGreaterThanOrEqual(2);
   expect(d).toBeLessThanOrEqual(4);
-  // (the drowned harbour may be in sight of the pits: its own scene isn't this test's)
-  const fight = await page.evaluate((q) => { $SM.set('game.network.story.harbourSeen', true); trek(); stepOnto(q.at); const s = Events.activeEvent().scenes.start; return { combat: s.combat, enemy: s.enemy, health: s.health }; }, q);
+  const fight = await page.evaluate((q) => { trek(); stepOnto(q.at); const s = Events.activeEvent().scenes.start; return { combat: s.combat, enemy: s.enemy, health: s.health }; }, q);
   expect(fight).toMatchObject({ combat: true, enemy: 'raiders at the pits' });
   expect(fight.health).toBeGreaterThan(0);
   await page.waitForTimeout(500);

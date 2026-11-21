@@ -7,7 +7,9 @@
 Events.Marketing = [{
   /* Play Penrose! */
   title: _('Penrose'),
-  isAvailable: () => !$SM.get('marketing.penrose'),
+  // in the room or outside, as every other event of the pool: on the town and trek tabs it was the only one
+  // available, so it came at every event slot (3-6 min) instead of its share of the original's pool
+  isAvailable: () => (Engine.activeModule == Room || Engine.activeModule == Outside) && !$SM.get('marketing.penrose'),
   scenes: {
     'start': {
       text: [
