@@ -44,11 +44,21 @@ export async function openGame(page, { save } = {}) {
   }
 
   await page.goto('/index.html');
-  await page.waitForFunction(() => window.Engine && Engine.activeModule === Room);
+  // Engine can exist before room.js has defined Room: typeof keeps the check from throwing
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room);
   return errors;
 }
 
 export const getState = (page) => page.evaluate(() => JSON.parse(JSON.stringify(State)));
+
+// Stops the page's clock before the game loads: no timer fires (the 1 s income tick, the fire tick)
+// until the test moves it (page.clock.runFor, or resume). page.clock.install alone lets time run on,
+// so on a slow host an income tick could land between the load and the test reading the stores.
+export async function freezeClock(page) {
+  const start = new Date('2026-01-01T00:00:00Z');
+  await page.clock.install({ time: start });
+  await page.clock.pauseAt(new Date(start.getTime() + 1000));
+}
 
 // A fresh game that has walked the square map, then opens the town the normal way.
 // beforeTown: a function run in the page on the square map, just before the town opens
