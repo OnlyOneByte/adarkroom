@@ -154,7 +154,8 @@ var Fire = {
 	/*
 	 * The network: which hexes the fire reaches, and how strongly.
 	 *   net.cols, net.rows
-	 *   net.danger(x, y)   the hex's danger before any light
+	 *   net.danger(x, y)   the hex's danger before any light; or net.field, the same for every
+	 *                      hex as an array (x + y * cols), read without a call (perf)
 	 *   net.hills(x, y)    true on hills
 	 *   net.open(x, y)     true on open dry ground a line can cross (optional: all of it)
 	 *   net.hearths[]      { at: [x, y], out, share, cap }
@@ -169,7 +170,8 @@ var Fire = {
 	 * Returns { fire: Float32Array, lit: Uint8Array, nodes: [{ at, s, hearth }], links: [[i, j, s]] }.
 	 */
 	compute: function (net) {
-		var cols = net.cols, rows = net.rows, n = cols * rows;
+		var cols = net.cols, rows = net.rows, n = cols * rows, field = net.field;
+		var danger = field ? function (x, y) { return field[x + y * cols]; } : net.danger;
 		var fire = new Float32Array(n), lit = new Uint8Array(n);
 		var nodes = net.hearths.map(function (h) { return { at: h.at, s: 0, hearth: h }; })
 			.concat(net.beacons.map(function (b) { return { at: b, s: 0, hearth: null }; }));
@@ -185,7 +187,7 @@ var Fire = {
 		var inside = function (p) { return p[0] >= 0 && p[1] >= 0 && p[0] < cols && p[1] < rows; };
 		// fire reaching a hex from a line with this fuel cap
 		var cover = function (p, s, cap) {
-			if (!inside(p) || net.danger(p[0], p[1]) > cap) return;
+			if (!inside(p) || danger(p[0], p[1]) > cap) return;
 			var k = p[0] + p[1] * cols;
 			if (s > fire[k]) fire[k] = s;
 		};
@@ -202,7 +204,7 @@ var Fire = {
 			for (var i = 1; i < l.length - 1; i++) {
 				var p = l[i];
 				if (!inside(p) || (net.open && !net.open(p[0], p[1]))) c.open = false;
-				else c.danger = Math.max(c.danger, net.danger(p[0], p[1]));
+				else c.danger = Math.max(c.danger, danger(p[0], p[1]));
 			}
 			return c;
 		};
@@ -220,7 +222,7 @@ var Fire = {
 					var at = nodes[b].at;
 					var s = q[1] * B.keep;
 					if (s < Fire.LIT_MIN || best[b] >= s) return;
-					if (net.danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
+					if (danger(at[0], at[1]) > cap) return; // past the fuel's reach: dark
 					if (!carries(q[0], b, cap)) return;
 					best[b] = s;
 					links[Math.min(q[0], b) + ',' + Math.max(q[0], b)] = [q[0], b, s];

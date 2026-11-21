@@ -547,6 +547,7 @@ test('QA Q2: a new beacon goes within 3 of a lit node, not of a dark beacon or a
     $SM.set('game.network.beacons["' + p(3).join(',') + '"]', true);
     setGround(p(3), 'field');
     World.hex.danger[p(3)[0] + p(3)[1] * World.hex.gen.cols] = 5; // past wood's reach: dark
+    World.hex.base = null; // the danger is worked out again for the changed world
     Network.refresh();
     return { cold, lit, dark: isLit(p(3)), past: Network.canBeacon(...p(6)) };
   });
