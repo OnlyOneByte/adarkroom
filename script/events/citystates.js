@@ -163,9 +163,11 @@ Events.CityStates = {
 		var t = Events.CityStates.text(c);
 		var after = function (choice) {
 			return function () {
+				// (a 50 crossed by this visit's own gift has its scene queued already: once is enough)
+				var before = !!CityStates.state(c.id).told[50];
 				CityStates.arrive(c, choice).forEach(function (l) { Notifications.notify(World, l); });
 				// the bog-cutters offer the cutting again at the next visit
-				if (c.t === 'bog_cutters' && CityStates.state(c.id).told[50] && !CityStates.state(c.id).cutting) {
+				if (c.t === 'bog_cutters' && before && !CityStates.state(c.id).cutting) {
 					CityStates.queue(function () { Events.startEvent(Events.CityStates.bogCutters(c)); });
 				}
 			};
@@ -203,7 +205,14 @@ Events.CityStates = {
 					buttons: {
 						'learn': {
 							text: _('learn the cutting'),
-							onChoose: function () { $SM.set('game.citystates.cs["' + c.id + '"].cutting', true); },
+							// F6 at 50, as the content pack gives it (B8 stays on joining); the way of the cutting is asked now
+							onChoose: function () {
+								if (CityStates.state(c.id).cutting) return;
+								$SM.set('game.citystates.cs["' + c.id + '"].cutting', true);
+								$SM.set('game.citystates.beats.F6', c.id);
+								Engine.event('progress', 'story hook F6');
+								CityStates.queue(function () { Events.startEvent(Events.CityStates.f6(c)); });
+							},
 							nextScene: 'end'
 						},
 						'later': { text: _('not now'), nextScene: { 1: 'later' } }
