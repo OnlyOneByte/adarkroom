@@ -337,5 +337,120 @@ Events.CityStates = {
 				}
 			}
 		};
+	},
+
+	/*
+	 * The quests' scenes (content 3.5, 3.8). Each one's last button joins them (CityStates.questJoin).
+	 */
+	// The Lost Tappers (find done -> F7)
+	lostTappers: function (c) {
+		return {
+			title: _('The Lost Tappers'),
+			scenes: {
+				start: {
+					text: [_('the tappers come home thin, and carrying their cups.'), _('they go straight to the trees.'),
+						_('by nightfall every cup is hung again.')],
+					buttons: { 'go': { text: _('go on'), nextScene: { 1: 'resin' } } }
+				},
+				resin: {
+					// flame-draft's F7 milestone line
+					text: [_('the jungle folk cut the bark and wait. the trees weep resin. it burns fierce.')],
+					buttons: { 'good': { text: _('good'), onChoose: function () { CityStates.questJoin(c); }, nextScene: 'end' } }
+				}
+			}
+		};
+	},
+
+	/*
+	 * The clear quest's fight: one band harder than the hex it is on. Its numbers are the encounter the
+	 * prologue would pick at that danger (Events.Encounters, by tier), made as strong as the danger makes
+	 * them. Won, the tar-keepers swear (fixes G14: the oath and the joining, no "pitch only").
+	 */
+	clearFight: function (c) {
+		var CS = CityStates, q = CS.state(c.id).q, foe = CS.questType(c.t).foe;
+		var danger = World.baseDangerAt(q.at[0], q.at[1]) + Danger.BAND_SIZE;
+		var tier = Danger.encounterDistance(danger), from = tier <= 10 ? 0 : tier <= 20 ? 4 : 8;
+		var e = Events.Encounters[from].scenes.start, m = Danger.strength(danger);
+		var fight = {
+			combat: true, enemy: foe, enemyName: _(foe), chara: e.chara, ranged: e.ranged,
+			damage: Math.round(e.damage * m), hit: e.hit, attackDelay: e.attackDelay, health: Math.round(e.health * m),
+			loot: e.loot,
+			deathMessage: CS.fill(_("the {foe} won't trouble {name} again."), c, { foe: _(foe) }),
+			notification: CS.fill(Events.CityStates.text(c).offer, c),
+			nextScene: 'sworn'
+		};
+		return {
+			title: c.name,
+			scenes: {
+				start: fight,
+				sworn: {
+					onLoad: function () { $SM.set('game.citystates.cs["' + c.id + '"].quest', true); CS._fighting = null; },
+					text: [_('the far side of the pits is quiet now.'), _("the keepers' eldest walks out onto the tar, where it holds, and stops."),
+						_("says the pits are yours to keep, while the fire is."), _('says pitch burns where nothing else will.')],
+					notification: _('the tar-keepers have come to swear'),
+					buttons: {
+						'oath': { text: _('take their oath'), onChoose: function () { CS.questJoin(c); }, nextScene: { 1: 'oath' } }
+					}
+				},
+				oath: {
+					text: [_('they draw a line in the tar toward the hearth.')],
+					buttons: { 'good': { text: _('good'), nextScene: 'end' } }
+				}
+			}
+		};
+	},
+
+	// sample scene 6, Smoke on the Snow: the drifters' camp, caught on a trek
+	smokeOnSnow: function (c) {
+		return {
+			title: _('Smoke on the Snow'),
+			scenes: {
+				start: {
+					text: [_('smoke on the snow. a camp, already half struck.'), _("the drifters don't stop moving. they let you walk with them a while.")],
+					buttons: {
+						'walk': { text: _('walk with them'), onChoose: function () { CityStates.walkWith(c); }, nextScene: 'end' },
+						// fixes C21: nothing lost, the quest stays open
+						'alone': { text: _('go on alone'), nextScene: { 1: 'alone' } }
+					}
+				},
+				alone: {
+					text: [_('the camp moves off into the white.')],
+					buttons: { 'go': { text: _('go on'), nextScene: 'end' } }
+				}
+			}
+		};
+	},
+
+	// the walk's end (meet done -> F12, the black well)
+	walkEnd: function (c) {
+		return {
+			title: _('Smoke on the Snow'),
+			scenes: {
+				start: {
+					onLoad: function () { $SM.set('game.citystates.cs["' + c.id + '"].quest', true); },
+					text: [_('an old woman points north, at a black stain on the ice.'), _('says the ground there burns.'),
+						CityStates.fill(_('the walk ends. {name} have decided about you.'), c)],
+					buttons: { 'go': { text: _('go on'), onChoose: function () { CityStates.questJoin(c); }, nextScene: 'end' } }
+				}
+			}
+		};
+	},
+
+	// The Archive Clerks (fetch done -> B13, old maps)
+	archiveClerks: function (c) {
+		return {
+			title: _('The Archive Clerks'),
+			scenes: {
+				start: {
+					text: [_('the clerk takes the fragment with both hands.'), _('reads it a long time. then goes into the back.'),
+						_('comes out with a roll of old maps, and a coil of red wire.'), _('says the wire carried the fire, once. says they know how.')],
+					buttons: { 'go': { text: _('go on'), nextScene: { 1: 'maps' } } }
+				},
+				maps: {
+					text: [_('the old works and the craters show on the map, far around.')],
+					buttons: { 'good': { text: _('good'), onChoose: function () { CityStates.questJoin(c); }, nextScene: 'end' } }
+				}
+			}
+		};
 	}
 };
