@@ -108,6 +108,7 @@ test('beacon placement: within 3 hexes of a node, seen ground, never on ocean, m
     const cap = World.hex.gen.capital;
     const p = (dx) => [cap[0] + dx, cap[1]];
     for (let dx = 1; dx <= 7; dx++) setGround(p(dx), 'field');
+    Network.tick(); // the hearth lit: a node to build from
     const out = { d3: Network.canBeacon(...p(3)), d4: Network.canBeacon(...p(4)) };
     World.hex.mask[cap[0] + 2][cap[1]] = false;
     out.unseen = Network.canBeacon(...p(2));
@@ -529,6 +530,26 @@ test('QA Q1: a line needs every hex between its two nodes under the fuel\'s cap 
   expect(clear.nodes).toEqual([24, 16.8, 11.76]);
   expect(danger.nodes).toEqual([24, 16.8, 0]);
   expect(water.nodes).toEqual([24, 0, 0]);
+});
+
+// QA Q2 (provisional, pending user): a dark beacon is no anchor, so dark chains can't run on into the land
+test('QA Q2: a new beacon goes within 3 of a lit node, not of a dark beacon or a cold hearth', async ({ page }) => {
+  const errors = await town(page);
+  const r = await page.evaluate(() => {
+    const cap = World.hex.gen.capital, p = (dx) => [cap[0] + dx, cap[1]];
+    for (let dx = 1; dx <= 9; dx++) setGround(p(dx), 'field');
+    $SM.setM('stores', { wood: 100000, 'dry wood': 0, 'seasoned oak': 0, tallow: 0 });
+    const cold = Network.canBeacon(...p(2)); // the hearth not lit yet
+    Network.tick();
+    const lit = Network.canBeacon(...p(2));
+    $SM.set('game.network.beacons["' + p(3).join(',') + '"]', true);
+    setGround(p(3), 'field');
+    World.hex.danger[p(3)[0] + p(3)[1] * World.hex.gen.cols] = 5; // past wood's reach: dark
+    Network.refresh();
+    return { cold, lit, dark: isLit(p(3)), past: Network.canBeacon(...p(6)) };
+  });
+  expect(r).toEqual({ cold: false, lit: true, dark: false, past: false });
+  expect(errors).toEqual([]);
 });
 
 test('a saved network comes back on reload: beacons, the lit land, the hearth', async ({ page }) => {
