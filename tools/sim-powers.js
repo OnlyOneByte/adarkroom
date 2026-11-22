@@ -120,6 +120,12 @@ function gateOn(ctx, gen, lit, site) {
   }));
 }
 
+// "smoke in the hills" (Network.seeSmoke): a hex within 2 of the site on that ground
+function smokeOn(ctx, gen, lit, site) {
+  const F = ctx.Fire;
+  return site.hexes.some((h) => F.around(h[0], h[1], 2).some(([x, y]) => x >= 0 && y >= 0 && x < gen.cols && y < gen.rows && !!lit[x + y * gen.cols]));
+}
+
 export function simulatePowers({ seeds, firstSeed = 1 }) {
   const rand = seeded();
   const { ctx } = loadGame(rand);
@@ -136,7 +142,7 @@ export function simulatePowers({ seeds, firstSeed = 1 }) {
     out.push({
       seed, distance: G.distance(site.anchor, gen.capital), danger: danger(site.anchor[0], site.anchor[1]),
       hills: gen.terrain[site.anchor[0]][site.anchor[1]] === G.TERRAIN.hills,
-      gate: gateOn(ctx, gen, lit, site), march: march(ctx, gen, danger, lit, site, REF),
+      gate: gateOn(ctx, gen, lit, site), smoke: smokeOn(ctx, gen, lit, site), march: march(ctx, gen, danger, lit, site, REF),
       adits: PW.aditsOf(gen, site, P.adits).length,
       storm: siege(ctx, P, REF, 'press', P.adits, roll),
       starve: siege(ctx, P, REF, 'wait', 0, roll),
@@ -163,7 +169,7 @@ export function powersTable({ out, seeds }) {
   const m = out.map((o) => o.march).filter(Boolean), d = out.map((o) => o.distance), dz = out.map((o) => o.danger);
   lines.push(`the garrison (WorldGen._garrison): ${median(d)} hexes out (median, ${Math.min(...d)}-${Math.max(...d)}), ` +
     `danger ${fmt(Math.min(...dz))}-${fmt(Math.max(...dz))} (POWERS §3: 2-4), on hills ${out.filter((o) => o.hills).length}/${seeds}; ` +
-    `its gate on ground a charcoal line crosses ${out.filter((o) => o.gate).length}/${seeds}; the rough army marches there on ${m.length}/${seeds}: ` +
+    `its smoke seen from a charcoal line ${out.filter((o) => o.smoke).length}/${seeds}; its gate on ground a charcoal line crosses ${out.filter((o) => o.gate).length}/${seeds}; the rough army marches there on ${m.length}/${seeds}: ` +
     `${median(m.map((x) => x.hexes))} hexes, ${median(m.map((x) => x.unlit))} unlit, ${fmt(median(m.map((x) => x.minutes)))} min, ` +
     `${fmt(100 * median(m.map((x) => 1 - x.left / x.start)), 0)}% lost on the way (median)`);
   return lines.join('\n');
@@ -176,6 +182,7 @@ export function checkPowers({ out }) {
     if (o.adits !== 3) fails.push(`seed ${o.seed}: the garrison has ${o.adits} adits, want 3`);
     // where it stands: the band 1-2 edge, reachable, its gate lightable before coal (the shafts need it)
     if (!(o.danger >= 2 && o.danger <= 4)) fails.push(`seed ${o.seed}: the garrison stands at danger ${o.danger.toFixed(1)}, want 2-4`);
+    if (!o.smoke) fails.push(`seed ${o.seed}: nothing within 2 of the garrison is on ground a charcoal line lights: no smoke in the hills before coal`);
     if (!o.gate) fails.push(`seed ${o.seed}: no hex next to the garrison's gate is on ground a charcoal line crosses`);
     if (!o.march) fails.push(`seed ${o.seed}: no way to the garrison on foot`);
     else if (o.march.left / o.march.start < 0.8) fails.push(`seed ${o.seed}: the rough army reached the garrison with ${o.march.left} of ${o.march.start}, want 80% or more`);

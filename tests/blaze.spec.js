@@ -121,14 +121,17 @@ test('the city-states\' and the powers\' beats: F9 and B9 from Phase 4; F10 from
 test('the drowned harbour: seen on a trek and marked; resettled, the keepers (B11); a harbour district raises the boats, then the whales (F11)', async ({ page }) => {
   const errors = await flameTown(page, { tiers: EMBER.concat(FLAME, ['F9', 'F10', 'B9', 'B10']) });
   const r = await page.evaluate(() => {
-    const g = World.hex.gen, site = Network.harbourSite();
-    const sea = site.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
-    // nearer fallen cities on an inland sea's shore: none
+    const g = World.hex.gen, site = Network.harbourSite(), lit = Network.lineReach('pitch');
+    const seaOf = (s) => s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; }));
+    const reach = (s) => !!lit[s.anchor[0] + s.anchor[1] * g.cols];
+    // its centre on ground a pitch line lights; seed 4242's sea-shore fallen cities are all past it (danger 6.3+),
+    // so it is the nearest on any water there; nearer ones on the water in reach: none
     const nearer = g.sites.filter((s) => s.kind === 'fallenCity' && s !== site && Fire.distance(s.anchor, g.capital) < Fire.distance(site.anchor, g.capital) &&
-      s.hexes.some((h) => District.neighbours(h).some((p) => { const f = g.formationAt[p[0] + p[1] * g.cols]; return f >= 0 && g.formations[f].kind === 'sea'; })));
-    return { at: site.anchor, sea, nearer: nearer.length, kind: site.kind };
+      reach(s) && Network.coastal(s));
+    const seaInReach = g.sites.filter((s) => s.kind === 'fallenCity' && seaOf(s) && reach(s)).length;
+    return { at: site.anchor, reach: reach(site), coastal: Network.coastal(site), nearer: nearer.length, seaInReach, kind: site.kind };
   });
-  expect(r).toMatchObject({ sea: true, nearer: 0, kind: 'fallenCity' });
+  expect(r).toMatchObject({ reach: true, coastal: true, nearer: 0, seaInReach: 0, kind: 'fallenCity' });
   // on a trek, the site comes into sight
   await page.locator('#location_path').click();
   await page.evaluate((at) => { embark(); World.curPos = at.slice(); Network.onStep(at[0], at[1]); }, r.at);
