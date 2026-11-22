@@ -138,12 +138,19 @@ test('the prologue keeps its distance tiers and fight chance', async ({ page }) 
     let rolls = 0;
     Math.random = () => { rolls++; return 0.199; }; // just under the prologue's 0.20
     for (let i = 0; i < 5; i++) World.checkFight();
+    // a scene the step opened (a sighting, a gate) is the step's event: no fight over it
+    const scene = started;
+    Events.eventStack.unshift({ title: 'a scene', scenes: {} });
+    World.fightMove = 10;
+    World.checkFight();
+    Events.eventStack.shift();
     Events.triggerFight = orig;
-    return { out, started, hex: !!World.hex };
+    return { out, started, overScene: started - scene, hex: !!World.hex };
   });
   expect(r.hex).toBe(false);
   for (const [a, b] of r.out) expect(a).toBe(b);
   expect(r.started).toBe(1); // once past FIGHT_DELAY moves, a roll under 0.20 fights
+  expect(r.overScene).toBe(0);
   expect(errors).toEqual([]);
 });
 
