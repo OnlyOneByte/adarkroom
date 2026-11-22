@@ -391,7 +391,7 @@ var Powers = {
 		} else if (P.headStart !== null) {
 			// the old miners' notes: a head start on the coal (provisional: a store of it in the army's city);
 			// a power whose entry says headStart: null leaves nothing behind
-			$SM.add(City.storePath(home, 'coal'), Powers.HEAD_START);
+			$SM.add(City.storePath(home, P.headStart || 'coal'), Powers.HEAD_START);
 		}
 		Powers.waver(id);
 		a.siege = null;
