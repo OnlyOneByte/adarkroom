@@ -46,6 +46,28 @@ test('the hex map opens with 64 city-states: 8 story ones, the guarantees, the Î
   expect(errors).toEqual([]);
 });
 
+test('placement keeps its order when a site moves: freeing a complex far from home leaves the other city-states where they were', async ({ page }) => {
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    const out = [];
+    for (const seed of [1, 2, 3, 4242]) {
+      const gen = WorldGen.generate(seed, World.generateMap(WorldGen.rng(seed))), field = Danger.field(gen);
+      const danger = (x, y) => Danger.at(field, gen.cols, x, y, 'normal');
+      const before = CityStates.place(gen, danger);
+      // a power moves the complex furthest from home (its hexes plain ground now): where it stood is free land
+      const far = gen.sites.filter((s) => s.kind === 'complex').sort((a, b) => WorldGen.distance(b.anchor, gen.capital) - WorldGen.distance(a.anchor, gen.capital))[0];
+      far.hexes.forEach((h) => { gen.siteAt[h[0] + h[1] * gen.cols] = -1; });
+      const after = CityStates.place(gen, danger), at = (c) => c.at.join(',');
+      const kept = new Set(after.map(at));
+      out.push(before.filter((c) => kept.has(at(c))).length);
+    }
+    return out;
+  });
+  // (on a single shuffle of all free land, nearly every one moved)
+  for (const kept of r) expect(kept).toBeGreaterThanOrEqual(56);
+  expect(errors).toEqual([]);
+});
+
 test('a city-state is won by influence from a fresh save: a beacon line to the herders, the stranger at 25, they join at 100', async ({ page }) => {
   const errors = await townWithCityStates(page);
   const r = await page.evaluate(() => {
@@ -267,5 +289,36 @@ test('a v2.4 save with a hex map loads (as v2.9) and gets its city-states around
   expect(r.version).toBe(2.9);
   expect(r.n).toBe(64);
   expect(r.onCity).toBe(0);
+  expect(errors).toEqual([]);
+});
+
+test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joining); gifts raise the floor they fade to', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const c = await page.evaluate(() => {
+    const c = CityStates.list().find((x) => x.t === 'bog_cutters');
+    window.bog = c;
+    $SM.set('game.citystates.cs["' + c.id + '"].met', true);
+    $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true); // their stranger came already
+    $SM.set('game.network.tiers.F5', true);
+    // a pack of leather left at their gate: 1/3 a piece at band 2, past 50
+    CityStates.give(c, { leather: 200 });
+    CityStates.playQueued();
+    return c;
+  });
+  await expect(page.locator('#event')).toContainText('says peat burns low and long');
+  await choose(page, 'learn the cutting');
+  await page.waitForFunction(() => !Events.activeEvent() || Events.activeEvent().title === 'The Bog Cutters');
+  await page.evaluate(() => CityStates.playQueued());
+  await expect(page.locator('#event')).toContainText('cuts the black earth into squares');
+  await choose(page, 'cut it their way');
+  const r = await page.evaluate(() => {
+    const st = CityStates.state(bog.id), before = st.inf;
+    tick(6 * 60); // an hour out of the glow
+    return { beat: $SM.get('game.citystates.beats.F6'), way: $SM.get('game.citystates.beats.F6way'), F6: Network.has('F6'), B8: Network.has('B8'),
+      floor: st.floor, before, after: CityStates.state(bog.id).inf, joined: !!CityStates.state(bog.id).city };
+  });
+  expect(r).toMatchObject({ beat: c.id, way: 'their way', F6: true, B8: false, floor: 50, joined: false });
+  expect(r.before).toBeGreaterThanOrEqual(50);
+  expect(r.after).toBe(50); // faded to the 50 the gift passed, not to 0
   expect(errors).toEqual([]);
 });

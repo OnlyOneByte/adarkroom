@@ -80,6 +80,68 @@ const assign = (page, job, n) => page.evaluate(({ job, n }) => {
   return $SM.get('game.workers["' + job + '"]', true);
 }, { job, n });
 
+// The envoy free to go again: one who fell with the wanderer waits where they fell (a trek picks them up and
+// brings them home), one waiting at home unpacks (the panel's "call off")
+async function freeEnvoy(page, log, id) {
+  for (let i = 0; i < 3; i++) {
+    const e = await page.evaluate(() => CityStates.envoy());
+    if (!e) return true;
+    if (!e.fell) { await page.evaluate(() => CityStates.callOff()); continue; }
+    if (!(await embark(page))) return false;
+    log.note(id, `a trek for the envoy who fell at ${e.fell}: ${await walkTo(page, e.fell)}/${await walkHome(page)}`);
+  }
+  return !(await page.evaluate(() => CityStates.envoy()));
+}
+
+// A quest city-state won the way a player wins it (PHASE4 §3): met on a trek, an envoy left with them so
+// their task is told and its place marked, then the quest trek: the lost party found and walked to their
+// gate (find), or the foe at the marked hex fought (clear). Treks are retried when the wanderer falls.
+async function questCs(page, log, id, t) {
+  const c = await nearestCs(page, t);
+  if (!c) { log.block(id, `no ${t} on the map`, '', ''); return false; }
+  await restock(page);
+  const d = await page.evaluate((at) => [Fire.distance(at, World.hex.gen.capital), +World.baseDangerAt(at[0], at[1]).toFixed(2)], c.at);
+  log.note(id, `${t} (${c.name}) at ${c.at}: ${d[0]} hexes, danger ${d[1]}`);
+  for (let i = 0; i < 4 && !(await csState(page, c.id)).met; i++) log.note(id, `trek ${i + 1} to meet them: ${await goSee(page, c.at)}`);
+  if (!(await csState(page, c.id)).met) { log.block(id, `four treks failed to meet ${c.name} ${d[0]} hexes out`, '', ''); return false; }
+  for (let i = 0; i < 4 && !(await page.evaluate((cid) => CityStates.talks(CityStates.state(cid)), c.id)); i++) {
+    await restock(page);
+    await freeEnvoy(page, log, id);
+    const sent = await page.evaluate((cid) => (CityStates.sendEnvoy('capital', cid) ? 'ok' : CityStates.cantSend('capital', CityStates.byId(cid))), c.id);
+    if (sent !== 'ok') { log.block(id, `envoy can't go: ${sent}`, '', ''); return false; }
+    if (!(await embark(page))) return false;
+    const r = await walkTo(page, c.at, { stopAt: (e) => e && e.title === c.name });
+    if (r === 'event') { await clickEvent(page, 'leave the envoy'); await settleEvents(page); }
+    else await page.evaluate(() => CityStates.callOff());
+    log.note(id, `envoy trek ${i + 1}: ${r}/${await walkHome(page)}`);
+  }
+  const q = await page.evaluate((cid) => CityStates.questOf(CityStates.byId(cid)), c.id);
+  if (!q || !q.at) {
+    // talks open at 25 (PHASE4: quest-only types need the glow for it) or when an envoy reports; an empty camp
+    // (the resin-tappers' huts, the drifters') takes no envoy, so only the glow is left
+    const why = await page.evaluate((cid) => {
+      const c = CityStates.byId(cid), st = CityStates.state(cid), fuel = ($SM.get('game.cities.capital.hearth') || {}).fuel || 'wood';
+      let near = 99;
+      for (const p of Fire.around(c.at[0], c.at[1], CityStates.GLOW_REACH)) near = Math.min(near, World.dangerAt(p[0], p[1]));
+      return `influence ${st.inf | 0}, no talks; empty camp ${!!(Events.CityStates.text(c).empty)}; least danger within ${CityStates.GLOW_REACH} of them ${near.toFixed(2)}, the best fuel (${fuel}) lights to ${Fire.FUELS[fuel].cap}`;
+    }, c.id);
+    log.block(id, `${c.name}'s task is never told: ${why}`, 'fresh save to F6; meet the resin-tappers (36,86); an envoy finds the huts empty ("go back" only)',
+      'design: let the empty huts tell the task (content: "(no gate) the huts are empty -> quest find"), or place them inside peat\'s reach');
+    return false;
+  }
+  log.note(id, `their ${q.type} at ${q.at} (${await page.evaluate((at) => Fire.distance(at, World.hex.gen.capital), q.at)} hexes out)`);
+  for (let i = 0; i < 5 && !(await csState(page, c.id)).city; i++) {
+    await restock(page);
+    if (!(await embark(page))) return false;
+    let r = await walkTo(page, q.at);
+    if (q.type === 'find' && r === 'there') r = await walkTo(page, c.at, { stopAt: () => false });
+    await settleEvents(page);
+    log.note(id, `quest trek ${i + 1}: ${r}/${await walkHome(page)}, party ${(await csState(page, c.id)).q && (await csState(page, c.id)).q.party}`);
+  }
+  if (!(await csState(page, c.id)).city) { log.block(id, `${c.name} not won by their quest after five treks`, '', ''); return false; }
+  return true;
+}
+
 export const STAGES = [
   {
     id: 'prologue', name: 'prologue: light the fire, the stranger, the builder',
@@ -483,6 +545,7 @@ export const STAGES = [
       if (!(await csState(page, c.id)).met) { log.block(id, `three treks failed to meet the bog-cutters ${d[0]} hexes out`, '', ''); return false; }
       // the envoy, from the town panel, with a pack of leather (they want it: 1/3 influence a piece at band 2)
       for (let i = 0; i < 3 && (await csState(page, c.id)).inf < 50; i++) {
+        await freeEnvoy(page, log, id);
         const sent = await page.evaluate((cid) => {
           if (!CityStates.sendEnvoy('capital', cid)) return CityStates.cantSend('capital', CityStates.byId(cid));
           CityStates.pack('leather', 200);
@@ -497,28 +560,25 @@ export const STAGES = [
         log.note(id, `envoy trek ${i + 1}: ${r}/${h}, influence ${(await csState(page, c.id)).inf | 0}`);
         if (r !== 'event') await page.evaluate(() => CityStates.callOff());
       }
-      // F6 is their beat on joining (100): past the gifts' cap (75) only the glow moves them, and nothing near
-      // them can be lit with a flame-era fuel; an army off the light runs out of water. Wait an hour to be sure
-      const f6 = await advance(page, 60 * MIN, { until: () => Network.has('F6'), slice: 30000 });
-      if (!f6) {
-        const why = await page.evaluate((cid) => {
-          const c = CityStates.byId(cid), st = CityStates.state(cid), g = World.hex.gen;
-          let near = 99;
-          for (const p of Fire.around(c.at[0], c.at[1], CityStates.GLOW_REACH)) near = Math.min(near, World.dangerAt(p[0], p[1]));
-          const fuel = ($SM.get('game.cities.capital.hearth') || {}).fuel;
-          return `influence ${st.inf | 0} (gift cap ${CityStates.GIFT_CAP}, envoy cap ${CityStates.ENVOY_CAP}); least danger within ${CityStates.GLOW_REACH} of them ${near.toFixed(2)}, ` +
-            `the best fuel (${fuel}) lights to ${Fire.FUELS[fuel].cap}; glow ${CityStates.glow(World.hex.fire.fire, g.cols, g.rows, c.at, (x, y) => Network.beaconAt(x, y)).toFixed(2)}`;
-        }, c.id);
-        log.block(id, `F6 never fires: the bog-cutters can't reach 100. ${why}`,
-          'fresh save (seed 4242) to F5; meet the bog-cutters (78,63, 41 hexes out); envoy packs of leather; influence stops at 75 and decays to its 50 floor',
-          'fire F6 at 50 as the content pack has it (the 50 scene "learn the cutting" exists; CityStates.beat on join is the C16 move), or place the bog-cutters inside the flame-era reach, or let gifts reach 100 for a story city-state whose land the fire can not reach');
-        return false;
-      }
+      // at 50 their eldest comes to the hearth: "learn the cutting" is F6, then the way of the cutting
+      const f6 = await advance(page, 15 * MIN, { until: () => Network.has('F6'), slice: 10000 });
+      const st = await csState(page, c.id);
+      if (!f6) { log.block(id, `F6 not in: influence ${st.inf | 0}, floor ${st.floor}, cutting ${!!st.cutting}`, '', ''); return false; }
+      log.note(id, `F6 in at influence ${st.inf | 0} (floor ${st.floor}); the way: ${await page.evaluate(() => $SM.get('game.citystates.beats.F6way'))}`);
       return true;
     },
   },
   {
-    id: 'smoke', name: 'the garrison of the deep mines: smoke in the hills (a lit hex near band-2 hills), its gate met on a trek', needs: ['charcoal'],
+    id: 'resin', name: "F7 resin: the resin-tappers' quest (met, an envoy for their task, the lost tappers found and walked home)", needs: ['peat'],
+    run: async ({ page, log, id }) => {
+      if (!(await questCs(page, log, id, 'resin_tappers'))) return false;
+      const ok = await advance(page, 5 * MIN, { until: () => Network.has('F7') });
+      if (!ok) log.block(id, `the resin-tappers joined but F7 is not in (beat ${await page.evaluate(() => ($SM.get('game.citystates.beats') || {}).F7)})`, '', '');
+      return ok;
+    },
+  },
+  {
+    id: 'smoke', name: 'the garrison of the deep mines: smoke in the hills (a lit hex within 2 of its site), its gate met on a trek', needs: ['charcoal'],
     run: async ({ page, log, id }) => {
       await restock(page);
       await goTo(page, 'city');
@@ -546,8 +606,16 @@ export const STAGES = [
       await restock(page);
       await goTo(page, 'city');
       const g = await page.evaluate(() => Network.garrison());
-      // the shafts need a lit beacon at the gate
-      await page.evaluate((g) => __qa.beaconsToward(g, 1), g);
+      // the shafts need a lit beacon at the gate: on a hex beside the site, off it
+      await page.evaluate((g) => {
+        const s = World.siteAt(g[0], g[1]);
+        const gate = s.hexes.flatMap((h) => District.neighbours(h)).filter((p) => World.siteAt(p[0], p[1]) !== s)
+          .sort((a, b) => Fire.distance(a, World.hex.gen.capital) - Fire.distance(b, World.hex.gen.capital));
+        for (const p of gate) {
+          if (Network.gateLit()) break;
+          __qa.beaconsToward(p, 0);
+        }
+      }, g);
       await page.clock.runFor(11000);
       const lit = await page.evaluate(() => Network.gateLit());
       if (!lit) log.note(id, 'no lit beacon next to the gate (the storm will fail)');
@@ -616,6 +684,7 @@ export const STAGES = [
       const packs = [{ steel: 60 }, { coal: 300, iron: 100 }];
       for (let i = 0, p = 0; i < 6 && p < packs.length && !(await csState(page, c.id)).city; i++) {
         if (p === 1) await restock(page);
+        await freeEnvoy(page, log, id);
         const sent = await page.evaluate(({ cid, pack }) => {
           if (!CityStates.sendEnvoy('capital', cid)) return CityStates.cantSend('capital', CityStates.byId(cid));
           for (const k in pack) CityStates.pack(k, pack[k]);
@@ -634,26 +703,6 @@ export const STAGES = [
       const beat = await page.evaluate(() => ($SM.get('game.citystates.beats') || {}).F9 || null);
       if (!beat) { log.block(id, `the forge-masters did not take the price: ${JSON.stringify(await csState(page, c.id))}`, '', ''); return false; }
       log.note(id, `F9's beat recorded (${beat}); F9 itself waits for F8 on the fuel ladder: ${await has(page, 'F9')}`);
-      return true;
-    },
-  },
-  {
-    id: 'harbourSeen', name: 'the drowned harbour seen on a trek (its scene marks the site)', needs: ['charcoal'],
-    run: async ({ page, log, id }) => {
-      const site = await page.evaluate(() => { const s = Network.harbourSite(); return s && { at: s.anchor, hexes: s.hexes, d: Fire.distance(s.anchor, World.hex.gen.capital), danger: +World.baseDangerAt(s.anchor[0], s.anchor[1]).toFixed(2) }; });
-      if (!site) { log.block(id, 'no drowned harbour site in this world', '', ''); return false; }
-      log.note(id, `the drowned harbour at ${site.at}: ${site.d} hexes, danger ${site.danger}`);
-      for (let i = 0; i < 4 && !(await page.evaluate(() => Network.flag('harbourSeen'))); i++) {
-        if (!(await embark(page))) return false;
-        const ring = await page.evaluate((hs) => hs.flatMap((h) => Fire.around(h[0], h[1], World.LIGHT_RADIUS)), site.hexes);
-        const r = await walkTo(page, ring, { stopAt: (e) => e && e.title === 'The Drowned Harbour', max: 400 });
-        if (r === 'event') { await clickEvent(page, 'go to the tower'); await settleEvents(page); }
-        const h = await walkHome(page);
-        log.note(id, `trek ${i + 1} to the harbour: ${r}/${h}`);
-      }
-      if (!(await page.evaluate(() => Network.flag('harbourSeen')))) { log.block(id, `four treks failed to see the drowned harbour ${site.d} hexes out`, '', ''); return false; }
-      const lit = await page.evaluate((at) => World.dangerAt(at[0], at[1]), site.at);
-      log.note(id, `seen; resettling it (B11's keepers, then F11) needs it lit: danger ${lit.toFixed(2)} against the best fuel's reach ${await page.evaluate(() => Fire.FUELS[($SM.get('game.cities.capital.hearth') || {}).fuel || 'wood'].cap)}`);
       return true;
     },
   },
@@ -680,12 +729,86 @@ export const STAGES = [
     },
   },
   {
-    id: 'blaze', name: 'the blaze tiers: F9 coke (forge-masters), F10 pitch, F11 whale oil (the drowned harbour), F12 rock oil (the black well), H9 the bloomery, H10, B9',
-    needs: ['coal', 'forgeMasters'],
+    id: 'coke', name: "F9 coke: the forge-masters' price paid, F8 in", needs: ['coal', 'forgeMasters'],
     run: async ({ page, log, id }) => {
       const ok = await advance(page, 10 * MIN, { until: () => Network.has('F9') });
       if (!ok) log.block(id, 'F9 not in after the forge-masters joined and F8 is in', '', '');
       return ok;
+    },
+  },
+  {
+    id: 'bloomery', name: "H9 the bloomery: a forge district in the forge-masters' city, touching its hearth quarter", needs: ['coal', 'forgeMasters'],
+    run: async ({ page, log, id }) => {
+      const city = await page.evaluate(() => Network.mastersCity());
+      await goTo(page, 'city');
+      const at = await page.evaluate((cid) => __qa.district(cid, 'forge'), city);
+      if (!at) {
+        const why = await page.evaluate((cid) => { const c = $SM.get('game.cities["' + cid + '"]'); return District.neighbours(c.hex).map((p) => `${p}:${Network.districtsFor(cid, p[0], p[1]).join('/') || '-'}`).join(' '); }, city);
+        log.block(id, `no forge district can go beside ${city}'s hearth quarter: ${why}`, '', '');
+        return false;
+      }
+      const ok = await advance(page, 10 * MIN, { until: () => Network.has('H9') });
+      if (!ok) log.block(id, `forge at ${at} but H9 not in (H8 ${await has(page, 'H8')}, bloomery ${await page.evaluate(() => Network.flag('bloomery'))})`, '', '');
+      return ok;
+    },
+  },
+  {
+    id: 'lanterns', name: 'B8 the marsh lantern: the bog-cutters joined (100) by the glow of a coal line', needs: ['coal', 'peat'],
+    run: async ({ page, log, id }) => {
+      const c = await nearestCs(page, 'bog_cutters');
+      if (!c) { log.note(id, 'the bog-cutters are ours already'); return has(page, 'B8'); }
+      await restock(page);
+      await goTo(page, 'city');
+      const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 120), c.at);
+      log.note(id, `a line to the bog-cutters got within ${near}`);
+      const ok = await advance(page, 90 * MIN, { arg: c.id, until: (cid) => !!CityStates.state(cid).city, slice: 30000 });
+      if (!ok) { log.block(id, `the bog-cutters not joined in 90 min of glow: influence ${(await csState(page, c.id)).inf | 0}, line within ${near}`, '', ''); return false; }
+      await advance(page, 3 * MIN, { until: () => Network.has('B8') });
+      return has(page, 'B8');
+    },
+  },
+  {
+    id: 'tar', name: "F10 pitch: the tar-keepers' quest (the raiders at the pits fought), their oath", needs: ['coke'],
+    run: async ({ page, log, id }) => {
+      if (!(await questCs(page, log, id, 'tar_keepers'))) return false;
+      const ok = await advance(page, 5 * MIN, { until: () => Network.has('F10') });
+      if (!ok) log.block(id, 'the tar-keepers swore but F10 is not in', '', '');
+      return ok;
+    },
+  },
+  {
+    id: 'harbour', name: 'F11 whale oil: the drowned harbour seen, lit, resettled (the keepers), a harbour district, the boats, the whales', needs: ['coal'],
+    run: async ({ page, log, id }) => {
+      const site = await page.evaluate(() => { const s = Network.harbourSite(); return s && { at: s.anchor, hexes: s.hexes, d: Fire.distance(s.anchor, World.hex.gen.capital), danger: +World.baseDangerAt(s.anchor[0], s.anchor[1]).toFixed(2) }; });
+      if (!site) { log.block(id, 'no drowned harbour site in this world', '', ''); return false; }
+      log.note(id, `the drowned harbour at ${site.at}: ${site.d} hexes, danger ${site.danger}`);
+      for (let i = 0; i < 4 && !(await page.evaluate(() => Network.flag('harbourSeen'))); i++) {
+        if (!(await embark(page))) return false;
+        const ring = await page.evaluate((hs) => hs.flatMap((h) => Fire.around(h[0], h[1], World.LIGHT_RADIUS)), site.hexes);
+        const r = await walkTo(page, ring, { stopAt: (e) => e && e.title === 'The Drowned Harbour', max: 400 });
+        if (r === 'event') { await clickEvent(page, 'go to the tower'); await settleEvents(page); }
+        log.note(id, `trek ${i + 1} to the harbour: ${r}/${await walkHome(page)}`);
+      }
+      if (!(await page.evaluate(() => Network.flag('harbourSeen')))) { log.block(id, `four treks failed to see the drowned harbour ${site.d} hexes out`, '', ''); return false; }
+      await restock(page);
+      await goTo(page, 'city');
+      const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 120), site.at);
+      await page.clock.runFor(11000);
+      const f = await page.evaluate((at) => !!Network.foundingSite(at[0], at[1]), site.at);
+      if (!f) { log.block(id, `the harbour's centre can't be resettled (line within ${near}, lit ${await page.evaluate((at) => !!World.hex.fire.lit[at[0] + at[1] * World.hex.gen.cols], site.at)}, fuel ${await page.evaluate(() => ($SM.get('game.cities.capital.hearth') || {}).fuel)})`, '', ''); return false; }
+      await page.evaluate((p) => Network.sendSettlers('capital', p[0], p[1]), site.at);
+      if (!(await embark(page))) return false;
+      log.note(id, `settlers to the harbour: ${await walkTo(page, site.at, { stopAt: () => false })}/${await walkHome(page)}`);
+      const city = await page.evaluate(() => $SM.get('game.network.story["the drowned harbour"]'));
+      if (!city) { log.block(id, 'the harbour was not resettled', '', ''); return false; }
+      await advance(page, 10 * MIN, { until: () => Network.flag('lighthouseLit') });
+      await goTo(page, 'city');
+      const h = await page.evaluate((cid) => __qa.district(cid, 'harbour'), city);
+      if (!h) log.note(id, 'no harbour district could go in the drowned harbour');
+      const ok = await advance(page, 15 * MIN, { until: () => Network.flag('boatsRelaunched') });
+      log.note(id, `keepers ${await page.evaluate(() => Network.flag('lighthouseLit'))}, boats ${ok}; B11 ${await has(page, 'B11')} (waits on B10, power 3), F11 ${await has(page, 'F11')} (waits on F10)`);
+      if (!ok) { log.block(id, 'the boats were not relaunched', '', ''); return false; }
+      return true;
     },
   },
   {
