@@ -308,16 +308,19 @@ test('each story city-state stands where the era that needs it reaches, on its o
     const g = World.hex.gen, field = World.hex.danger, danger = (x, y) => Danger.at(field, g.cols, x, y, 'normal'), T = WorldGen.TERRAIN;
     return CityStates.list().filter((c) => CityStates.story(c.t)).map((c) => {
       const sp = CityStates.TEMPERAMENTS[c.t].spawn, named = sp.terrain.filter((k) => T[k]), fuel = CityStates.storyFuel(c.t);
+      // a fuel's people: their hex and a hex of their terrain beside it on ground that line lights
+      const lit = CityStates.works(c.t) && CityStates.reach(g, danger, fuel, true), on = (p) => lit[p[0] + p[1] * g.cols] === 1;
+      const worked = !lit || (on(c.at) && District.neighbours(c.at).some((p) => on(p) && named.some((k) => g.terrain[p[0]][p[1]] === T[k])));
       return {
-        t: c.t, fuel, reach: CityStates.reach(g, danger, fuel)[c.at[0] + c.at[1] * g.cols] === 1,
+        t: c.t, fuel, worked, reach: CityStates.reach(g, danger, fuel)[c.at[0] + c.at[1] * g.cols] === 1,
         own: !named.length || named.some((k) => g.terrain[c.at[0]][c.at[1]] === T[k]), band: c.band <= sp.band[1],
         ground: c.ground ? c.ground.hexes.every((h) => g.terrain[h[0]][h[1]] === c.ground.terrain && World.hex.map[h[0]][h[1]] === c.ground.terrain) : null,
       };
     });
   });
   const r = await look();
-  expect(r.map((x) => x.fuel)).toEqual(['charcoal', 'charcoal', 'peat', 'coal', 'resin', 'coal', 'whale oil', 'rock oil']);
-  for (const x of r) expect(x, x.t).toMatchObject({ reach: true, own: true, band: true });
+  expect(r.map((x) => x.fuel)).toEqual(['charcoal', 'charcoal', 'peat', 'coal', 'coke', 'coal', 'whale oil', 'rock oil']);
+  for (const x of r) expect(x, x.t).toMatchObject({ reach: true, worked: true, own: true, band: true });
   expect(r.some((x) => x.ground === true)).toBe(true); // seed 4242: no swamp in charcoal's reach, so the bog-cutters' is made
   await page.reload();
   await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);

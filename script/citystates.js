@@ -304,34 +304,41 @@ var CityStates = {
 
 	/*
 	 * A story city-state stands where the era that needs it can reach it (ruling, design/text/qa-playthrough.md):
-	 * its hex within the glow of ground a line of the fuel before its gift tier lights. The fuel by the gift's tier
-	 * number (F7 -> F6 peat, B9 -> F8 coal, H6 -> F5 charcoal), and the rulings that differ from it
+	 * its hex within the glow of ground a line of the fuel before its gift tier lights, by the gift's tier number
+	 * (F7 -> F6 peat, B9 -> F8 coal, H6 -> F5 charcoal). One whose gift is a fuel (an F tier) works its own
+	 * ground for it (bog cuts, resin taps, tar pits, the forge), so its hex and a hex of its terrain beside it
+	 * stand on ground that line lights, not just in its glow (CityStates.works)
 	 */
-	STORY_FUEL: { tar_keepers: 'resin' }, // ruled: resin, not the rule's coke (F9)
 	storyFuel: function (t) {
-		if (CityStates.STORY_FUEL[t]) return CityStates.STORY_FUEL[t];
 		var tier = (CityStates.TEMPERAMENTS[t].gives[0] || {}).tier, n = tier ? parseInt(tier.slice(1), 10) - 1 : 0;
 		var f = null;
 		for (var k in Fire.FUELS) if (Fire.FUELS[k].tier === 'F' + n) f = k;
 		return f;
 	},
 
+	works: function (t) {
+		var tier = (CityStates.TEMPERAMENTS[t].gives[0] || {}).tier;
+		return !!tier && tier.charAt(0) === 'F';
+	},
+
 	// the hexes within the glow (GLOW_REACH) of ground a line of this fuel can cross from home (pure; Uint8Array):
-	// passable land up to the fuel's danger cap, its held ground (Fire.FUELS[].holds) up to `wet`, not across water
-	reach: function (gen, danger, fuel) {
+	// passable land up to the fuel's danger cap, its held ground (Fire.FUELS[].holds) up to `wet`, not across water.
+	// lit: that ground itself, without the glow
+	reach: function (gen, danger, fuel, lit) {
 		var G = WorldGen, F = Fire.FUELS[fuel], cols = gen.cols, rows = gen.rows, bits = Fire.groundBits(gen);
-		var lit = new Uint8Array(cols * rows), out = new Uint8Array(cols * rows), q = [gen.capital];
-		lit[gen.capital[0] + gen.capital[1] * cols] = 1;
+		var on = new Uint8Array(cols * rows), out = new Uint8Array(cols * rows), q = [gen.capital];
+		on[gen.capital[0] + gen.capital[1] * cols] = 1;
 		for (var i = 0; i < q.length; i++) {
 			for (var d = 0; d < 6; d++) {
 				var n = G.neighbour(q[i][0], q[i][1], d), x = n[0], y = n[1], k = x + y * cols;
-				if (x < 0 || y < 0 || x >= cols || y >= rows || lit[k]) continue;
+				if (x < 0 || y < 0 || x >= cols || y >= rows || on[k]) continue;
 				var t = gen.terrain[x][y];
 				if (!G.isPassable(t) || G.isWater(t) || danger(x, y) > (bits[k] & F.holds ? F.wet : F.cap)) continue;
-				lit[k] = 1;
+				on[k] = 1;
 				q.push(n);
 			}
 		}
+		if (lit) return on;
 		// the glow: GLOW_REACH rings round every lit hex
 		q.forEach(function (p) {
 			Fire.around(p[0], p[1], CityStates.GLOW_REACH).forEach(function (h) {
@@ -508,8 +515,23 @@ var CityStates = {
 		// outward; with none of its terrain in reach, the hex nearest that terrain, and a patch of it made there
 		var placeStory = function (t) {
 			var sp = CS.TEMPERAMENTS[t].spawn, fuel = CS.storyFuel(t), g = sp.guarantee;
-			var ok = fuel ? CS.reach(gen, danger, fuel) : null;
-			var near = function (x, y) { return (!ok || ok[idx(x, y)] === 1) && (!g || inReach(x, y)); };
+			var ok = fuel ? CS.reach(gen, danger, fuel) : null, lit = fuel && CS.works(t) ? CS.reach(gen, danger, fuel, true) : null;
+			var onTerrain = function (x, y) {
+				return sp.terrain.some(function (k) { return TERRAIN_OK[k] ? TERRAIN_OK[k](x, y) : key(x, y) === k; });
+			};
+			// lit whatever ground is made there: under the fuel's dry cap (made ground loses a held ground's reach)
+			var firm = function (x, y) { return lit[idx(x, y)] === 1 && danger(x, y) <= Fire.FUELS[fuel].cap; };
+			// ground the line lights beside the hex, that can be worked (its own land once they join); own: already
+			// of its terrain, else ground to make into it
+			var workable = function (x, y, own) {
+				return [0, 1, 2, 3, 4, 5].some(function (d) {
+					var n = G.neighbour(x, y, d);
+					return inside(n[0], n[1]) && (own ? lit[idx(n[0], n[1])] === 1 : firm(n[0], n[1])) && land(n[0], n[1]) && gen.siteAt[idx(n[0], n[1])] < 0 && (!own || onTerrain(n[0], n[1]));
+				});
+			};
+			var near = function (x, y) {
+				return (!ok || ok[idx(x, y)] === 1) && (!g || inReach(x, y)) && (!lit || (lit[idx(x, y)] === 1 && workable(x, y, true)));
+			};
 			var p = find(sp, near, true);
 			if (p) return add(t, p, null);
 			// no hex of its terrain in reach: the reachable free hex nearest one, inside its band or under it
@@ -524,10 +546,14 @@ var CityStates = {
 					q.push(n);
 				}
 			}
+			// (one that works its ground: on a lit hex with lit ground beside it to make into its terrain)
+			var patchable = function (x, y) {
+				return (!ok || ok[idx(x, y)] === 1) && (!g || inReach(x, y)) && (!lit || (firm(x, y) && workable(x, y, false)));
+			};
 			var best = null, bd = Infinity;
 			all.forEach(function (h) {
 				var dh = dist[idx(h[0], h[1])];
-				if (!free(h[0], h[1]) || !near(h[0], h[1]) || bandOf(h[0], h[1]) > sp.band[1] || dh < 0 || dh >= bd) return;
+				if (!free(h[0], h[1]) || !patchable(h[0], h[1]) || bandOf(h[0], h[1]) > sp.band[1] || dh < 0 || dh >= bd) return;
 				best = h;
 				bd = dh;
 			});
@@ -538,7 +564,10 @@ var CityStates = {
 			var cs = add(t, best, null);
 			if (terrain) { // (its own ground already, short of a "near" it wants: nothing to make)
 				var patch = [best].concat([0, 1, 2, 3, 4, 5].map(function (k) { return G.neighbour(best[0], best[1], k); }))
-					.filter(function (h) { return inside(h[0], h[1]) && land(h[0], h[1]) && gen.siteAt[idx(h[0], h[1])] < 0 && !taken(h[0], h[1]) && gen.terrain[h[0]][h[1]] !== T[terrain]; });
+					.filter(function (h) {
+						return inside(h[0], h[1]) && land(h[0], h[1]) && gen.siteAt[idx(h[0], h[1])] < 0 && !taken(h[0], h[1]) &&
+							gen.terrain[h[0]][h[1]] !== T[terrain] && (!lit || firm(h[0], h[1])); // its working ground lit
+					});
 				if (patch.length) {
 					cs.ground = { terrain: T[terrain], hexes: patch.map(function (h) { return [h[0], h[1], gen.terrain[h[0]][h[1]]]; }) };
 					CS.layGround(gen, cs);

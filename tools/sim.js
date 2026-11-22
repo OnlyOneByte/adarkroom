@@ -1007,10 +1007,16 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
       // on its own terrain, inside or under its band
       story: list.filter((c) => CS.story(c.t)).map((c) => {
         const sp = CS.TEMPERAMENTS[c.t].spawn, fuel = CS.storyFuel(c.t), T = G.TERRAIN;
-        const named = sp.terrain.filter((k) => T[k]);
+        const named = sp.terrain.filter((k) => T[k]), own = (x, y) => !named.length || named.some((k) => gen.terrain[x][y] === T[k]);
+        // one that works its ground for a fuel: its hex and a hex of its terrain beside it lit by that line
+        const lit = CS.works(c.t) ? CS.reach(gen, danger, fuel, true) : null, on = (x, y) => lit[x + y * gen.cols] === 1;
+        const worked = !lit || (on(c.at[0], c.at[1]) && [0, 1, 2, 3, 4, 5].some((d) => {
+          const [x, y] = G.neighbour(c.at[0], c.at[1], d);
+          return x >= 0 && y >= 0 && x < gen.cols && y < gen.rows && on(x, y) && own(x, y) && gen.siteAt[x + y * gen.cols] < 0;
+        }));
         return { t: c.t, fuel, ground: !!c.ground, d: G.distance(c.at, gen.capital),
-          reach: !fuel || CS.reach(gen, danger, fuel)[c.at[0] + c.at[1] * gen.cols] === 1,
-          terrain: !named.length || named.some((k) => gen.terrain[c.at[0]][c.at[1]] === T[k]), band: c.band <= sp.band[1] };
+          reach: !fuel || CS.reach(gen, danger, fuel)[c.at[0] + c.at[1] * gen.cols] === 1, worked,
+          terrain: own(c.at[0], c.at[1]), band: c.band <= sp.band[1] };
       }),
     });
   }
@@ -1036,7 +1042,7 @@ export function cityStatesTable({ out, seeds, feel, gift, unvalued, CS }) {
   lines.push(`placed: ${out.map((o) => o.n).join(', ')} city-states; fallen cities resettled by them (median) ${med(out.map((o) => o.fallen))}; ` +
     `herders inside the ember reach (min) ${Math.min(...out.map((o) => o.herdersInReach))}; potters inside it ${out.filter((o) => o.pottersInReach).length}/${seeds} seeds`);
   const story = out.flatMap((o) => o.story);
-  lines.push(`story city-states where their era reaches: ${story.filter((x) => x.reach).length}/${story.length}; on ground made for them ${story.filter((x) => x.ground).length}; ` +
+  lines.push(`story city-states where their era reaches: ${story.filter((x) => x.reach).length}/${story.length}; their fuel's working ground lit ${story.filter((x) => x.worked).length}/${story.length}; on ground made for them ${story.filter((x) => x.ground).length}; ` +
     'hexes out (median): ' + [...new Set(story.map((x) => x.t))].map((t) => `${t} ${median(story.filter((x) => x.t === t).map((x) => x.d))}`).join(', '));
   lines.push('');
   lines.push('| won by influence | seeds lined | hexes from the capital (median) | beacons (median) | glow G (median) | S (median) | influence / min (median) | rival pull / min past 50 (median) | minutes to 100 (median / max) |');
@@ -1072,6 +1078,7 @@ export function checkCityStates({ out, seeds, feel, gift, unvalued, CS }) {
     if (o.glowFromHome) fails.push(`seed ${o.seed}: ${o.glowFromHome} city-states glow from the capital's hearth alone, want a beacon line to each`);
     for (const st of o.story) {
       if (!st.reach) fails.push(`seed ${o.seed}: the ${st.t} stand where a line of ${st.fuel} can't glow on them`);
+      if (!st.worked) fails.push(`seed ${o.seed}: the ${st.t} have no ground of their own a line of ${st.fuel} lights, to work their fuel on`);
       if (!st.terrain) fails.push(`seed ${o.seed}: the ${st.t} are off their own terrain`);
       if (!st.band) fails.push(`seed ${o.seed}: the ${st.t} stand past their band`);
     }
