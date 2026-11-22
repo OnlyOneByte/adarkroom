@@ -299,10 +299,11 @@ var Powers = {
 	 * scene calls these through its onCombat and onAttack)
 	 */
 	squadButtons: function (id) {
-		var a = Armies.byId(id), box = $('#attackButtons');
-		$('<div>').attr('id', 'stormArmy').text(Armies.men(Armies.soldiers(a))).prependTo($('#buttons', Events.eventPanel()));
+		// (looked up in the event's panel: a storm that is an event's first scene draws before the panel is shown)
+		var a = Armies.byId(id), panel = Events.eventPanel(), box = $('#attackButtons', panel);
+		$('<div>').attr('id', 'stormArmy').text(Armies.men(Armies.soldiers(a))).prependTo($('#buttons', panel));
 		Armies.SQUADS.forEach(function (s) {
-			if (!a.squads[s.weapon] || $('#squad_' + s.weapon.replace(/ /g, '-')).length) return;
+			if (!a.squads[s.weapon] || $('#squad_' + s.weapon.replace(/ /g, '-'), panel).length) return;
 			var W = Armies.weapon(s.weapon);
 			new Button.Button({
 				id: 'squad_' + s.weapon.replace(/ /g, '-'), text: _(s.id), cooldown: W.cd,
@@ -387,8 +388,9 @@ var Powers = {
 			var ticks = Math.round(M.minutes * 60 / Fire.TICK);
 			$SM.set('game.armies.trained["' + to + '"]', Armies.trained(to) + P.joiners, true);
 			$SM.set('game.armies.after["' + to + '"]', { loss: M.loss, ticks: ticks, left: ticks }, true);
-		} else {
-			// the old miners' notes: a head start on the coal (provisional: a store of it in the army's city)
+		} else if (P.headStart !== null) {
+			// the old miners' notes: a head start on the coal (provisional: a store of it in the army's city);
+			// a power whose entry says headStart: null leaves nothing behind
 			$SM.add(City.storePath(home, 'coal'), Powers.HEAD_START);
 		}
 		Powers.waver(id);

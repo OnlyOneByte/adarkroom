@@ -83,8 +83,9 @@ var Danger = {
 		var spike = new Float32Array(n), src = new Float32Array(n), dist = new Int16Array(n).fill(-1), queue = [];
 		gen.sites.forEach(function (s) {
 			var v = Danger.SPIKE[s.kind];
-			// the garrison of the deep mines is old-world, but low-tech (POWERS §3: danger 2-4): no spike
-			if (!v || s.garrison || s.wardens) return; // (nor the pass wardens': POWERS §3 danger 4-5)
+			// the garrison of the deep mines is old-world, but low-tech (POWERS §3: danger 2-4): no spike; the drowned
+			// fleet stands at its sea's own danger (POWERS §3: 5-7)
+			if (!v || s.garrison || s.fleet || s.wardens) return; // (nor the pass wardens': POWERS §3 danger 4-5)
 			s.hexes.forEach(function (h) {
 				var k = h[0] + h[1] * cols;
 				spike[k] = src[k] = v;

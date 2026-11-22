@@ -1,0 +1,23 @@
+/* the drowned harbour's boatyard in the town panel, under the army (script/powers/fleet.js) */
+div#cityBoatyard {
+	margin-top: 10px;
+	clear: both;
+	font-size: 14px;
+}
+
+div#cityBoatyard:before {
+	content: attr(data-legend);
+	position: relative;
+	top: -5px;
+	font-size: 16px;
+}
+
+div#cityBoatyard .csLine {
+	color: #666;
+	margin-bottom: 4px;
+}
+
+div#cityBoatyard .button {
+	float: left;
+	margin: 4px 8px 4px 0px;
+}
