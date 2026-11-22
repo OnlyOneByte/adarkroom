@@ -618,7 +618,33 @@ export const STAGES = [
     },
   },
   {
-    id: 'resin', name: "F7 resin: the resin-tappers' quest (met, a peat line's glow opens talks, the lost tappers found and walked home)", needs: ['peatFire'],
+    id: 'peatCarts', name: "peat home: carts along the bog-cutters' road (laid when they joined), the capital's hearth on peat", needs: ['peatFire'],
+    run: async ({ page, log, id }) => {
+      const city = await page.evaluate(() => CityStates.state(CityStates.list().find((x) => x.t === 'bog_cutters').id).city);
+      const road = await page.evaluate((cid) => ({ joined: Network.joinedTo(cid), carts: Network.cartsTo(cid), B6: Network.has('B6') }), city);
+      log.note(id, `${city}'s road: ${JSON.stringify(road)}`);
+      if (!road.carts.includes('capital')) {
+        // a road not yet lit end to end: beacons along it (the carts need every road hex lit)
+        await goTo(page, 'city');
+        await page.evaluate((cid) => { const at = $SM.get('game.cities["' + cid + '"].hex'); __qa.beaconsToward(at, 1, 160); }, city);
+        await page.clock.runFor(11000);
+      }
+      // a cart of peat every few minutes (the road box's "send to the capital"), until the capital burns peat
+      const ok = await advance(page, 60 * MIN, {
+        slice: 60000, arg: city,
+        each: () => page.evaluate((cid) => { if (Network.cartsTo(cid).includes('capital')) Network.sendCart(cid, 'capital', 'peat'); }, city),
+        until: () => ($SM.get('game.cities.capital.hearth') || {}).fuel === 'peat',
+      });
+      if (!ok) {
+        const st = await page.evaluate((cid) => ({ carts: Network.cartsTo(cid), joined: Network.joinedTo(cid), peat: $SM.get(City.storePath(cid, 'peat'), true), home: $SM.get('stores.peat', true), hearth: $SM.get('game.cities.capital.hearth') }), city);
+        log.block(id, `the capital never burned peat: ${JSON.stringify(st)}`, '', '');
+        return false;
+      }
+      return true;
+    },
+  },
+  {
+    id: 'resin', name: "F7 resin: the resin-tappers' quest (met, a peat line's glow opens talks, the lost tappers found and walked home)", needs: ['peatCarts'],
     run: async ({ page, log, id }) => {
       if (!(await questCs(page, log, id, 'resin_tappers'))) return false;
       const ok = await advance(page, 5 * MIN, { until: () => Network.has('F7') });
@@ -732,7 +758,7 @@ export const STAGES = [
     },
   },
   {
-    id: 'forgeMasters', name: "the forge-masters' price (F9's beat): met, an envoy's gifts to 25, the price (300 coal, 100 iron) at their gate", needs: ['charcoal'],
+    id: 'forgeMasters', name: "the forge-masters' price (F9's beat): met, an envoy's gifts to 25, the price (300 coal, 100 iron) at their gate", needs: ['coal'],
     run: async ({ page, log, id }) => {
       const c = await nearestCs(page, 'forge_masters');
       if (!c) { log.block(id, 'no forge-masters on the map', '', ''); return false; }

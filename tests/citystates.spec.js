@@ -349,3 +349,23 @@ test('each story city-state stands where the era that needs it reaches, on its o
   expect(await look()).toEqual(r);
   expect(errors).toEqual([]);
 });
+
+test('a city-state that joins lays a road to the nearest road or city, as a founded city does: carts can reach it', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const r = await page.evaluate(() => {
+    const c = nearest('herders'), roadsBefore = Network.roads();
+    const id = CityStates.join(c);
+    const roads = Network.roads(), g = World.hex.gen;
+    let tiles = 0;
+    for (const p of Fire.around(c.at[0], c.at[1], Network.ROAD_REACH)) if (p[0] >= 0 && p[1] >= 0 && p[0] < g.cols && p[1] < g.rows && World.hex.map[p[0]][p[1]] === World.TILE.ROAD) tiles++;
+    return { id, d: Fire.distance(c.at, cap), joined: roads[id] === roads.capital, before: Object.keys(roadsBefore).length, tiles, delta: Object.values($SM.get('game.world.hex.delta')).filter((t) => t === World.TILE.ROAD).length };
+  });
+  expect(r.d).toBeLessThanOrEqual(12); // (ROAD_REACH: the nearest herders are 8 out on seed 4242)
+  expect(r.joined).toBe(true);
+  expect(r.tiles).toBeGreaterThan(0);
+  expect(r.delta).toBeGreaterThan(0); // saved with the map
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
+  expect(await page.evaluate((id) => Network.roads()[id] === Network.roads().capital, r.id)).toBe(true);
+  expect(errors).toEqual([]);
+});

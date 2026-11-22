@@ -1219,8 +1219,13 @@ var CityStates = {
 		$SM.set('game.citystates.cs["' + c.id + '"].envoy', false, true);
 		// home: a city of ours on the map
 		World.hex.map[c.at[0]][c.at[1]] = World.TILE.VILLAGE;
-		if (World.state) World.state.map[c.at[0]][c.at[1]] = World.TILE.VILLAGE;
-		else World.saveHex(World.worldFlags());
+		// and a road to the nearest road or city, as a founded city lays one (Network.settle): carts can reach it
+		Network.layRoad(c.at, World.hex.map);
+		Network._kinds = null; // (the map changed in place: the roads are read again)
+		if (World.state) {
+			World.state.map[c.at[0]][c.at[1]] = World.TILE.VILLAGE;
+			Network.layRoad(c.at, World.state.map); // the trek's copy is what home keeps
+		} else World.saveHex(World.worldFlags());
 		CS.index();
 		// fixes C19: every name in the pool is a place, so the joining line names its people
 		Notifications.notify(null, CS.fill(_('the people of {name} carry their coals to the line. they\'re part of the empire now.'), c));
