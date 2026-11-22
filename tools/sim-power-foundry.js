@@ -12,6 +12,7 @@
  *   rams      40 steel swords, 10 riflemen, 4 rams and 4 blasting charges press: brick shrugs them off
  *   starve    the rough army waits them out: they dig their own iron, the army runs out of meat first
  *   few       20 bayonets and 20 bombers: the walls come down, the storm is lost (50-80% of them)
+ *   masters   the storm's army again, the forge-masters won first: MASTERS_BRICK less brick to bring down
  * And the steel: grenades for 20 bombers at the armoury, steelworkers' time with and without coke.
  */
 import fs from 'node:fs';
@@ -35,6 +36,7 @@ const KITS = {
   rams: { squads: { 'steel sword': 40, rifle: 10 }, ammo: { bullets: 10 * CARRY }, gear: { ram: 4, 'blasting charge': 4 }, stance: 'press' },
   starve: { squads: { bayonet: 50, grenade: 20 }, ammo: { grenade: 20 * CARRY }, gear: {}, stance: 'wait' },
   few: { squads: { bayonet: 20, grenade: 20 }, ammo: { grenade: 20 * CARRY }, gear: {}, stance: 'press' },
+  masters: { squads: { bayonet: 50, grenade: 20 }, ammo: { grenade: 20 * CARRY }, gear: {}, stance: 'press', masters: true },
 };
 
 // the game with the foundry in it (the shared loader stops at script/powers.js; the village's jobs for the steel)
@@ -47,12 +49,16 @@ function loadFoundry(loadGame, rand) {
 // the siege on the tick, as Armies.besiege runs it for a power (Powers.prepare: always supplied, charges
 // kept), its own food spent as Armies.supply does on lit land; then the storm, fought by the numbers
 function siege(ctx, P, kit, roll, steps) {
-  const { Armies: A, Powers: W } = ctx;
+  const { Armies: A, Powers: W, Foundry: FD } = ctx;
   const army = { squads: { ...kit.squads }, ammo: { ...kit.ammo }, gear: { ...kit.gear }, hurt: 0 };
+  // (the forge-masters won before the siege: the game asks its city-states, the sim says so)
+  const won = FD.mastersWon;
+  FD.mastersWon = () => !!kit.masters;
   const start = A.soldiers(army), s = W.newSiege(P.id, start);
+  FD.mastersWon = won;
   let food = A.foodFor(start, steps) - Math.ceil(start * steps / 2), due = 0;
   s.stance = kit.stance;
-  const out = { start, ticks: 0, outcome: null, lost: 0, worn: 0 };
+  const out = { start, ticks: 0, outcome: null, lost: 0, worn: 0, walls: s.walls };
   while (A.soldiers(army) > 0 && out.ticks < 360) {
     out.ticks++;
     due += A.soldiers(army) / 2;
@@ -193,7 +199,7 @@ export function foundryTable({ out, seeds, steel, needs }) {
       `${fmt(median(r.filter((x) => x.stormSeconds !== undefined).map((x) => x.stormSeconds)), 0)} | ${fmt(100 * median(loss), 0)}% / ${fmt(100 * Math.max(...loss), 0)}% |`);
   }
   lines.push('');
-  lines.push('storm/starve: 50 bayonets, 20 bombers (5 grenades each); rams: 40 steel swords, 10 riflemen, 4 rams, 4 charges; few: 20 bayonets, 20 bombers.');
+  lines.push('storm/starve: 50 bayonets, 20 bombers (5 grenades each); rams: 40 steel swords, 10 riflemen, 4 rams, 4 charges; few: 20 bayonets, 20 bombers; masters: the storm army, the forge-masters won first.');
   const d = placed.map((o) => o.distance), dz = placed.map((o) => o.danger), m = placed.map((o) => o.march).filter(Boolean);
   lines.push(`the foundry (WorldGen._foundry): placed ${placed.length}/${seeds}, ${median(d)} hexes out (median, ${Math.min(...d)}-${Math.max(...d)}), ` +
     `danger ${fmt(Math.min(...dz))}-${fmt(Math.max(...dz))} (POWERS §3: 5-6), on hills ${placed.filter((o) => o.hills).length}/${seeds}, ` +
@@ -207,7 +213,7 @@ export function foundryTable({ out, seeds, steel, needs }) {
 }
 
 // The guards CI holds the foundry to (against provisional numbers in script/powers/foundry.js)
-export function checkFoundry({ out, needs }) {
+export function checkFoundry({ out, needs, FD }) {
   const fails = [];
   if (needs !== 'F9') fails.push(`the armoury's grenadier needs ${needs}, want F9 (coke)`);
   for (const o of out) {
@@ -237,6 +243,12 @@ export function checkFoundry({ out, needs }) {
     // too few: the walls come down, the storm is lost at 50-80% (POWERS §1)
     if (o.few.outcome !== 'routed' || o.few.stormSeconds === undefined) fails.push(`seed ${o.seed}: 20 bayonets and 20 bombers ended ${o.few.outcome} at the foundry, want a lost storm`);
     else if (!(o.few.routLoss >= 0.5 - 1e-9 && o.few.routLoss <= 0.8 + 1e-9)) fails.push(`seed ${o.seed}: a lost storm at the foundry cost ${(100 * o.few.routLoss).toFixed(0)}%, want 50-80%`);
+  }
+  // the forge-masters won first: MASTERS_BRICK less of it, so the same army breaches sooner, for no more
+  for (const o of out.filter((x) => x.placed)) {
+    if (o.masters.walls !== o.storm.walls - FD.MASTERS_BRICK) fails.push(`seed ${o.seed}: with the forge-masters won the foundry has ${o.masters.walls} brick, want ${o.storm.walls - FD.MASTERS_BRICK}`);
+    if (o.masters.outcome !== 'broken') fails.push(`seed ${o.seed}: the rough army, the forge-masters won, did not break the foundry (${o.masters.outcome})`);
+    else if (!(o.masters.breachMinutes < o.storm.breachMinutes) || o.masters.lost > o.storm.lost) fails.push(`seed ${o.seed}: winning the forge-masters first made the breach no sooner, or dearer`);
   }
   const s = median(out.filter((o) => o.placed && o.storm.stormSeconds !== undefined).map((o) => o.storm.stormSeconds));
   if (!(s <= 120)) fails.push(`the foundry's storm took ${s} s (median), want 120 or less`);

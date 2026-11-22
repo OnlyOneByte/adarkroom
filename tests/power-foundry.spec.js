@@ -180,7 +180,7 @@ test('the foundry broken from a save near it: grenades from coke steel, brick th
   });
   expect(fed.after).toBe(fed.before);
   expect(fed.supplied).toBe(true);
-  expect(fed.walls).toBe(800);
+  expect(fed.walls).toBe(800); // (the forge-masters not won: all of its brick)
 
   // press the walls: 4 rams wear none of the brick; each grenade thrown brings down GRENADE_HIT
   await p2.evaluate(() => Armies.stance(Armies.list()[0].id, 'press'));
@@ -253,19 +253,24 @@ test('the foundry broken from a save near it: grenades from coke steel, brick th
   expect(errors).toEqual([]);
 });
 
-test('the foundry with no grenades: rams and charges shrug off its brick, waiting them out the army goes hungry first; grenades wait for coke', async ({ page, browser }) => {
+test('the foundry with no grenades: rams and charges shrug off its brick (200 less of it, the forge-masters won first), waiting them out the army goes hungry first; grenades wait for coke', async ({ page, browser }) => {
   test.setTimeout(240000);
   const { save } = await foundrySave(page);
   const p2 = await browser.newPage();
   const errors = await openGame(p2, { save });
   await p2.evaluate(helpers);
   const r = await p2.evaluate(() => {
-    $SM.setM('stores', { 'blasting charge': 4 });
+    // no grenades: the grenadiers stood down, and any an income tick made before the helpers ran are gone
+    $SM.set('game.workers["grenadier"]', 0);
+    $SM.setM('stores', { 'blasting charge': 4, grenade: 0 });
+    // the forge-masters won before the siege (joined: their price, influence or force)
+    const masters = CityStates.list().find((c) => c.t === 'forge_masters');
+    CityStates.join(masters, 'influence');
     quiet(() => {
       Powers.marchOn('capital', 'foundry');
       for (let i = 0; i < 300 && Armies.list()[0].state === 'march'; i++) tick();
     });
-    const id = Armies.list()[0].id;
+    const id = Armies.list()[0].id, walls = Armies.byId(id).siege.walls;
     Armies.stance(id, 'press');
     let worn = 0, ticks = 0;
     for (; ticks < 100 && Armies.byId(id) && !Armies.byId(id).siege.over; ticks++) {
@@ -274,8 +279,10 @@ test('the foundry with no grenades: rams and charges shrug off its brick, waitin
       worn += w - Armies.byId(id).siege.walls;
     }
     const a = Armies.byId(id);
-    return { worn, over: a.siege.over, charges: a.gear['blasting charge'], rams: a.gear.ram, ticks };
+    return { walls, won: Foundry.mastersWon(), worn, over: a.siege.over, charges: a.gear['blasting charge'], rams: a.gear.ram, ticks };
   });
+  expect(r.won).toBe(true);
+  expect(r.walls).toBe(800 - 200); // (Foundry.MASTERS_BRICK)
   expect(r.worn).toBe(0);
   expect(r.charges).toBe(4);
   expect(r.over.broken).toBe(true); // the cannon break the line under the walls

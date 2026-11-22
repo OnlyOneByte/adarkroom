@@ -10,6 +10,8 @@
  *   - starving fails: they mine their own iron (the siege is always supplied; their stores never run down)
  *   - grenades come from the armoury's grenadier once coke is in (F9, Outside._INCOME), and with coke the
  *     steelworks make more steel (Foundry.COKE_STEEL)
+ *   - the hill towns trade with it: with the forge-masters won before the siege, its walls are short
+ *     Foundry.MASTERS_BRICK of brick (POWERS §2: winning them first weakens its stores)
  * A breach, then a storm the wanderer leads; the aftermath unlocks H11 (Fire.unlock), whose scene
  * (Events.Blaze.furnace) plays straight after.
  *
@@ -29,6 +31,7 @@ var Foundry = {
 	PAST: 5,               // provisional: hexes further from home than the garrison of the deep mines, if it can
 	GRENADE_HIT: 10,       // provisional: brick a grenade thrown at the walls brings down
 	COKE_STEEL: 2,         // provisional: steel a steelworker makes from an iron and a coal once coke is in
+	MASTERS_BRICK: 200,    // provisional: brick the foundry lacks when the forge-masters are won before the siege
 
 	// the entry in the power framework (POWERS §3, band 2-3: 80 men, cannon (15), 800 of brick, their own iron)
 	POWER: {
@@ -214,7 +217,9 @@ var Foundry = {
 	};
 	Powers.newSiege = function (id) {
 		var s = newSiege.apply(Powers, arguments);
-		if (id === Foundry.ID) s.foundry = true;
+		if (id !== Foundry.ID) return s;
+		s.foundry = true;
+		if (Foundry.mastersWon && Foundry.mastersWon()) s.walls = s.wallsMax = s.walls - Foundry.MASTERS_BRICK;
 		return s;
 	};
 	Armies.siegeTick = function (siege) {
@@ -260,6 +265,11 @@ var Foundry = {
 	// the forge-masters of the hill towns are known (blaze-draft scenes 1-2 change a line for it)
 	mastersMet: function () {
 		return CityStates.list().some(function (c) { return c.t === 'forge_masters' && CityStates.state(c.id).met; });
+	},
+
+	// ... or won: joined, by their price, influence or force (the siege asks when it is pitched)
+	mastersWon: function () {
+		return CityStates.list().some(function (c) { return c.t === 'forge_masters' && !!CityStates.state(c.id).city; });
 	},
 
 	/*
