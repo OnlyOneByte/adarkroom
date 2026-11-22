@@ -21,7 +21,9 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const FILES = ['script/outside.js', 'script/powers/foundry.js'];
+// the powers placed before it (the shared loader has the fleet's), then the foundry
+const BEFORE = ['script/powers/riders.js'];
+const FILES = ['script/outside.js', ...BEFORE, 'script/powers/foundry.js'];
 
 const median = (a) => {
   if (!a.length) return null;
@@ -145,7 +147,7 @@ function march(ctx, gen, danger, lit, site, kit) {
 
 // the same sites but the foundry's, the garrison's included
 function othersSame(a, b, skip) {
-  if (a.sites.length !== b.sites.length || a.garrison !== b.garrison) return false;
+  if (a.sites.length !== b.sites.length || a.garrison !== b.garrison || a.riders !== b.riders) return false;
   return a.sites.every((s, i) => i === skip || JSON.stringify(s) === JSON.stringify(b.sites[i]));
 }
 
@@ -154,6 +156,7 @@ export function simulateFoundry({ seeds, firstSeed = 1, loadGame, seeded }) {
   const rand = seeded();
   const { ctx } = loadFoundry(loadGame, rand);
   const base = loadGame(seeded()).ctx;
+  for (const f of BEFORE) vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), base, { filename: f });
   const { World: W, WorldGen: G, Danger: D, Powers: PW, Foundry: FD, Outside } = ctx;
   const P = PW.byId('foundry'), roll = () => rand.next(), out = [];
   for (let seed = firstSeed; seed < firstSeed + seeds; seed++) {
@@ -161,7 +164,7 @@ export function simulateFoundry({ seeds, firstSeed = 1, loadGame, seeded }) {
     const gen = G.generate(seed, W.generateMap(G.rng(seed)));
     const plain = base.WorldGen.generate(seed, base.World.generateMap(base.WorldGen.rng(seed)));
     const field = D.field(gen), site = gen.foundry >= 0 ? gen.sites[gen.foundry] : null;
-    const o = { seed, placed: !!site, others: othersSame(gen, plain, gen.foundry) };
+    const o = { seed, placed: !!site, others: othersSame(gen, plain, gen.foundry), own: !site || (!site.garrison && site.power === 'foundry' && gen.foundry !== gen.riders) };
     // the city-states as the world without it places them, none on its ground
     const pf = D.field(plain), cs = ctx.CityStates.place(gen, (x, y) => D.at(field, gen.cols, x, y, 'normal'));
     o.states = JSON.stringify(cs) === JSON.stringify(base.CityStates.place(plain, (x, y) => base.Danger.at(pf, plain.cols, x, y, 'normal')));
@@ -219,6 +222,7 @@ export function checkFoundry({ out, needs, FD }) {
   for (const o of out) {
     if (!o.placed) { fails.push(`seed ${o.seed}: no complex moved for the foundry`); continue; }
     if (!o.others) fails.push(`seed ${o.seed}: a site other than the foundry's moved`);
+    if (!o.own) fails.push(`seed ${o.seed}: the foundry took a complex another power holds`);
     if (!o.states) fails.push(`seed ${o.seed}: the city-states are placed otherwise than in the world without the foundry`);
     if (!o.clear) fails.push(`seed ${o.seed}: a city-state's land is on or next to the foundry's site`);
     // where it stands: band 2-3 hills an army can reach, a coke line to its camp
