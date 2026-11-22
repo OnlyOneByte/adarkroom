@@ -46,6 +46,28 @@ test('the hex map opens with 64 city-states: 8 story ones, the guarantees, the Î
   expect(errors).toEqual([]);
 });
 
+test('placement keeps its order when a site moves: freeing a complex far from home leaves the other city-states where they were', async ({ page }) => {
+  const errors = await openGame(page);
+  const r = await page.evaluate(() => {
+    const out = [];
+    for (const seed of [1, 2, 3, 4242]) {
+      const gen = WorldGen.generate(seed, World.generateMap(WorldGen.rng(seed))), field = Danger.field(gen);
+      const danger = (x, y) => Danger.at(field, gen.cols, x, y, 'normal');
+      const before = CityStates.place(gen, danger);
+      // a power moves the complex furthest from home (its hexes plain ground now): where it stood is free land
+      const far = gen.sites.filter((s) => s.kind === 'complex').sort((a, b) => WorldGen.distance(b.anchor, gen.capital) - WorldGen.distance(a.anchor, gen.capital))[0];
+      far.hexes.forEach((h) => { gen.siteAt[h[0] + h[1] * gen.cols] = -1; });
+      const after = CityStates.place(gen, danger), at = (c) => c.at.join(',');
+      const kept = new Set(after.map(at));
+      out.push(before.filter((c) => kept.has(at(c))).length);
+    }
+    return out;
+  });
+  // (on a single shuffle of all free land, nearly every one moved)
+  for (const kept of r) expect(kept).toBeGreaterThanOrEqual(56);
+  expect(errors).toEqual([]);
+});
+
 test('a city-state is won by influence from a fresh save: a beacon line to the herders, the stranger at 25, they join at 100', async ({ page }) => {
   const errors = await townWithCityStates(page);
   const r = await page.evaluate(() => {

@@ -431,14 +431,17 @@ var CityStates = {
 			var i = idx(x, y);
 			return openA[i] === 1 && !blocked[i] && (fallen || gen.siteAt[i] < 0);
 		};
-		// every free land hex once, in a seeded order, to pick from
-		var all = [];
-		for (var y = 0; y < rows; y++) for (var x = 0; x < cols; x++) if (openA[idx(x, y)] && gen.siteAt[idx(x, y)] < 0) all.push([x, y]);
-		for (var i = all.length - 1; i > 0; i--) {
-			var j = Math.floor(rand() * (i + 1)), s = all[i];
-			all[i] = all[j];
-			all[j] = s;
+		// every free land hex once, in a seeded order, to pick from: each hex's place in it is its own (a hash of
+		// the seed and the hex), so a site a power moves elsewhere leaves the rest in order
+		var all = [], order = new Float64Array(cols * rows);
+		for (var y = 0; y < rows; y++) {
+			for (var x = 0; x < cols; x++) {
+				if (!openA[idx(x, y)] || gen.siteAt[idx(x, y)] >= 0) continue;
+				all.push([x, y]);
+				order[idx(x, y)] = G.rng(gen.seed ^ 0xC17E57A7 ^ Math.imul(x + 1, 73856093) ^ Math.imul(y + 1, 19349663))();
+			}
 		}
+		all.sort(function (a, b) { return order[idx(a[0], a[1])] - order[idx(b[0], b[1])] || idx(a[0], a[1]) - idx(b[0], b[1]); });
 		// the first hex that fits, trying looser windows until one does: the story ones must be placed.
 		// extra: a guarantee (inside the reach) that every window keeps
 		// inward: the band widens toward home only, and only on its own terrain (a story city-state's reach)
