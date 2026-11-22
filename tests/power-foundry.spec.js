@@ -128,6 +128,8 @@ test('the foundry broken from a save near it: grenades from coke steel, brick th
   await p2.evaluate(helpers);
   // the same world: the generator moves the same complex for it on every load
   expect(await p2.evaluate(() => Foundry.anchor())).toEqual(site.at);
+  // ... and the fleet, put out on the water at game time, takes another complex (it skips a power's)
+  expect(await p2.evaluate(() => { const f = Fleet.site(); return !f || f !== Foundry.site(); })).toBe(true);
 
   // with coke, a steelworker makes twice the steel; the grenadiers make the first grenades
   const steel = await p2.evaluate(() => { Outside.updateVillageIncome(); return { per: Outside._INCOME.steelworker.stores.steel, income: $SM.getIncome('steelworker').stores.steel }; });
