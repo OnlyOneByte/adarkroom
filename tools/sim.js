@@ -53,6 +53,7 @@ const KITS = [
   { name: 'future range (250 water), steel sword, rifle, s armour', water: 250, hp: 45, weapons: ['steel sword', 'rifle'], meat: 90, medicine: 8, bullets: 60 },
 ];
 const TREKS_PER_KIT = 10;
+const DEATH_SEEDS = 64; // the CI's death-rate order is read over this many seeds (check)
 
 export function loadGame(rand) {
   const store = {};
@@ -1101,7 +1102,8 @@ export function table({ results }, seeds) {
 }
 
 // The guards CI holds the curve to.
-export function check({ results, curve }) {
+// deaths: the run the death-rate order is read from (the CI's own 6 seeds by default)
+export function check({ results, curve }, deaths = { results }) {
   const fails = [];
   for (const c of curve) {
     // mean danger per 5-hex ring rises (within a hair, for the pockets) out to the heart's distance
@@ -1112,7 +1114,7 @@ export function check({ results, curve }) {
       }
     }
   }
-  const rate = (d) => results[d].deaths / results[d].treks;
+  const rate = (d) => deaths.results[d].deaths / deaths.results[d].treks;
   if (!(rate('gentle') < rate('normal') && rate('normal') < rate('harsh'))) {
     fails.push(`death rates not gentle < normal < harsh: ${['gentle', 'normal', 'harsh'].map((d) => rate(d).toFixed(3)).join(', ')}`);
   }
@@ -1157,7 +1159,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   (await import('./sim-power-riders.js')).run({ seeds, ci, loadGame, seeded }); // power 2, the cinder riders (exits 1 on a --ci fail)
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers), checkPowerFleet(fleet));
+    // the death-rate order over 64 fixed seeds: on 6, any change to the world re-rolls the trek bot's dice and can tie gentle with normal
+    const deaths = simulate({ seeds: DEATH_SEEDS, treks });
+    console.log(`\ndeath rates over ${DEATH_SEEDS} seeds: ${['gentle', 'normal', 'harsh'].map((d) => (deaths.results[d].deaths / deaths.results[d].treks).toFixed(3)).join(' / ')} (gentle / normal / harsh)`);
+    const fails = check(run, deaths).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers), checkPowerFleet(fleet));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);
