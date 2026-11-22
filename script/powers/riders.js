@@ -82,12 +82,14 @@ var Riders = {
 			}
 			return true;
 		};
+		// the camp itself also keeps off the natural formations (no site stands on one); its wells needn't
+		var campLand = function (x, y) { return land(x, y) && gen.formationAt[x + y * cols] < 0; };
 		var sand = function (x, y) { return gen.terrain[x][y] === T.desert ? 0 : gen.terrain[x][y] === T.barrens ? 1 : 2; };
 		var lo = R.DANGER[0], hi = R.DANGER[1], spots = [];
 		for (var y = 0; y < rows; y++) {
 			for (var x = 0; x < cols; x++) {
 				var d = field[x + y * cols];
-				if (!land(x, y) || G.distance([x, y], cap) < R.MIN_OUT) continue;
+				if (!campLand(x, y) || G.distance([x, y], cap) < R.MIN_OUT) continue;
 				spots.push([x, y, Math.ceil(Math.max(0, lo - d, d - hi) * 4) * 4 + sand(x, y), G.distance([x, y], cap)]);
 			}
 		}
@@ -99,7 +101,7 @@ var Riders = {
 			for (var j = 0; j < hexes.length && hexes.length < R.SIZE; j++) {
 				dirs.forEach(function (dd) {
 					var nb = G.neighbour(hexes[j][0], hexes[j][1], dd);
-					if (hexes.length >= R.SIZE || has[nb[0] + nb[1] * cols] || !land(nb[0], nb[1])) return;
+					if (hexes.length >= R.SIZE || has[nb[0] + nb[1] * cols] || !campLand(nb[0], nb[1])) return;
 					has[nb[0] + nb[1] * cols] = true;
 					hexes.push(nb);
 				});
