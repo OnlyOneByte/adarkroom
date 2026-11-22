@@ -613,6 +613,15 @@ var CityStates = {
 		for (t in CS.TEMPERAMENTS) {
 			while (left[t] > 0 && place1(t)) { /* placed */ }
 		}
+		// the ground made for the story ones was laid while they were placed (so each saw the last); the world is
+		// handed back as it came, so placing again places the same. The caller lays it (onHexMap, layGround)
+		list.slice().reverse().forEach(function (c) {
+			if (!c.ground) return;
+			c.ground.hexes.forEach(function (h) {
+				if (gen.map[h[0]][h[1]] === c.ground.terrain && gen.terrain[h[0]][h[1]] === c.ground.terrain) gen.map[h[0]][h[1]] = h[2];
+				gen.terrain[h[0]][h[1]] = h[2];
+			});
+		});
 		return list;
 	},
 

@@ -989,6 +989,7 @@ export function simulateCityStates({ seeds, firstSeed = 1 }) {
     const field = D.field(gen);
     const danger = (x, y) => D.at(field, gen.cols, x, y, 'normal');
     const list = CS.place(gen, danger);
+    list.forEach((c) => CS.layGround(gen, c)); // the ground made for the story ones, as the game lays it on load
     const by = {};
     list.forEach((c) => { by[c.t] = (by[c.t] || 0) + 1; });
     const reach = (c) => danger(c.at[0], c.at[1]) <= CS.REACH.danger && G.distance(c.at, gen.capital) <= CS.REACH.hexes;

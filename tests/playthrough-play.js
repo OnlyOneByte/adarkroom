@@ -574,6 +574,40 @@ export const STAGES = [
     },
   },
   {
+    id: 'bogRoad', name: "a road out to the bog-cutters before they join: a landmark near them cleared into a waystation (its road runs home)", needs: ['peat'],
+    run: async ({ page, log, id }) => {
+      const c = await nearestCs(page, 'bog_cutters');
+      if (!c) return true;
+      // the road they lay when they join looks ROAD_REACH out for a road or a city of ours
+      const near = () => page.evaluate((at) => {
+        const m = World.hex.map;
+        return Fire.around(at[0], at[1], Network.ROAD_REACH).some((p) => m[p[0]] && [World.TILE.ROAD, World.TILE.OUTPOST, World.TILE.VILLAGE].includes(m[p[0]][p[1]]) && !(p[0] === at[0] && p[1] === at[1]));
+      }, c.at);
+      if (await near()) { log.note(id, 'a road or city of ours is already in reach of them'); return true; }
+      const marks = await page.evaluate((at) => {
+        const g = World.hex.gen, m = World.hex.map, out = [];
+        for (const p of Fire.around(at[0], at[1], Network.ROAD_REACH - 2)) {
+          if (p[0] < 0 || p[1] < 0 || p[0] >= g.cols || p[1] >= g.rows) continue;
+          if ([World.TILE.CAVE, World.TILE.HOUSE, World.TILE.TOWN].includes(m[p[0]][p[1]]) && g.reachable[p[0] + p[1] * g.cols]) out.push(p);
+        }
+        return out.sort((a, b) => Fire.distance(a, at) - Fire.distance(b, at));
+      }, c.at);
+      log.note(id, `landmarks within ${await page.evaluate(() => Network.ROAD_REACH - 2)} of the bog-cutters: ${marks.length}`);
+      for (const p of marks.slice(0, 4)) {
+        for (let i = 0; i < 2 && !(await near()); i++) {
+          if (!(await embark(page))) return false;
+          const r = await walkTo(page, p, { stopAt: () => true });
+          if (r === 'event') await playSetpiece(page);
+          log.note(id, `landmark at ${p}: ${r}/${await walkHome(page)}, cleared ${await page.evaluate((p) => World.hex.map[p[0]][p[1]] === World.TILE.OUTPOST, p)}`);
+          if (await page.evaluate((p) => World.hex.map[p[0]][p[1]] === World.TILE.OUTPOST, p)) break;
+        }
+        if (await near()) break;
+      }
+      if (!(await near())) { log.block(id, `no road or city of ours within ROAD_REACH of the bog-cutters (${c.at}), and no landmark near them was cleared into one`, '', ''); return false; }
+      return true;
+    },
+  },
+  {
     id: 'bogJoin', name: 'the bog-cutters joined (100) by the glow of a charcoal line', needs: ['peat'],
     run: async ({ page, log, id }) => {
       const c = await nearestCs(page, 'bog_cutters');
@@ -626,8 +660,31 @@ export const STAGES = [
       if (!road.carts.includes('capital')) {
         // a road not yet lit end to end: beacons along it (the carts need every road hex lit)
         await goTo(page, 'city');
-        await page.evaluate((cid) => { const at = $SM.get('game.cities["' + cid + '"].hex'); __qa.beaconsToward(at, 1, 160); }, city);
+        const dark = await page.evaluate((cid) => {
+          // the road's hexes from their city toward the capital, the first dark one lit next, again and again
+          const g = World.hex.gen, cols = g.cols, bits = Network.kinds(), from = $SM.get('game.cities["' + cid + '"].hex');
+          const path = () => {
+            const seen = {}, q = [from];
+            seen[from[0] + from[1] * cols] = 1;
+            for (let i = 0; i < q.length; i++) for (let d = 0; d < 6; d++) {
+              const p = WorldGen.neighbour(q[i][0], q[i][1], d), k = p[0] + p[1] * cols;
+              if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= g.rows || seen[k] || !(bits[k] & Fire.ROAD)) continue;
+              seen[k] = 1;
+              q.push(p);
+            }
+            return q;
+          };
+          let left = [];
+          for (let n = 0; n < 40; n++) {
+            left = path().filter((p) => !World.hex.fire.lit[p[0] + p[1] * cols]);
+            if (!left.length || Network.cartsTo(cid).includes('capital')) break;
+            __qa.beaconsToward(left[0], 1, 30);
+            Network.refresh();
+          }
+          return left.map((p) => `${p.join(',')}@${World.dangerAt(p[0], p[1]).toFixed(2)}`).slice(0, 8);
+        }, city);
         await page.clock.runFor(11000);
+        if (dark.length) log.note(id, `road hexes still dark: ${dark.join(' ')}`);
       }
       // a cart of peat every few minutes (the road box's "send to the capital"), until the capital burns peat
       const ok = await advance(page, 60 * MIN, {
