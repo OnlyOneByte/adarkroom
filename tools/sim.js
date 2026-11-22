@@ -19,7 +19,8 @@
  *
  * Then the armies (tools/sim-armies.js): a city-state taken by force, waited out, and a storm lost.
  *
- * Then the powers (tools/sim-powers.js): the garrison of the deep mines stormed, starved, fed, and a storm lost.
+ * Then the powers (tools/sim-powers.js): the garrison of the deep mines stormed, starved, fed, and a storm lost;
+ * and the drowned fleet (tools/sim-power-fleet.js): where it lies, the way out by boat, burned and boarded.
  *
  * Then the fire network (script/fire.js): on every seed a bot raises beacon lines from the
  * capital in all six directions, a hop apart, until the next beacon would stay dark, for each
@@ -38,6 +39,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { simulateArmies, armiesTable, checkArmies } from './sim-armies.js';
 import { simulatePowers, powersTable, checkPowers } from './sim-powers.js';
+import { simulatePowerFleet, powerFleetTable, checkPowerFleet } from './sim-power-fleet.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -68,7 +70,7 @@ export function loadGame(rand) {
   vm.createContext(ctx);
   // the context's own Math, so the encounter tables' Math.random is the sim's seeded one
   vm.runInContext('Math.random = __rand;', Object.assign(ctx, { __rand: () => rand.next() }));
-  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js', 'script/powers.js']) {
+  for (const f of ['script/danger.js', 'script/worldgen.js', 'script/world.js', 'script/fire.js', 'script/events/encounters.js', 'script/citystates.js', 'script/armies.js', 'script/powers.js', 'script/powers/fleet.js']) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), ctx, { filename: f });
   }
   vm.runInContext('World.setupLandmarks();', ctx);
@@ -1146,10 +1148,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const powers = simulatePowers({ seeds });
   console.log(`\nThe powers, ${seeds} seeds: an army camped at the garrison of the deep mines\n`);
   console.log(powersTable(powers));
+  const fleet = simulatePowerFleet({ seeds });
+  console.log(`\nThe drowned fleet, ${seeds} seeds: where it lies, the way out by the harbour's boats, an army off the hulks\n`);
+  console.log(powerFleetTable(fleet));
   (await import('./sim-power-riders.js')).run({ seeds, ci, loadGame, seeded }); // power 2, the cinder riders (exits 1 on a --ci fail)
   console.log(`\n(${((Date.now() - t0) / 1000).toFixed(1)} s)`);
   if (ci) {
-    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers));
+    const fails = check(run).concat(checkFire(fire), checkCities(cities), checkCityStates(states), checkArmies(armies), checkPowers(powers), checkPowerFleet(fleet));
     if (fails.length) {
       console.error('\nFAIL\n' + fails.join('\n'));
       process.exit(1);
