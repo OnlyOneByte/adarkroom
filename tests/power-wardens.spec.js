@@ -212,11 +212,19 @@ test('the pass wardens broken from a save at the foot of the pass: under the gun
   // the counter-siege: the beacon on the pass kept burning through the waves
   const held = await p2.evaluate(() => {
     const a = () => Armies.list()[0], c0 = JSON.parse(JSON.stringify(a().siege.over.counter)), at = a().at.slice();
+    const told = [], notify = Notifications.notify;
+    Notifications.notify = function (m, text) { told.push(text); return notify.apply(Notifications, arguments); };
     let ticks = 0;
     for (; ticks < 80 && a().siege && !a().siege.over.held; ticks++) quiet(() => tick());
-    return { c0, at, ticks, over: a().siege && a().siege.over, B10: Network.has('B10'), flag: Network.flag('passHeld'), seen: Network.flag('passSeen') };
+    Notifications.notify = notify;
+    return { c0, at, ticks, over: a().siege && a().siege.over, B10: Network.has('B10'), flag: Network.flag('passHeld'), seen: Network.flag('passSeen'), left: Armies.soldiers(a()),
+      shells: told.filter((t) => t.indexOf('a shell from the far side lands in the battery.') === 0).length };
   });
   expect(held.at).toEqual(w.at);
+  // it bites: the cannon and the waves cost real losses, short of breaking the line (under half)
+  expect(held.left).toBeLessThan(held.c0.men * 0.85);
+  expect(held.left).toBeGreaterThanOrEqual(held.c0.men * 0.5);
+  expect(held.shells).toBe(1); // the shelling told once
   expect(held.c0).toEqual({ ticks: 0, lit: 0, waves: 0, men: held.c0.men });
   expect(held.ticks).toBe(60);
   expect(held.over).toEqual({ held: true });
@@ -283,7 +291,8 @@ test('the counter-siege lost: the beacon on the pass goes dark, they take the ba
   expect(r.mid.lit).toBe(20);
   expect(r.power).toBe(null);
   expect(r.siege).toBe(null);
-  expect(1 - r.left / r.n).toBeGreaterThanOrEqual(0.5);
+  expect(r.n).toBeLessThan(r.mid.men); // shelled while it held
+  expect(1 - r.left / r.mid.men).toBeGreaterThanOrEqual(0.5); // the rout: half of who held the battery, at least
   expect(r.cache).toBe(1);
   await expect(p2.locator('#notifications')).toContainText("the beacon on the pass went dark. they've taken it back.");
   const after = await p2.evaluate(() => ({ B10: Network.has('B10'), broken: Powers.broken('wardens'), path: Powers.state('wardens').path }));
@@ -342,5 +351,33 @@ test('the wardens stand at the foot of a mountain pass at band 2, reachable from
   expect(r.siteLabel).toBe('an old-world complex');
   expect(r.garrison).toBe(true);
   expect(r.complexes).toBe(8);
+  expect(errors).toEqual([]);
+});
+
+test('the mountain city-state behind the pass: no envoy and no army reaches it until the wardens fall; the others are open', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const r = await page.evaluate(() => {
+    const s = Wardens.site(), cap = World.hex.gen.capital, id = Wardens.behind(), c = CityStates.byId(id);
+    // every city-state met, the capital able to send an envoy and to march (soldiers, swords)
+    CityStates.list().forEach((x) => $SM.set('game.citystates.cs["' + x.id + '"].met', true, true));
+    City.setFocus('capital', 'military');
+    $SM.set('game.armies.trained["capital"]', 10, true);
+    $SM.setM('stores', { 'steel sword': 10, 'cured meat': 5000, water: 1000 });
+    const other = CityStates.list().find((x) => x.id !== id && !CityStates.story(x.t));
+    const ask = () => ({ envoy: CityStates.cantSend('capital', c), army: Armies.cantMarch('capital', c), other: [CityStates.cantSend('capital', other), Armies.cantMarch('capital', other)] });
+    const before = ask();
+    $SM.set('game.powers["wardens"].broken', true, true);
+    return {
+      t: c.t, behind: WorldGen.distance(c.at, cap) > WorldGen.distance(s.anchor, cap), d: WorldGen.distance(c.at, s.anchor), before, after: ask(),
+    };
+  });
+  expect(r.t).toBe('walled_holdfast');
+  expect(r.behind).toBe(true);
+  expect(r.d).toBeLessThanOrEqual(10);
+  expect(r.before.envoy).toBe('the pass wardens hold the way.');
+  expect(r.before.army).toBe('the pass wardens hold the way.');
+  expect(r.before.other).not.toContain('the pass wardens hold the way.');
+  expect(r.after.envoy).not.toBe('the pass wardens hold the way.');
+  expect(r.after.army).not.toBe('the pass wardens hold the way.');
   expect(errors).toEqual([]);
 });

@@ -148,8 +148,16 @@ export function simulateWardens({ seeds, firstSeed = 1 }) {
     o.storm = { won: st.won, seconds: st.seconds, start: st.start, left: st.left };
     // the counter-siege: the beacon on the pass lit throughout; dark from the start; going dark half way
     o.hold = hold(ctx, JSON.parse(JSON.stringify(army)), () => true);
+    o.hold.men = A.soldiers(army);
     o.unlit = hold(ctx, JSON.parse(JSON.stringify(army)), () => false);
     o.lapse = hold(ctx, JSON.parse(JSON.stringify(army)), (t) => t < 30);
+    // the same army with no mantlets: the cannon and the waves break it
+    const bare = JSON.parse(JSON.stringify(army));
+    bare.gear.mantlet = 0;
+    o.bare = hold(ctx, bare, () => true);
+    // the mountain city-state behind the pass (no envoys or armies until they fall)
+    const cs = ctx.CityStates.place(gen, danger), behind = WA.behindOf(gen, site, cs);
+    o.behind = behind ? { t: behind.t, d: G.distance(behind.at, site.anchor) } : null;
     out.push(o);
   }
   return { out, seeds };
@@ -163,7 +171,8 @@ export function wardensTable({ out, seeds }) {
   lines.push(`| below the guns | ${ok.length}/${seeds} | ${count('below')} | broken in ${median(ok.map((o) => o.below.ticks))} ticks, ${fmt(100 * median(ok.map((o) => 1 - o.below.left / o.below.start)), 0)}% lost |`);
   lines.push(`| the dark march | ${ok.length}/${seeds} | ${ok.filter((o) => o.dark.left > 0).length} on the cliff | ${median(ok.map((o) => o.dark.hexes))} hexes, all unlit, ${median(ok.map((o) => o.dark.water))} water, ${median(ok.map((o) => o.dark.stragglers))} stragglers, ${fmt(100 * median(ok.map((o) => 1 - o.dark.left / o.dark.before)), 0)}% lost |`);
   lines.push(`| the storm | ${ok.length}/${seeds} | won ${ok.filter((o) => o.storm.won).length} | ${fmt(median(ok.map((o) => o.storm.seconds)), 0)} s, ${fmt(100 * median(ok.map((o) => 1 - o.storm.left / o.storm.start)), 0)}% lost |`);
-  lines.push(`| the counter-siege, the pass lit | ${ok.length}/${seeds} | ${count('hold')} | ${median(ok.map((o) => o.hold.ticks))} ticks, ${median(ok.map((o) => o.hold.lost))} lost |`);
+  lines.push(`| the counter-siege, the pass lit | ${ok.length}/${seeds} | ${count('hold')} | ${median(ok.map((o) => o.hold.ticks))} ticks, ${median(ok.map((o) => o.hold.lost))} of ${median(ok.map((o) => o.hold.men))} lost (${fmt(100 * median(ok.map((o) => o.hold.lost / o.hold.men)), 0)}%); the whole break ${fmt(100 * median(ok.map((o) => (o.march.start - o.hold.men + o.hold.lost) / o.march.start)), 0)}% |`);
+  lines.push(`| ... no mantlets | ${ok.length}/${seeds} | ${count('bare')} | at tick ${median(ok.map((o) => o.bare.ticks))} |`);
   lines.push(`| ... the pass dark | ${ok.length}/${seeds} | ${count('unlit')} | at tick ${median(ok.map((o) => o.unlit.ticks))} |`);
   lines.push(`| ... dark after 30 ticks | ${ok.length}/${seeds} | ${count('lapse')} | at tick ${median(ok.map((o) => o.lapse.ticks))} |`);
   lines.push('');
@@ -173,6 +182,8 @@ export function wardensTable({ out, seeds }) {
     `(band 2 on ${dz.filter((z) => z >= 4 && z < 6).length}/${d.length}), at the foot of a cut pass ${d.filter((o) => o.byPass).length}/${d.length}; a beacon beside it on coal ground ${d.filter((o) => o.beacon).length}/${d.length}; ` +
     `the goat path on foot ${d.filter((o) => o.goatOnFoot).length}/${d.length}; the march there ${median(m.map((x) => x.hexes))} hexes, ${median(m.map((x) => x.unlit))} unlit, ` +
     `${fmt(100 * median(m.map((x) => 1 - x.left / x.start)), 0)}% lost (median)`);
+  const b = d.filter((o) => o.behind);
+  lines.push(`the city-state behind the pass: on ${b.length}/${d.length} (${b.map((o) => o.behind.t + ' ' + o.behind.d).join(', ')} hexes past the battery)`);
   return lines.join('\n');
 }
 
@@ -196,6 +207,9 @@ export function checkWardens({ out }) {
     if (o.dark.left / o.dark.before < 0.7) fails.push(`seed ${o.seed}: ${o.dark.left} of ${o.dark.before} reached the cliff, want 70% or more`);
     if (!o.storm.won) fails.push(`seed ${o.seed}: the rough army lost the storm behind the guns`);
     if (o.hold.outcome !== 'held') fails.push(`seed ${o.seed}: the counter-siege with the pass lit ended ${o.hold.outcome}, want held`);
+    // it bites: a well-supplied army holds with real losses; without mantlets it breaks
+    else if (!(o.hold.lost / o.hold.men >= 0.15 && o.hold.lost / o.hold.men <= 0.45)) fails.push(`seed ${o.seed}: holding the pass cost ${o.hold.lost} of ${o.hold.men}, want 15-45%`);
+    if (o.bare.outcome !== 'broken') fails.push(`seed ${o.seed}: the hold with no mantlets ended ${o.bare.outcome}, want broken`);
     if (o.unlit.outcome !== 'dark') fails.push(`seed ${o.seed}: the counter-siege with the pass dark ended ${o.unlit.outcome}, want lost`);
     if (o.lapse.outcome !== 'dark') fails.push(`seed ${o.seed}: the counter-siege with the beacon gone out ended ${o.lapse.outcome}, want lost`);
   }

@@ -27,6 +27,7 @@ var Wardens = {
 	DANGER: [4, 5],
 	SIZE: 3,               // provisional: the battery's hexes, its gate and the heights the guns stand on
 	CLIMB: 4,              // provisional: the longest climb from the foot of the pass to the goat path
+	BEHIND: 10,            // provisional: how far past the battery the city-state it shuts in may stand
 	REACH: 6,              // coal's reach (Fire.FUELS, F8, the blaze era's floor): the pass on ground it can light
 
 	// POWERS §3, band 2: 50 + guns, cannon (15 at range); the pass and the height are its walls
@@ -34,6 +35,8 @@ var Wardens = {
 	WAVES: [12, 12, 11],   // provisional: the rest of the 50 (the storm finds 15 at the guns), wave by wave
 	HOLD: 60,              // the outlast quest's hold (CityStates.LIGHT_HOLD: ten minutes of ticks)
 	WAVE_AT: [15, 35, 50], // provisional: ticks of the hold a wave comes at
+	WAVE_ROUNDS: 3,        // provisional: rounds a wave fights before it is beaten back
+	CANNON: 15,            // provisional: the cannon turned on the battery, damage a tick (POWERS §3: cannon 15 at range)
 
 	/*
 	 * Where it stands (pure, from WorldGen.generate): at the foot of a mountain pass (else under the mountains),
@@ -93,7 +96,8 @@ var Wardens = {
 				if (!land(p)) continue;
 				var byPass = around(p).some(function (h) { return pass[k(h)]; });
 				if (!byPass && !around(p).some(mountain)) continue;
-				spots.push([p, Math.ceil(Math.max(0, lo - d, d - hi) * 4) * 4 + (near[k(p)] ? 0 : 2) + (byPass ? 0 : 1), G.distance(p, cap)]);
+				// (on ground a coal line crosses before all else: an army must reach it lit)
+				spots.push([p, (near[k(p)] ? 0 : 1000) + Math.ceil(Math.max(0, lo - d, d - hi) * 4) * 4 + (byPass ? 0 : 1), G.distance(p, cap)]);
 			}
 		}
 		spots.sort(function (a, b) { return a[1] - b[1] || a[2] - b[2] || a[0][0] - b[0][0] || a[0][1] - b[0][1]; });
@@ -193,15 +197,28 @@ var Wardens = {
 	/*
 	 * The siege and the hold (pure pieces the game and the simulator share)
 	 */
+	// the mountain city-state behind the pass (pure; list: CityStates.list()): no envoy or army reaches it while
+	// the wardens stand. A common mountain city-state (a walled holdfast, or one on hills) further from home than
+	// the battery and at most BEHIND hexes past it; a holdfast first, then the nearest the battery. null when none
+	behindOf: function (gen, site, list) {
+		var G = WorldGen, cap = gen.capital, far = G.distance(site.anchor, cap);
+		var rank = function (c) { return (c.t === 'walled_holdfast' ? 0 : 100) + G.distance(c.at, site.anchor); };
+		return list.filter(function (c) {
+			return CityStates.TEMPERAMENTS[c.t].kind !== 'story' && (c.t === 'walled_holdfast' || gen.terrain[c.at[0]][c.at[1]] === G.TERRAIN.hills) &&
+				G.distance(c.at, cap) > far && G.distance(c.at, site.anchor) <= Wardens.BEHIND;
+		}).sort(function (a, b) { return rank(a) - rank(b) || a.at[0] - b.at[0] || a.at[1] - b.at[1]; })[0] || null;
+	},
+
 	// a tick of the siege from below: the guns on the heights take a squad (mantlets halve it). Returns the lost
 	guns: function (army) {
 		return Armies.kill(army, Wardens.SQUAD * Armies.shield(army));
 	},
 
 	// the counter-siege's hold (the outlast quest): c { ticks, lit, waves, men (who held the battery) }; lit:
-	// the beacon on the pass burns this tick. A wave comes at its tick, beaten back like a sally while the beacon
-	// burns; the beacon dark once lit, or at a wave, loses it; so does the army breaking. Returns
-	// { wave: { n, lost }, half, fail ('dark' | 'broken'), held }
+	// the beacon on the pass burns this tick. Every tick a cannon from the far side shells the battery; a wave
+	// comes at its tick and fights WAVE_ROUNDS rounds before it is beaten back, while the beacon burns. The
+	// beacon dark once lit, or at a wave, loses it; so does the army breaking (under half of who held it).
+	// Returns { shelled, wave: { n, lost }, half, fail ('dark' | 'broken'), held }
 	hold: function (c, army, lit, P) {
 		var W = Wardens, A = Armies, out = {};
 		c.ticks++;
@@ -212,17 +229,18 @@ var Wardens = {
 			out.fail = 'dark';
 			return out;
 		}
+		out.shelled = A.kill(army, W.CANNON / A.HP * A.shield(army));
 		if (c.waves < W.WAVES.length && c.ticks >= W.WAVE_AT[c.waves]) {
 			if (!lit) {
 				out.fail = 'dark';
 				return out;
 			}
 			var n = W.WAVES[c.waves++];
-			out.wave = { n: n, lost: A.kill(army, n * P.might * A.ROUND / A.HP * A.shield(army)) };
-			if (A.soldiers(army) < A.ROUT_AT * c.men) {
-				out.fail = 'broken';
-				return out;
-			}
+			out.wave = { n: n, lost: A.kill(army, n * P.might * W.WAVE_ROUNDS * A.ROUND / A.HP * A.shield(army)) };
+		}
+		if (A.soldiers(army) < A.ROUT_AT * c.men) {
+			out.fail = 'broken';
+			return out;
 		}
 		out.held = c.lit >= W.HOLD && c.waves >= W.WAVES.length;
 		return out;
@@ -272,6 +290,10 @@ var Wardens = {
 			var a = args[0];
 			return ours(a) && a.siege && a.siege.over && a.siege.over.counter ? W.counterTick(a) : f.apply(A, args);
 		});
+		// the city-state behind the pass: no envoy and no army reaches it while they stand
+		var shut = function (c) { return !!c && !Powers.broken(W.ID) && !CityStates.state(c.id).city && W.behind() === c.id; };
+		wrap(CityStates, 'cantSend', function (f, args) { return shut(args[1]) ? _('the pass wardens hold the way.') : f.apply(CityStates, args); });
+		wrap(A, 'cantMarch', function (f, args) { return shut(args[1]) ? _('the pass wardens hold the way.') : f.apply(A, args); });
 		wrap(A, 'status', function (f, args) {
 			var a = args[0], c = A.target(a), s = a.siege;
 			if (!ours(a) || a.state !== 'siege' || !c || !s) return f.apply(A, args);
@@ -300,6 +322,19 @@ var Wardens = {
 	anchor: function () {
 		var s = Wardens.site();
 		return s ? s.anchor : null;
+	},
+
+	// the id of the city-state behind the pass (Wardens.behindOf), or null; picked once the city-states are placed
+	behind: function () {
+		var s = Wardens.site();
+		var list = s && CityStates.get() ? CityStates.list() : [];
+		if (!list.length) return null;
+		if (Wardens._behind === undefined || Wardens._behindGen !== World.hex.gen) {
+			var c = Wardens.behindOf(World.hex.gen, s, list);
+			Wardens._behind = c ? c.id : null;
+			Wardens._behindGen = World.hex.gen;
+		}
+		return Wardens._behind;
 	},
 
 	// an army may march on them once the gate is met on a trek
@@ -449,9 +484,13 @@ var Wardens = {
 		if (!A.soldiers(a)) return A.lostArmy(a);
 		var r = Wardens.hold(c, a, Wardens.passLit(), Powers.byId(Wardens.ID));
 		if (r.half) Notifications.notify(null, _('half the night is gone.'));
+		// the shelling is told once (it goes on every tick)
+		if (r.shelled && !c.shelled) c.shelled = true;
+		else r.shelled = 0;
+		if (r.shelled) Notifications.notify(null, r.shelled === 1 ? _('a shell from the far side lands in the battery. 1 soldier falls.') : _('a shell from the far side lands in the battery. {0} soldiers fall.', r.shelled));
 		if (r.wave && !r.fail) Notifications.notify(null, _('the beacon on the pass still burns.'));
 		if (r.fail) {
-			Notifications.notify(null, _("the beacon on the pass went dark. they've taken it back."));
+			Notifications.notify(null, r.fail === 'broken' ? _("the line on the pass breaks. they've taken it back.") : _("the beacon on the pass went dark. they've taken it back."));
 			s.stormed = c.men;
 			A.set(a);
 			return A.rout(a.id);
