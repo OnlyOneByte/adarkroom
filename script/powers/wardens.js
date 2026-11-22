@@ -134,10 +134,14 @@ var Wardens = {
 				});
 			});
 			if (!best) continue;
-			// the complex nearest the pass moves to it
-			var i = -1;
+			// the complex nearest the pass moves to it; never the cinder riders' (the free one nearest home: placement
+			// runs garrison, riders, wardens), whether or not the riders are in this world, so the same one moves
+			var riders = -1, i = -1;
+			if (!gen.sites.some(function (c) { return c.riders; })) gen.sites.forEach(function (c, j) {
+				if (c.kind === 'complex' && !c.garrison && !c.power && (riders < 0 || G.distance(c.anchor, cap) < G.distance(gen.sites[riders].anchor, cap))) riders = j;
+			});
 			gen.sites.forEach(function (c, j) {
-				if (c.kind === 'complex' && !c.garrison && !c.power && (i < 0 || G.distance(c.anchor, at) < G.distance(gen.sites[i].anchor, at))) i = j;
+				if (c.kind === 'complex' && !c.garrison && !c.power && j !== riders && (i < 0 || G.distance(c.anchor, at) < G.distance(gen.sites[i].anchor, at))) i = j;
 			});
 			if (i < 0) return -1;
 			gen.sites[i].hexes.forEach(function (h) { gen.siteAt[k(h)] = -1; });
