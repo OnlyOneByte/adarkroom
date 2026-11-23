@@ -1153,6 +1153,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log(`\nThe powers, ${seeds} seeds: an army camped at the garrison of the deep mines\n`);
   console.log(powersTable(powers));
   wardensRun({ seeds, ci }); // power #3, the pass wardens: its table, and in CI its checks (exit code 1 on a failure)
+  (await import('./sim-power-foundry.js')).runFoundry({ seeds, ci, loadGame, seeded });
   const fleet = simulatePowerFleet({ seeds });
   console.log(`\nThe drowned fleet, ${seeds} seeds: where it lies, the way out by the harbour's boats, an army off the hulks\n`);
   console.log(powerFleetTable(fleet));
