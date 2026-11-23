@@ -32,7 +32,8 @@ var Powers = {
 			// the storm (POWERS §1 Option C): the original's soldier, rifle in hand
 			storm: { chara: 'D', damage: 5, hit: 0.4, delay: 2 },  // provisional: the rifle's damage, few bullets
 			joiners: 10            // provisional: soldiers who join you when you take them in (flame-draft scene 4)
-		}
+		},
+		{ id: 'wardens', name: _('the pass wardens'), unlock: 'B10', anchor: function () { return Wardens.anchor(); }, known: function () { return Wardens.known(); }, garrison: 15, walls: 100000, kind: 'height', stores: 90, might: 0.6, storm: { chara: 'W', damage: 5, hit: 0.5, delay: 2 }, joiners: 10 } // #3: script/powers/wardens.js (garrison: the 15 at the guns; walls: the height, nothing below wears it; all provisional)
 	],
 
 	byId: function (id) {

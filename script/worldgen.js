@@ -512,6 +512,7 @@ var WorldGen = {
 		// old wasteland's edge, where a charcoal line can reach it, on its own rng (nothing else moves)
 		out.garrison = G._garrison(out);
 		out.riders = G._riders ? G._riders(out) : -1; // the cinder riders' camp (script/powers/riders.js)
+		out.wardens = typeof Wardens != 'undefined' ? Wardens.place(out) : -1; // the pass wardens' pass (script/powers/wardens.js)
 		return out;
 	},
 
