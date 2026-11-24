@@ -300,8 +300,9 @@ test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joi
     $SM.set('game.citystates.cs["' + c.id + '"].met', true);
     $SM.set('game.citystates.cs["' + c.id + '"].told[25]', true); // their stranger came already
     $SM.set('game.network.tiers.F5', true);
-    // a pack of leather left at their gate: 1/3 a piece at band 2, past 50
-    CityStates.give(c, { leather: 200 });
+    // a pack of leather left at their gate (value 5, wanted: n / S influence)
+    const S = CityStates.strength(World.baseDangerAt(c.at[0], c.at[1]));
+    CityStates.give(c, { leather: Math.ceil(60 * S) }); // worth 60: past 50, under the cap
     CityStates.playQueued();
     return c;
   });
@@ -320,5 +321,51 @@ test('the bog-cutters at 50: "learn the cutting" gives F6 (B8 waits for them joi
   expect(r).toMatchObject({ beat: c.id, way: 'their way', F6: true, B8: false, floor: 50, joined: false });
   expect(r.before).toBeGreaterThanOrEqual(50);
   expect(r.after).toBe(50); // faded to the 50 the gift passed, not to 0
+  expect(errors).toEqual([]);
+});
+
+test('each story city-state stands where the era that needs it reaches, on its own terrain; ground made for one is laid again on a reload', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const look = () => page.evaluate(() => {
+    const g = World.hex.gen, field = World.hex.danger, danger = (x, y) => Danger.at(field, g.cols, x, y, 'normal'), T = WorldGen.TERRAIN;
+    return CityStates.list().filter((c) => CityStates.story(c.t)).map((c) => {
+      const sp = CityStates.TEMPERAMENTS[c.t].spawn, named = sp.terrain.filter((k) => T[k]), fuel = CityStates.storyFuel(c.t);
+      // a fuel's people: their hex and a hex of their terrain beside it on ground that line lights
+      const lit = CityStates.works(c.t) && CityStates.reach(g, danger, fuel, true), on = (p) => lit[p[0] + p[1] * g.cols] === 1;
+      const worked = !lit || (on(c.at) && District.neighbours(c.at).some((p) => on(p) && named.some((k) => g.terrain[p[0]][p[1]] === T[k])));
+      return {
+        t: c.t, fuel, worked, reach: CityStates.reach(g, danger, fuel)[c.at[0] + c.at[1] * g.cols] === 1,
+        own: !named.length || named.some((k) => g.terrain[c.at[0]][c.at[1]] === T[k]), band: c.band <= sp.band[1],
+        ground: c.ground ? c.ground.hexes.every((h) => g.terrain[h[0]][h[1]] === c.ground.terrain && World.hex.map[h[0]][h[1]] === c.ground.terrain) : null,
+      };
+    });
+  });
+  const r = await look();
+  expect(r.map((x) => x.fuel)).toEqual(['charcoal', 'charcoal', 'peat', 'coal', 'coke', 'coal', 'whale oil', 'rock oil']);
+  for (const x of r) expect(x, x.t).toMatchObject({ reach: true, worked: true, own: true, band: true });
+  expect(r.some((x) => x.ground === true)).toBe(true); // seed 4242: no swamp in charcoal's reach, so the bog-cutters' is made
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
+  expect(await look()).toEqual(r);
+  expect(errors).toEqual([]);
+});
+
+test('a city-state that joins lays a road to the nearest road or city, as a founded city does: carts can reach it', async ({ page }) => {
+  const errors = await townWithCityStates(page);
+  const r = await page.evaluate(() => {
+    const c = nearest('herders'), roadsBefore = Network.roads();
+    const id = CityStates.join(c);
+    const roads = Network.roads(), g = World.hex.gen;
+    let tiles = 0;
+    for (const p of Fire.around(c.at[0], c.at[1], Network.ROAD_REACH)) if (p[0] >= 0 && p[1] >= 0 && p[0] < g.cols && p[1] < g.rows && World.hex.map[p[0]][p[1]] === World.TILE.ROAD) tiles++;
+    return { id, d: Fire.distance(c.at, cap), joined: roads[id] === roads.capital, before: Object.keys(roadsBefore).length, tiles, delta: Object.values($SM.get('game.world.hex.delta')).filter((t) => t === World.TILE.ROAD).length };
+  });
+  expect(r.d).toBeLessThanOrEqual(12); // (ROAD_REACH: the nearest herders are 8 out on seed 4242)
+  expect(r.joined).toBe(true);
+  expect(r.tiles).toBeGreaterThan(0);
+  expect(r.delta).toBeGreaterThan(0); // saved with the map
+  await page.reload();
+  await page.waitForFunction(() => window.Engine && typeof Room != 'undefined' && Engine.activeModule === Room && World.hex);
+  expect(await page.evaluate((id) => Network.roads()[id] === Network.roads().capital, r.id)).toBe(true);
   expect(errors).toEqual([]);
 });

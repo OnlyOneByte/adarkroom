@@ -104,6 +104,11 @@ async function questCs(page, log, id, t) {
   log.note(id, `${t} (${c.name}) at ${c.at}: ${d[0]} hexes, danger ${d[1]}`);
   for (let i = 0; i < 4 && !(await csState(page, c.id)).met; i++) log.note(id, `trek ${i + 1} to meet them: ${await goSee(page, c.at)}`);
   if (!(await csState(page, c.id)).met) { log.block(id, `four treks failed to meet ${c.name} ${d[0]} hexes out`, '', ''); return false; }
+  // a line to them first: the glow brings them to 25 and talks open (PHASE4); an envoy only if it doesn't
+  await goTo(page, 'city');
+  const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 120), c.at);
+  const talks = await advance(page, 60 * MIN, { arg: c.id, until: (cid) => CityStates.talks(CityStates.state(cid)), slice: 30000 });
+  log.note(id, `a line to ${c.name} got within ${near}; talks by the glow: ${talks} (influence ${(await csState(page, c.id)).inf | 0})`);
   for (let i = 0; i < 4 && !(await page.evaluate((cid) => CityStates.talks(CityStates.state(cid)), c.id)); i++) {
     await restock(page);
     await freeEnvoy(page, log, id);
@@ -140,6 +145,37 @@ async function questCs(page, log, id, t) {
   }
   if (!(await csState(page, c.id)).city) { log.block(id, `${c.name} not won by their quest after five treks`, '', ''); return false; }
   return true;
+}
+
+// The road between two of our cities lit end to end, as carts need (Network.litRoad): beacons raised by its
+// dark hexes, the nearest to `from` first, until a cart can go. Returns { carts, dark: [the hexes left] }.
+async function lightRoad(page, from, to) {
+  const dark = await page.evaluate(({ from, to }) => {
+    const g = World.hex.gen, cols = g.cols, at = $SM.get('game.cities["' + from + '"].hex');
+    // the road's hexes out from the city, in the order a walk along it meets them
+    const path = () => {
+      const bits = Network.kinds(), seen = {}, q = [at];
+      seen[at[0] + at[1] * cols] = 1;
+      for (let i = 0; i < q.length; i++) for (let d = 0; d < 6; d++) {
+        const p = WorldGen.neighbour(q[i][0], q[i][1], d), k = p[0] + p[1] * cols;
+        if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= g.rows || seen[k] || !(bits[k] & Fire.ROAD)) continue;
+        seen[k] = 1;
+        q.push(p);
+      }
+      return q;
+    };
+    let left = [];
+    for (let n = 0; n < 40; n++) {
+      if (Network.cartsTo(from).includes(to)) return [];
+      left = path().filter((p) => !World.hex.fire.lit[p[0] + p[1] * cols]);
+      if (!left.length) break;
+      __qa.beaconsToward(left[0], 1, 30);
+      Network.refresh();
+    }
+    return left.map((p) => `${p.join(',')}@${World.dangerAt(p[0], p[1]).toFixed(2)}`).slice(0, 8);
+  }, { from, to });
+  await page.clock.runFor(11000);
+  return { carts: await page.evaluate(({ from, to }) => Network.cartsTo(from).includes(to), { from, to }), dark, joined: await page.evaluate((f) => Network.joinedTo(f), from) };
 }
 
 export const STAGES = [
@@ -499,9 +535,9 @@ export const STAGES = [
       await goTo(page, 'city');
       const near = await page.evaluate((at) => __qa.beaconsToward(at, 1), c.at);
       if (near > 1) log.note(id, `the line to ${c.name} got within ${near}`);
-      const ok = await advance(page, 90 * MIN, { arg: c.id, until: (id) => !!CityStates.state(id).city, slice: 30000 });
+      const ok = await advance(page, 150 * MIN, { arg: c.id, until: (id) => !!CityStates.state(id).city, slice: 30000 });
       const st = await csState(page, c.id);
-      if (!ok) { log.block(id, `${c.name} (${c.at}) not joined in 90 game min: influence ${st.inf | 0}, line within ${near}`, '', ''); return false; }
+      if (!ok) { log.block(id, `${c.name} (${c.at}) not joined in 150 game min: influence ${st.inf | 0}, line within ${near}`, '', ''); return false; }
       await advance(page, 2 * MIN, { until: () => Network.has('H6') });
       return has(page, 'H6');
     },
@@ -569,7 +605,147 @@ export const STAGES = [
     },
   },
   {
-    id: 'resin', name: "F7 resin: the resin-tappers' quest (met, an envoy for their task, the lost tappers found and walked home)", needs: ['peat'],
+    id: 'bogRoad', name: "a road out to the bog-cutters before they join: a landmark near them cleared into a waystation (its road runs home)", needs: ['peat'],
+    run: async ({ page, log, id }) => {
+      const c = await nearestCs(page, 'bog_cutters');
+      if (!c) return true;
+      // the road they lay when they join looks ROAD_REACH out for a road or a city of ours
+      const near = () => page.evaluate((at) => {
+        const m = World.hex.map;
+        return Fire.around(at[0], at[1], Network.ROAD_REACH).some((p) => m[p[0]] && [World.TILE.ROAD, World.TILE.OUTPOST, World.TILE.VILLAGE].includes(m[p[0]][p[1]]) && !(p[0] === at[0] && p[1] === at[1]));
+      }, c.at);
+      if (await near()) { log.note(id, 'a road or city of ours is already in reach of them'); return true; }
+      const marks = await page.evaluate((at) => {
+        const g = World.hex.gen, m = World.hex.map, out = [];
+        for (const p of Fire.around(at[0], at[1], Network.ROAD_REACH - 2)) {
+          if (p[0] < 0 || p[1] < 0 || p[0] >= g.cols || p[1] >= g.rows) continue;
+          if ([World.TILE.CAVE, World.TILE.HOUSE, World.TILE.TOWN].includes(m[p[0]][p[1]]) && g.reachable[p[0] + p[1] * g.cols]) out.push(p);
+        }
+        return out.sort((a, b) => Fire.distance(a, at) - Fire.distance(b, at));
+      }, c.at);
+      log.note(id, `landmarks within ${await page.evaluate(() => Network.ROAD_REACH - 2)} of the bog-cutters: ${marks.length}`);
+      for (const p of marks.slice(0, 4)) {
+        for (let i = 0; i < 2 && !(await near()); i++) {
+          if (!(await embark(page))) return false;
+          const r = await walkTo(page, p, { stopAt: () => true });
+          if (r === 'event') await playSetpiece(page);
+          log.note(id, `landmark at ${p}: ${r}/${await walkHome(page)}, cleared ${await page.evaluate((p) => World.hex.map[p[0]][p[1]] === World.TILE.OUTPOST, p)}`);
+          if (await page.evaluate((p) => World.hex.map[p[0]][p[1]] === World.TILE.OUTPOST, p)) break;
+        }
+        if (await near()) break;
+      }
+      if (!(await near())) { log.block(id, `no road or city of ours within ROAD_REACH of the bog-cutters (${c.at}), and no landmark near them was cleared into one`, '', ''); return false; }
+      return true;
+    },
+  },
+  {
+    id: 'bogJoin', name: 'the bog-cutters joined (100) by the glow of a charcoal line', needs: ['peat'],
+    run: async ({ page, log, id }) => {
+      const c = await nearestCs(page, 'bog_cutters');
+      if (!c) { log.note(id, 'the bog-cutters are ours already'); return true; }
+      await restock(page);
+      await goTo(page, 'city');
+      const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 120), c.at);
+      log.note(id, `a line to the bog-cutters got within ${near}`);
+      const ok = await advance(page, 180 * MIN, { arg: c.id, until: (cid) => !!CityStates.state(cid).city, slice: 30000 });
+      if (!ok) { log.block(id, `the bog-cutters not joined in 180 min of glow: influence ${(await csState(page, c.id)).inf | 0}, line within ${near}`, '', ''); return false; }
+      return true;
+    },
+  },
+  {
+    id: 'peatFire', name: "peat burned: bog cuts on the bog-cutters' swamp, their city on fire focus", needs: ['bogJoin'],
+    run: async ({ page, log, id }) => {
+      const city = await page.evaluate(() => CityStates.state(CityStates.list().find((x) => x.t === 'bog_cutters').id).city);
+      await goTo(page, 'city');
+      const cuts = await page.evaluate((cid) => [__qa.district(cid, 'bog cuts'), __qa.district(cid, 'bog cuts')].filter(Boolean).length, city);
+      await page.evaluate((cid) => City.setFocus(cid, 'fire'), city); // the focus button
+      log.note(id, `${cuts} bog cuts in ${city}`);
+      if (!cuts) {
+        // districts go only where the fire reaches; their swamp is past what the line's fuel lights (peat, the one
+        // that lights swamp further, is what the bog cuts would make)
+        const why = await page.evaluate((cid) => {
+          const c = $SM.get('game.cities["' + cid + '"]'), g = World.hex.gen, fuel = ($SM.get('game.cities.capital.hearth') || {}).fuel;
+          const sw = Fire.around(c.hex[0], c.hex[1], 2).filter((p) => g.terrain[p[0]][p[1]] === WorldGen.TERRAIN.swamp);
+          return `${sw.length} swamp hexes by their hearth, lit ${sw.filter((p) => World.hex.fire.lit[p[0] + p[1] * g.cols]).length}, ` +
+            `danger ${sw.map((p) => World.dangerAt(p[0], p[1]).toFixed(2)).join('/')}; the best fuel (${fuel}) lights to ${Fire.FUELS[fuel].cap}`;
+        }, city);
+        log.block(id, `no bog cuts can go in the bog-cutters' city: ${why}`, 'fresh save to F6; the bog-cutters joined by a charcoal line',
+          'design: the reach rule puts them in the glow of charcoal, but their swamp must also be lit for a bog cut (place their ground on lit ground, or let a joined fuel city-state bring its first district)');
+        return false;
+      }
+      const ok = await advance(page, 20 * MIN, { arg: city, until: (cid) => ($SM.get('game.cities["' + cid + '"].hearth') || {}).fuel === 'peat' });
+      if (!ok) {
+        const st = await page.evaluate((cid) => ({ h: $SM.get('game.cities["' + cid + '"].hearth'), w: $SM.get('game.cities["' + cid + '"].workers'), peat: $SM.get(City.storePath(cid, 'peat'), true) }), city);
+        log.block(id, `${city}'s hearth never burned peat: ${JSON.stringify(st)}`, '', '');
+        return false;
+      }
+      return true;
+    },
+  },
+  {
+    id: 'peatCity', name: "a waypoint city founded on lit land between the capital and the bog-cutters (its road chains theirs), peat carted to it, its small hearth on peat", needs: ['peatFire'],
+    run: async ({ page, log, id }) => {
+      await restock(page);
+      const bog = await page.evaluate(() => CityStates.state(CityStates.list().find((x) => x.t === 'bog_cutters').id).city);
+      const resin = await nearestCs(page, 'resin_tappers');
+      // a lit hex that takes a city, within ROAD_REACH of the bog-cutters' city and of a road or city of ours
+      // toward the capital (so its road chains theirs); the one nearest the resin-tappers, whose talks a peat
+      // line's glow opens
+      const sites = await page.evaluate(({ bog, to }) => {
+        const g = World.hex.gen, m = World.hex.map, cols = g.cols, R = Network.ROAD_REACH, cap = g.capital;
+        const b = $SM.get('game.cities["' + bog + '"].hex');
+        const ours = (p) => [World.TILE.ROAD, World.TILE.OUTPOST, World.TILE.VILLAGE].includes(m[p[0]][p[1]]);
+        let lit = 0;
+        const out = Fire.around(b[0], b[1], R).filter((p) => {
+          if (p[0] < 0 || p[1] < 0 || p[0] >= cols || p[1] >= g.rows || Fire.distance(p, b) < 3) return false;
+          if (World.hex.fire.lit[p[0] + p[1] * cols]) lit++;
+          const f = Network.foundingSite(p[0], p[1]);
+          return f && !f.site && Fire.distance(p, cap) < Fire.distance(b, cap) &&
+            Fire.around(p[0], p[1], R).some((q) => m[q[0]] && ours(q) && Fire.distance(q, b) > 1 && !(q[0] === p[0] && q[1] === p[1]));
+        });
+        out.sort((x, y) => Fire.distance(x, to || cap) - Fire.distance(y, to || cap));
+        return { lit, sites: out.slice(0, 6), b };
+      }, { bog, to: resin && resin.at });
+      log.note(id, `lit hexes within ${12} of ${bog} (${sites.b}): ${sites.lit}; founding sites between it and home: ${sites.sites.length} (${sites.sites.join(' ')})`);
+      if (!sites.sites.length) {
+        log.block(id, `no lit hex the settlers can found on within ROAD_REACH of both the bog-cutters' city (${sites.b}) and a road of ours`, '', '');
+        return false;
+      }
+      let made = null;
+      for (const p of sites.sites.slice(0, 3)) {
+        const why = await page.evaluate(() => Network.cantSend('capital'));
+        if (why) { log.block(id, `settlers can't go: ${why}`, '', ''); return false; }
+        const n0 = await page.evaluate(() => Object.keys($SM.get('game.cities')));
+        await page.evaluate((p) => Network.sendSettlers('capital', p[0], p[1]), p);
+        if (!(await embark(page))) return false;
+        const r = await walkTo(page, p);
+        made = await page.evaluate((n0) => Object.keys($SM.get('game.cities')).find((k) => !n0.includes(k)) || null, n0);
+        log.note(id, `settlers to ${p}: ${r}/${await walkHome(page)}, city ${made}`);
+        if (made) break;
+        await page.evaluate(() => Network.callOff());
+      }
+      if (!made) { log.block(id, 'the settlers founded no waypoint city', '', ''); return false; }
+      await goTo(page, 'city');
+      const road = await lightRoad(page, bog, made);
+      log.note(id, `${bog} -> ${made}: ${JSON.stringify(road)}`);
+      if (!road.carts) { log.block(id, `no carts from ${bog} to ${made}: road hexes dark ${road.dark.join(' ')}`, '', ''); return false; }
+      // a cart of peat whenever there is a cartload (the road box's "send"), until the new city's hearth burns peat
+      const ok = await advance(page, 60 * MIN, {
+        slice: 30000, arg: made,
+        each: () => page.evaluate(({ bog, made }) => { if ($SM.get(City.storePath(bog, 'peat'), true) >= Network.CART) Network.sendCart(bog, made, 'peat'); }, { bog, made }),
+        until: (cid) => ($SM.get('game.cities["' + cid + '"].hearth') || {}).fuel === 'peat',
+      });
+      const st = await page.evaluate(({ bog, made }) => ({
+        need: +Network.hearthNeed(made).toFixed(1), capital: +Network.hearthNeed('capital').toFixed(1), peat: Math.round($SM.get(City.storePath(made, 'peat'), true)),
+        cut: Math.round($SM.get(City.storePath(bog, 'peat'), true)), hearth: $SM.get('game.cities["' + made + '"].hearth'),
+      }), { bog, made });
+      log.note(id, `${made}'s hearth wants ${st.need} fire a tick (the capital's ${st.capital}): ${JSON.stringify(st)}`);
+      if (!ok) { log.block(id, `${made}'s hearth never burned peat alone: ${JSON.stringify(st)}`, '', ''); return false; }
+      return true;
+    },
+  },
+  {
+    id: 'resin', name: "F7 resin: the resin-tappers' quest (met, a peat line's glow opens talks, the lost tappers found and walked home)", needs: ['peatCity'],
     run: async ({ page, log, id }) => {
       if (!(await questCs(page, log, id, 'resin_tappers'))) return false;
       const ok = await advance(page, 5 * MIN, { until: () => Network.has('F7') });
@@ -585,19 +761,31 @@ export const STAGES = [
       const g = await page.evaluate(() => Network.garrison());
       const near = await page.evaluate((g) => __qa.beaconsToward(g, 2), g);
       log.note(id, `the garrison's site at ${g}; a line got within ${near}`);
-      const ev = await playScene(page, { title: 'Smoke in the Hills', buttons: ['go and look'], ms: 10 * MIN });
-      if (!ev || ev.missing) {
-        log.block(id, `Smoke in the Hills did not play with a line ${near} from the garrison`, '', '');
+      // (an earlier line can have brought it already: the player answered it then)
+      const seen = await page.evaluate(() => Network.flag('smoke'));
+      if (seen) log.note(id, `the smoke was seen earlier (${seen})`);
+      const ev = seen ? { title: 'Smoke in the Hills' } : await playScene(page, { title: 'Smoke in the Hills', buttons: ['go and look'], ms: 10 * MIN });
+      // (it can also come while another scene is settled, and be answered with the rest)
+      if ((!ev || ev.missing) && !(await page.evaluate(() => Network.flag('smoke')))) {
+        const st = await page.evaluate((g) => {
+          const site = World.siteAt(g[0], g[1]), cols = World.hex.gen.cols, f = World.hex.fire;
+          return { smoke: Network._smoke, litNear: site.hexes.some((h) => Fire.around(h[0], h[1], 2).some((p) => f.lit[p[0] + p[1] * cols])),
+            beacons: Object.keys($SM.get('game.network.beacons') || {}).length, lit: f.nodes.filter((n) => !n.hearth && n.s >= Fire.LIT_MIN).length,
+            hearth: $SM.get('game.cities.capital.hearth'), story: Object.keys($SM.get('game.network.story') || {}).join(' ') };
+        }, g);
+        log.block(id, `Smoke in the Hills did not play with a line ${near} from the garrison: ${JSON.stringify(st)}`, '', '');
         return false;
       }
       await settleEvents(page);
-      if (!(await embark(page))) return false;
-      const r = await walkTo(page, g, { stopAt: (e) => e && e.title === 'The Gate' });
-      if (r !== 'event') { log.block(id, `walk to the garrison's gate at ${g}: ${r}`, '', ''); await walkHome(page); return false; }
-      await settleEvents(page);
-      const h = await walkHome(page);
-      if (h !== 'home') { log.block(id, `trek home from the gate: ${h}`, '', ''); return false; }
-      return page.evaluate(() => Network.flag('gateMet') && Powers.known('garrison'));
+      // the gate is known at home only if the wanderer gets back alive: treks until one does
+      for (let i = 0; i < 4 && !(await page.evaluate(() => Network.flag('gateMet'))); i++) {
+        if (!(await embark(page))) return false;
+        const r = await walkTo(page, g, { stopAt: (e) => e && e.title === 'The Gate' });
+        if (r === 'event') await settleEvents(page);
+        log.note(id, `trek ${i + 1} to the gate: ${r}/${await walkHome(page)}`);
+      }
+      if (!(await page.evaluate(() => Network.flag('gateMet')))) { log.block(id, 'four treks to the garrison\'s gate did not bring its news home', '', ''); return false; }
+      return page.evaluate(() => Powers.known('garrison'));
     },
   },
   {
@@ -671,7 +859,7 @@ export const STAGES = [
     },
   },
   {
-    id: 'forgeMasters', name: "the forge-masters' price (F9's beat): met, an envoy's gifts to 25, the price (300 coal, 100 iron) at their gate", needs: ['charcoal'],
+    id: 'forgeMasters', name: "the forge-masters' price (F9's beat): met, an envoy's gifts to 25, the price (300 coal, 100 iron) at their gate", needs: ['coal'],
     run: async ({ page, log, id }) => {
       const c = await nearestCs(page, 'forge_masters');
       if (!c) { log.block(id, 'no forge-masters on the map', '', ''); return false; }
@@ -753,18 +941,29 @@ export const STAGES = [
     },
   },
   {
-    id: 'lanterns', name: 'B8 the marsh lantern: the bog-cutters joined (100) by the glow of a coal line', needs: ['coal', 'peat'],
+    id: 'lanterns', name: 'B7 the ford light (a lake between two lit nodes), then B8 the marsh lantern (the bog-cutters joined)', needs: ['coal', 'bogJoin'],
     run: async ({ page, log, id }) => {
-      const c = await nearestCs(page, 'bog_cutters');
-      if (!c) { log.note(id, 'the bog-cutters are ours already'); return has(page, 'B8'); }
       await restock(page);
       await goTo(page, 'city');
-      const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 120), c.at);
-      log.note(id, `a line to the bog-cutters got within ${near}`);
-      const ok = await advance(page, 90 * MIN, { arg: c.id, until: (cid) => !!CityStates.state(cid).city, slice: 30000 });
-      if (!ok) { log.block(id, `the bog-cutters not joined in 90 min of glow: influence ${(await csState(page, c.id)).inf | 0}, line within ${near}`, '', ''); return false; }
-      await advance(page, 3 * MIN, { until: () => Network.has('B8') });
-      return has(page, 'B8');
+      // the nearest lake: a beacon each side of it
+      const lake = await page.evaluate(() => {
+        const g = World.hex.gen, c = g.capital;
+        let best = null;
+        for (let x = 0; x < g.cols; x++) for (let y = 0; y < g.rows; y++) {
+          if (g.terrain[x][y] === WorldGen.TERRAIN.lake && (!best || Fire.distance([x, y], c) < Fire.distance(best, c))) best = [x, y];
+        }
+        return best;
+      });
+      if (!lake) { log.block(id, 'no lake on the map', '', ''); return false; }
+      const near = await page.evaluate((at) => __qa.beaconsToward(at, 1, 160), lake);
+      await page.evaluate((at) => {
+        const far = Fire.around(at[0], at[1], 3).filter((p) => Fire.distance(p, at) >= 2).sort((a, b) => Fire.distance(b, World.hex.gen.capital) - Fire.distance(a, World.hex.gen.capital));
+        for (const p of far) { if (Network.has('B7')) break; __qa.beaconsToward(p, 0, 6); Network.refresh(); }
+      }, lake);
+      const ok = await advance(page, 3 * MIN, { until: () => Network.has('B7') && Network.has('B8') });
+      log.note(id, `the nearest lake at ${lake}: a line within ${near}; B7 ${await has(page, 'B7')}, B8 ${await has(page, 'B8')}`);
+      if (!ok) log.block(id, `B7 ${await has(page, 'B7')}, B8 ${await has(page, 'B8')} after a line to the lake at ${lake} (within ${near})`, '', '');
+      return ok;
     },
   },
   {

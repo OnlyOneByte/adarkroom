@@ -165,7 +165,7 @@ export async function playSetpiece(page) {
  */
 // to the trek's tab, an outfit packed with the outfitting buttons (as much as fits), then embark
 export const OUTFIT = { 'steel sword': 1, rifle: 1, bullets: 50, torch: 10, medicine: 10, 'cured meat': 1000 };
-export async function embark(page, outfit = OUTFIT) {
+export async function embark(page, outfit = OUTFIT, again = true) {
   // torches for the dark places, crafted in the room before setting out (the room's torch button)
   await page.evaluate(() => { for (let i = 0; i < 20 && $SM.get('stores.torch', true) < 10; i++) Room.build($('<div>').attr('buildThing', 'torch')); });
   // after a death the wanderer wakes in the room, and the embark button cools down
@@ -177,6 +177,11 @@ export async function embark(page, outfit = OUTFIT) {
   for (let i = 0; i < 120 && (await page.evaluate(() => $('#embarkButton').hasClass('disabled'))); i++) await page.clock.runFor(1000);
   await page.evaluate((outfit) => {
     Path.updateOutfitting();
+    // the bag emptied first (what the last trek brought home stays packed, and can leave no room for meat)
+    for (const k in Path.outfit) {
+      const b = $('#outfit_row_' + k.replace(/ /g, '-') + ' .dnBtn')[0];
+      if (b) Path.decreaseSupply.call(b, { data: 1e6 });
+    }
     for (const k in outfit) {
       const b = $('#outfit_row_' + k.replace(/ /g, '-') + ' .upBtn')[0];
       if (b) Path.increaseSupply.call(b, { data: outfit[k] });
@@ -184,7 +189,14 @@ export async function embark(page, outfit = OUTFIT) {
   }, outfit);
   await page.locator('#embarkButton').click({ timeout: 3000 }).catch(() => page.evaluate(() => $('#embarkButton').click()));
   await page.clock.runFor(1500);
-  return page.evaluate(() => !!World.state);
+  if (await page.evaluate(() => !!World.state)) return true;
+  // a scene that came up on the way to the path (a city-state's, the hearth's) is answered first, then once more
+  const why = await page.evaluate(() => ({ module: Engine.activeModule && Engine.activeModule.name, lock: Engine.keyLock, event: (Events.activeEvent() || {}).title,
+    disabled: $('#embarkButton').hasClass('disabled'), meat: Path.outfit['cured meat'] }));
+  seen(page, `embark refused: ${JSON.stringify(why)}`);
+  if (!again) return false;
+  await settleEvents(page);
+  return embark(page, outfit, false);
 }
 
 // walks the wanderer step by step to a hex (or the nearest of several), settling what the steps bring up.

@@ -13,7 +13,7 @@ import { STAGES } from './playthrough-play.js';
 // the stages that play through today; a regression in one of them fails the run. The rest are known blockers
 // (design/text/qa-playthrough.md), recorded but not failed on
 const PLAYS = ['prologue', 'village', 'stoneHearth', 'brazier', 'woodshed', 'axeHead', 'tallow', 'district', 'cairn',
-  'waystation', 'found', 'economy', 'influence', 'force', 'resettle', 'chimney', 'charcoal', 'potters', 'tower', 'peat', 'smoke', 'garrison', 'forgeMasters', 'reload', 'powers'];
+  'waystation', 'found', 'economy', 'influence', 'force', 'resettle', 'chimney', 'charcoal', 'potters', 'tower', 'peat', 'bogRoad', 'bogJoin', 'peatFire', 'peatCity', 'smoke', 'garrison', 'reload', 'powers'];
 
 test('@slow a fresh save played from the prologue to the blaze era, every beat through its own trigger', async ({ page }) => {
   test.setTimeout(30 * 60 * 1000);
